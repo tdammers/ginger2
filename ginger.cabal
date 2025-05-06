@@ -1,0 +1,59 @@
+cabal-version: 3.0
+name: ginger
+version: 2.0.0.0
+-- synopsis:
+-- description:
+license: MIT
+license-file: LICENSE
+author: Tobias Dammers
+maintainer: tdammers@gmail.com
+copyright: 2025 Tobias Dammers
+category: Language
+build-type: Simple
+-- extra-doc-files: CHANGELOG.md
+-- extra-source-files:
+
+common warnings
+    ghc-options: -Wall
+
+library
+    import: warnings
+    exposed-modules: Language.Ginger
+                   , Language.Ginger.AST
+                   , Language.Ginger.Value
+                   , Language.Ginger.Interpret
+                   , Language.Ginger.RuntimeError
+    -- other-modules:
+    -- other-extensions:
+    build-depends: base ^>=4.20.0.0
+                 , base64-bytestring >=1.2.1.0 && <1.3
+                 , bytestring >=0.12.2.0 && <0.13
+                 , text >= 2.0 && <2.3
+                 , containers >=0.8 && <0.9
+                 , mtl >=2.3.1 && <2.4
+    hs-source-dirs: src
+    default-language: Haskell2010
+
+executable ginger
+    import: warnings
+    main-is: Main.hs
+    -- other-modules:
+    -- other-extensions:
+    build-depends:
+        base ^>=4.20.0.0,
+        ginger
+
+    hs-source-dirs: cli
+    default-language: Haskell2010
+
+test-suite ginger-test
+    import: warnings
+    default-language: Haskell2010
+    -- other-modules:
+    -- other-extensions:
+    type: exitcode-stdio-1.0
+    hs-source-dirs: test
+    main-is: Main.hs
+    build-depends:
+        base ^>=4.20.0.0,
+        ginger

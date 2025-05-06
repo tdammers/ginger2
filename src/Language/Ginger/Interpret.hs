@@ -29,6 +29,7 @@ import Control.Monad.Reader
   ( ReaderT
   , MonadReader
   , runReaderT
+  , ask
   , asks
   )
 import Control.Monad.Except
@@ -216,6 +217,15 @@ call callable posArgsExpr namedArgsExpr = do
       native $ nativeObjectCall obj obj args
     x ->
       throwError $ NonCallableObjectError (Just . tagNameOf $ x)
+
+class Eval m a where
+  eval :: a -> GingerT m (Value m)
+
+instance Monad m => Eval m Expr where
+  eval = evalE
+
+instance Monad m => Eval m Statement where
+  eval = evalS
 
 evalE :: Monad m => Expr -> GingerT m (Value m)
 evalE NoneE = pure NoneV
@@ -463,7 +473,7 @@ evalLoop :: forall m. Monad m
          -> Maybe Statement
          -> Int
          -> GingerT m (Value m)
-evalLoop loopKeyMay loopName iteree loopCondMay _recursivity bodyS elseSMay recursionLevel = do
+evalLoop loopKeyMay loopName iteree loopCondMay recursivity bodyS elseSMay recursionLevel = do
   -- First, convert the iteree into a plain list.
 
   itemPairs <- case iteree of
@@ -502,6 +512,8 @@ evalLoop loopKeyMay loopName iteree loopCondMay _recursivity bodyS elseSMay recu
         -- Bind key and value
         maybe (pure ()) (\loopKey -> setVar loopKey k) loopKeyMay
         setVar loopName v
+        env <- get
+        ctx <- ask
         setVar "loop" $
           dictV
             [ "index" .= (n + 1)
@@ -517,8 +529,7 @@ evalLoop loopKeyMay loopName iteree loopCondMay _recursivity bodyS elseSMay recu
             , "previtem" .= prevVal
             , "nextitem" .= (snd <$> listToMaybe xs)
             , "changed" .= changedFunc
-            -- TODO:
-            -- , "__call__" .= if is recursivity then Just recurFunc else Nothing
+            , "__call__" .= if is recursivity then Just (recurFunc ctx env) else Nothing
             ]
         body <- evalS bodyS
         pure (Just v, body)
@@ -529,6 +540,20 @@ evalLoop loopKeyMay loopName iteree loopCondMay _recursivity bodyS elseSMay recu
     changedFunc :: Value m
     changedFunc = ProcedureV $ GingerProcedure [("val", Just (VarE loopName))] $
       BinaryE BinopEqual (BinaryE BinopIndex (VarE "loop") (StringLitE "previtem")) (VarE "val")
+
+    recurFunc :: Context m -> Env m -> Value m
+    recurFunc ctx env = ProcedureV . NativeProcedure $ \args -> do
+      case args of
+        [(_, iteree')] ->
+          runGingerT
+            (evalLoop loopKeyMay loopName iteree' loopCondMay recursivity bodyS elseSMay (succ recursionLevel))
+            ctx
+            env
+        [] -> pure . Left $
+                ArgumentError (Just "loop()") (Just "1") (Just "argument") (Just "end of arguments")
+        _ -> pure . Left $
+                ArgumentError (Just "loop()") (Just "2") (Just "end of arguments") (Just "argument")
+      
 
     cycleFunc :: Int -> Value m -> Value m
     cycleFunc n items =

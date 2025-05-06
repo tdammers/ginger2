@@ -5,12 +5,11 @@ module Language.Ginger
 , runGingerT
 , Context (..)
 , defContext
-, defContextIO
 , Env (..)
 , emptyEnv
-, interpretStatement
-, interpretStatements
-, eval
+, evalE
+, evalS
+, evalSs
 )
 where
 

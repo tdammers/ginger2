@@ -69,7 +69,7 @@ pattern FloatV :: Double -> Value m
 pattern FloatV v = ScalarV (FloatScalar v)
 
 data Procedure m
-  = NativeProcedure ([(Maybe Identifier, Value m)] -> m (Value m))
+  = NativeProcedure ([(Maybe Identifier, Value m)] -> m (Either RuntimeError (Value m)))
   | GingerProcedure [(Identifier, Maybe Expr)] Expr
 
 data NativeObject m =
@@ -79,7 +79,7 @@ data NativeObject m =
     , nativeObjectStringified :: m Text
     , nativeObjectEncoded :: m Encoded
     , nativeObjectAsList :: m (Maybe [Value m])
-    , nativeObjectCall :: NativeObject m -> [(Maybe Identifier, Value m)] -> m (Value m)
+    , nativeObjectCall :: NativeObject m -> [(Maybe Identifier, Value m)] -> m (Either RuntimeError (Value m))
     }
 
 defNativeObject :: Monad m => NativeObject m
@@ -107,6 +107,9 @@ instance ToScalar () where
 
 instance ToScalar Bool where
   toScalar = BoolScalar
+
+instance ToScalar Integer where
+  toScalar = IntScalar
 
 toIntScalar :: Integral a => a -> Scalar
 toIntScalar = IntScalar . fromIntegral
@@ -183,6 +186,12 @@ instance ToValue (Value m) m where
 --------------------------------------------------------------------------------
 
 instance ToValue () a where
+  toValue = ScalarV . toScalar
+
+instance ToValue Bool a where
+  toValue = ScalarV . toScalar
+
+instance ToValue Integer a where
   toValue = ScalarV . toScalar
 
 instance ToValue Int a where
@@ -286,28 +295,28 @@ instance ToValue v m => ToValue (Map String v) m where
 --------------------------------------------------------------------------------
 
 class ToNativeProcedure m a where
-  toNativeProcedure :: a -> [(Maybe Identifier, Value m)] -> m (Value m)
+  toNativeProcedure :: a -> [(Maybe Identifier, Value m)] -> m (Either RuntimeError (Value m))
 
 instance Applicative m => ToNativeProcedure m (Value m) where
   toNativeProcedure val [] =
-    pure val
+    pure (Right val)
   toNativeProcedure _ _ =
-    throw $
+    pure . Left $
       ArgumentError (Just "<native function>") Nothing (Just "end of arguments") (Just "value")
 
 instance Applicative m => ToNativeProcedure m (m (Value m)) where
   toNativeProcedure action [] =
-    action
+    Right <$> action
   toNativeProcedure _ _ =
-    throw $
+    pure . Left $
       ArgumentError (Just "<native function>") Nothing (Just "end of arguments") (Just "value")
 
-instance ToNativeProcedure m a => ToNativeProcedure m (Value m -> a) where
+instance (Applicative m, ToNativeProcedure m a) => ToNativeProcedure m (Value m -> a) where
   toNativeProcedure _ [] =
-    throw $
+    pure . Left $
       ArgumentError (Just "<native function>") Nothing (Just "value") (Just "end of arguments")
   toNativeProcedure _ ((Just _, _):_) =
-    throw $
+    pure . Left $
       ArgumentError (Just "<native function>") Nothing (Just "positional argument") (Just "named argument")
   toNativeProcedure f ((Nothing, v):xs) =
     toNativeProcedure (f v) xs
@@ -343,3 +352,15 @@ instance Applicative m => ToValue (Value m -> Value m -> Value m -> Value m -> m
 
 instance Applicative m => ToValue (Value m -> Value m -> Value m -> Value m -> Value m -> m (Value m)) m where
   toValue = ProcedureV . NativeProcedure . toNativeProcedure
+
+--------------------------------------------------------------------------------
+-- Dictionary helpers
+--------------------------------------------------------------------------------
+
+dictV :: [(Scalar, Value m)] -> Value m
+dictV items = DictV $ Map.fromList items
+
+infixr 8 .=
+
+(.=) :: (ToValue v m) => Scalar -> v -> (Scalar, Value m)
+k .= v = (k, toValue v)

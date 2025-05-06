@@ -4,10 +4,15 @@ module Language.Ginger.AST
 where
 
 import Data.Text (Text)
+import qualified Data.Text as Text
+import Data.String (IsString (..))
 
 newtype Identifier =
   Identifier { identifierName :: Text }
   deriving (Show, Eq, Ord)
+
+instance IsString Identifier where
+  fromString = Identifier . Text.pack
 
 newtype Encoded =
   Encoded { encoded :: Text }

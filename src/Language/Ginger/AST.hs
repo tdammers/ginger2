@@ -6,6 +6,10 @@ where
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.String (IsString (..))
+import Test.Tasty.QuickCheck (Arbitrary (..))
+import qualified Test.Tasty.QuickCheck as QC
+
+import Debug.Trace
 
 newtype Identifier =
   Identifier { identifierName :: Text }
@@ -14,9 +18,26 @@ newtype Identifier =
 instance IsString Identifier where
   fromString = Identifier . Text.pack
 
+instance Arbitrary Identifier where
+  arbitrary = do
+    x <- QC.oneof $ map pure identifierLeadChars
+    xs <- QC.listOf (QC.oneof $ map pure identifierChars)
+    pure $ Identifier $ Text.pack (x : xs)
+
+identifierLeadChars :: [Char]
+identifierLeadChars =
+  [ 'a' .. 'z' ] ++ ['A' .. 'Z'] ++ ['_']
+
+identifierChars :: [Char]
+identifierChars =
+  identifierLeadChars ++ ['0' .. '9']
+
 newtype Encoded =
   Encoded { encoded :: Text }
   deriving (Show, Eq, Ord, Semigroup, Monoid)
+
+instance Arbitrary Encoded where
+  arbitrary = Encoded . Text.pack <$> QC.listOf arbitrary
 
 data Statement
   = ImmediateS Encoded
@@ -64,6 +85,13 @@ data Statement
   | WithS [(Identifier, Expr)] Statement
   deriving (Show)
 
+instance Arbitrary Statement where
+  arbitrary = do
+    fuel <- QC.getSize
+    QC.oneof
+      [ ImmediateS <$> QC.resize (fuel - 1) arbitrary
+      ]
+
 class Boolish a where
   is :: a -> Bool
 
@@ -105,6 +133,31 @@ data Expr
   | VarE Identifier
   deriving (Show)
 
+instance Arbitrary Expr where
+  arbitrary = do
+    fuel <- QC.getSize
+    if fuel <= 1 then
+      pure NoneE
+    else
+      QC.oneof
+        [ pure NoneE
+        , BoolE <$> arbitrary
+        , StringLitE <$> QC.resize (fuel - 1) (Text.pack <$> QC.listOf arbitrary)
+        , IntLitE <$> QC.resize (fuel - 1) arbitrary
+        , FloatLitE <$> QC.resize (fuel - 1) arbitrary
+        , StatementE <$> QC.resize (fuel - 1) arbitrary
+        , ListE <$> fuelledList arbitrary
+        , DictE <$> fuelledList arbitrary
+        , QC.resize (max 0 $ fuel `div` 2 - 1) $
+            BinaryE <$> arbitrary <*> arbitrary <*> arbitrary
+        , QC.resize (fuel `div` 3) $
+            CallE <$> arbitrary <*> fuelledList arbitrary <*> fuelledList arbitrary
+        , QC.resize (fuel `div` 3) $
+            TernaryE <$> arbitrary <*> arbitrary <*> arbitrary
+        , QC.resize (fuel - 1) $
+            VarE <$> arbitrary
+        ]
+
 data BinaryOperator
     -- Math
   = BinopPlus
@@ -132,3 +185,18 @@ data BinaryOperator
     -- String concatenation
   | BinopConcat
   deriving (Show, Eq, Enum, Ord, Bounded)
+
+instance Arbitrary BinaryOperator where
+  arbitrary = QC.oneof (map pure [minBound .. maxBound])
+
+fuelledList :: QC.Gen a -> QC.Gen [a]
+fuelledList subGen = do
+  fuel <- QC.getSize
+  traceM $ "fuelledList, fuel = " ++ show fuel
+  if fuel < 1 then
+    pure []
+  else do
+    s <- QC.chooseInt (1, fuel)
+    x <- QC.resize s subGen
+    xs <- QC.resize (max 0 $ fuel - s - 10) (fuelledList subGen)
+    pure $ x : xs

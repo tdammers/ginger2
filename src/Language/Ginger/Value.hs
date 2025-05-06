@@ -3,12 +3,14 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 
 module Language.Ginger.Value
 where
 
 import Data.String (IsString (..))
 import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.Text (Text)
 import qualified Data.Text as Text
@@ -19,6 +21,8 @@ import Data.Word
 import Data.Int
 import GHC.Float (float2Double)
 import Control.Exception (throw)
+import Test.Tasty.QuickCheck (Arbitrary (..))
+import qualified Test.Tasty.QuickCheck as QC
 
 import Language.Ginger.AST
 import Language.Ginger.RuntimeError
@@ -39,6 +43,13 @@ data Value m
   | DictV (Map Scalar (Value m))
   | NativeV (NativeObject m)
   | ProcedureV (Procedure m)
+
+instance Show (Value m) where
+  show (ScalarV s) = show s
+  show (ListV xs) = show xs
+  show (DictV m) = show m
+  show (NativeV {}) = "<<native>>"
+  show (ProcedureV {}) = "<<procedure>>"
 
 tagNameOf :: Value m -> Text
 tagNameOf ScalarV {} = "scalar"
@@ -364,3 +375,41 @@ infixr 8 .=
 
 (.=) :: (ToValue v m) => Scalar -> v -> (Scalar, Value m)
 k .= v = (k, toValue v)
+
+--------------------------------------------------------------------------------
+-- Arbitrary instances
+--------------------------------------------------------------------------------
+
+instance Arbitrary Scalar where
+  arbitrary =
+    QC.oneof
+      [ pure NoneScalar
+      , BoolScalar <$> arbitrary
+      , StringScalar . Text.pack <$> QC.listOf arbitrary
+      , EncodedScalar . Encoded . Text.pack <$> QC.listOf arbitrary
+      , BytesScalar . BS.pack <$> QC.listOf arbitrary
+      , IntScalar <$> arbitrary
+      , FloatScalar <$> arbitrary
+      ]
+
+  shrink = \case
+    BoolScalar True -> [BoolScalar False]
+    StringScalar str | Text.null str -> []
+    StringScalar str -> [StringScalar $ Text.init str]
+    EncodedScalar (Encoded str) | Text.null str -> []
+    EncodedScalar (Encoded str) -> [EncodedScalar . Encoded $ Text.init str]
+    BytesScalar str | BS.null str -> []
+    BytesScalar str -> [BytesScalar $ BS.init str]
+    IntScalar i -> NoneScalar : (IntScalar <$> shrink i)
+    FloatScalar f -> NoneScalar : (FloatScalar <$> shrink f)
+    NoneScalar -> []
+    _ -> [NoneScalar]
+
+instance Arbitrary (Value m) where
+  arbitrary =
+    QC.oneof
+      [ pure NoneV
+      , ScalarV <$> arbitrary
+      , ListV <$> fuelledList arbitrary
+      , DictV . Map.fromList <$> fuelledList arbitrary
+      ]

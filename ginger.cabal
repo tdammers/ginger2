@@ -28,9 +28,11 @@ library
     build-depends: base ^>=4.20.0.0
                  , base64-bytestring >=1.2.1.0 && <1.3
                  , bytestring >=0.12.2.0 && <0.13
-                 , text >= 2.0 && <2.3
                  , containers >=0.8 && <0.9
                  , mtl >=2.3.1 && <2.4
+                 , tasty >=1.5.3 && <1.6
+                 , tasty-quickcheck >=0.11.1 && <0.12
+                 , text >= 2.0 && <2.3
     hs-source-dirs: src
     default-language: Haskell2010
 
@@ -49,11 +51,19 @@ executable ginger
 test-suite ginger-test
     import: warnings
     default-language: Haskell2010
-    -- other-modules:
     -- other-extensions:
     type: exitcode-stdio-1.0
     hs-source-dirs: test
     main-is: Main.hs
-    build-depends:
-        base ^>=4.20.0.0,
-        ginger
+    other-modules: Language.Ginger.Value.Tests
+                 , Language.Ginger.AST.Tests
+                 , Language.Ginger.Interpret.Tests
+    build-depends: base ^>=4.20.0.0
+                 , ginger
+                 , base64-bytestring >=1.2.1.0 && <1.3
+                 , bytestring >=0.12.2.0 && <0.13
+                 , containers >=0.8 && <0.9
+                 , mtl >=2.3.1 && <2.4
+                 , tasty >=1.5.3 && <1.6
+                 , tasty-quickcheck >=0.11.1 && <0.12
+                 , text >= 2.0 && <2.3

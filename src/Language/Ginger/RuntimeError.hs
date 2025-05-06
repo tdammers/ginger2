@@ -20,6 +20,6 @@ data RuntimeError
       (Maybe Text) -- ^ Identifier
   | NotImplementedError
       (Maybe Text) -- ^ The thing that isn't implemented
-  deriving (Show)
+  deriving (Show, Eq)
 
 instance Exception RuntimeError where

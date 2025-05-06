@@ -308,6 +308,7 @@ valuesEqual (FloatV a) (FloatV b) = pure (a == b)
 valuesEqual (StringV a) (StringV b) = pure (a == b)
 valuesEqual (BoolV a) (BoolV b) = pure (a == b)
 valuesEqual (BytesV a) (BytesV b) = pure (a == b)
+valuesEqual (EncodedV a) (EncodedV b) = pure (a == b)
 valuesEqual (ListV []) (ListV []) = pure True
 valuesEqual (ListV []) (ListV _) = pure False
 valuesEqual (ListV _) (ListV []) = pure False

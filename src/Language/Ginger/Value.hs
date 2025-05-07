@@ -51,6 +51,12 @@ instance Show (Value m) where
   show (NativeV {}) = "<<native>>"
   show (ProcedureV {}) = "<<procedure>>"
 
+instance Eq (Value m) where
+  ScalarV a == ScalarV b = a == b
+  ListV a == ListV b = a == b
+  DictV a == DictV b = a == b
+  _ == _ = False
+
 tagNameOf :: Value m -> Text
 tagNameOf ScalarV {} = "scalar"
 tagNameOf ListV {} = "list"

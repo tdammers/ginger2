@@ -370,7 +370,7 @@ evalBinary BinopIn a b = case b of
     if found then
       pure . BoolV $ True
     else
-      evalBinary BinopIn (ListV xs) b
+      evalBinary BinopIn a (ListV xs)
   x -> throwError $ TagError (Just "in") (Just "list or dict") (Just . tagNameOf $ x)
 evalBinary BinopIndex a b = case a of
   DictV m -> case b of

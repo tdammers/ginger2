@@ -44,6 +44,13 @@ data Value m
   | NativeV (NativeObject m)
   | ProcedureV (Procedure m)
 
+traverseValue :: Monoid a => (Value m -> a) -> Value m -> a
+traverseValue p v@(ListV xs) =
+  p v <> mconcat (map (traverseValue p) xs)
+traverseValue p v@(DictV m) =
+  p v <> mconcat (map (traverseValue p . snd) $ Map.toList m)
+traverseValue p v = p v
+
 instance Show (Value m) where
   show (ScalarV s) = show s
   show (ListV xs) = show xs
@@ -97,7 +104,11 @@ data NativeObject m =
     , nativeObjectEncoded :: m Encoded
     , nativeObjectAsList :: m (Maybe [Value m])
     , nativeObjectCall :: NativeObject m -> [(Maybe Identifier, Value m)] -> m (Either RuntimeError (Value m))
+    , nativeObjectEq :: NativeObject m -> NativeObject m -> m (Either RuntimeError Bool)
     }
+
+(-->) :: obj -> (obj -> obj -> a) -> a
+obj --> field = field obj obj
 
 defNativeObject :: Monad m => NativeObject m
 defNativeObject =
@@ -107,7 +118,8 @@ defNativeObject =
     , nativeObjectStringified = pure "<native object>"
     , nativeObjectEncoded = pure (Encoded "[[native object]]")
     , nativeObjectAsList = pure Nothing
-    , nativeObjectCall = \obj _ -> throw . NonCallableObjectError . Just =<< nativeObjectStringified obj
+    , nativeObjectCall = \self _ -> throw . NonCallableObjectError . Just =<< nativeObjectStringified self
+    , nativeObjectEq = \_self _other -> pure . Right $ False
     }
 
 instance IsString Scalar where
@@ -417,11 +429,33 @@ instance Arbitrary Scalar where
     NoneScalar -> []
     _ -> [NoneScalar]
 
-instance Arbitrary (Value m) where
+instance Monad m => Arbitrary (Value m) where
   arbitrary =
     QC.oneof
       [ pure NoneV
       , ScalarV <$> arbitrary
       , ListV <$> fuelledList arbitrary
       , DictV . Map.fromList <$> fuelledList arbitrary
+      , NativeV <$> arbitraryNative
+      , ProcedureV <$> arbitraryNativeProcedure
       ]
+
+arbitraryNativeProcedure :: Monad m => QC.Gen (Procedure m)
+arbitraryNativeProcedure = do
+  retval <- QC.scale (`div` 2) arbitrary
+  pure $ NativeProcedure (\_ -> pure (Right retval))
+
+arbitraryNative :: Monad m => QC.Gen (NativeObject m)
+arbitraryNative = do
+  objectID <- arbitrary
+  pure defNativeObject
+    { nativeObjectGetFieldNames = pure ["id"]
+    , nativeObjectGetField = \case
+        "id" -> pure . Just . toValue . identifierName $ objectID
+        _ -> pure Nothing
+    , nativeObjectStringified = pure $ identifierName objectID
+    , nativeObjectEq = \self other -> do
+        otherID <- nativeObjectGetField other "id"
+        selfID <- nativeObjectGetField self "id"
+        pure . Right $ otherID == selfID
+    }

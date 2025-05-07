@@ -83,14 +83,51 @@ data Statement
       Scoped -- scoped block?
       Required -- required block?
   | WithS [(Identifier, Expr)] Statement
+  | GroupS [Statement]
   deriving (Show)
 
 instance Arbitrary Statement where
   arbitrary = do
     fuel <- QC.getSize
-    QC.oneof
-      [ ImmediateS <$> QC.resize (fuel - 1) arbitrary
-      ]
+    QC.resize (max 0 $ fuel - 1) $
+      QC.oneof
+        [ ImmediateS <$> arbitrary
+        , InterpolationS <$> arbitrary
+        , CommentS . Text.pack <$> arbitrary
+        , ForS <$> QC.resize (fuel `div` 6) arbitrary
+               <*> QC.resize (fuel `div` 6) arbitrary
+               <*> QC.resize (fuel `div` 6) arbitrary
+               <*> QC.resize (fuel `div` 6) arbitrary
+               <*> arbitrary
+               <*> QC.resize (fuel `div` 6) arbitrary
+               <*> QC.resize (fuel `div` 6) arbitrary
+        , IfS <$> QC.resize (fuel `div` 3) arbitrary
+              <*> QC.resize (fuel `div` 3) arbitrary
+              <*> QC.resize (fuel `div` 3) arbitrary
+        , MacroS <$> arbitrary
+                 <*> QC.resize (fuel `div` 2) arbitrary
+                 <*> QC.resize (fuel `div` 2) arbitrary
+        , CallS <$> arbitrary
+                 <*> QC.resize (fuel `div` 2) arbitrary
+                 <*> QC.resize (fuel `div` 2) arbitrary
+        , FilterS <$> arbitrary
+                  <*> QC.resize (fuel `div` 3) arbitrary
+                  <*> QC.resize (fuel `div` 3) arbitrary
+                  <*> QC.resize (fuel `div` 3) arbitrary
+        , SetS <$> arbitrary
+               <*> QC.resize (fuel `div` 2) arbitrary
+        , SetBlockS <$> arbitrary
+                    <*> QC.resize (fuel `div` 2) arbitrary
+                    <*> QC.resize (fuel `div` 2) arbitrary
+        , IncludeS <$> arbitrary
+        , ExtendsS <$> arbitrary
+        , BlockS <$> arbitrary
+                 <*> QC.resize (fuel `div` 2) arbitrary
+                 <*> arbitrary
+                 <*> arbitrary
+        , WithS <$> QC.resize (fuel `div` 4) arbitrary
+                <*> QC.resize (fuel * 3 `div` 4) arbitrary
+        ]
 
 class Boolish a where
   is :: a -> Bool
@@ -115,6 +152,15 @@ data Recursivity = NotRecursive | Recursive
 
 instance Boolish Recursivity where
   is = (== Recursive)
+
+instance Arbitrary Scoped where
+  arbitrary = QC.oneof $ map pure [minBound..maxBound]
+
+instance Arbitrary Required where
+  arbitrary = QC.oneof $ map pure [minBound..maxBound]
+
+instance Arbitrary Recursivity where
+  arbitrary = QC.oneof $ map pure [minBound..maxBound]
 
 type MacroArg = (Identifier, Maybe Expr)
 

@@ -19,6 +19,8 @@ import qualified Data.Text as Text
 import Data.Word (Word8, Word16, Word32, Word64)
 import Test.Tasty
 import Test.Tasty.QuickCheck
+import Data.Monoid (Any (..))
+import Data.Either (isRight)
 
 import Language.Ginger.AST
 import Language.Ginger.Interpret
@@ -30,7 +32,8 @@ tests = testGroup "Language.Ginger.Interpret"
   [ testGroup "misc"
     [ testProperty "setVar lookupVar" prop_setVarLookupVar
     , testProperty "scoped vars disappear outside" prop_scopedVarsDisappear
-    , testProperty "no bottoms in eval" prop_noBottoms
+    , testProperty "no bottoms in expression eval" (prop_noBottoms @Expr)
+    , testProperty "no bottoms in statement eval" (prop_noBottoms @Statement)
     ]
   , testGroup "stringify"
     [ testProperty "string stringifies to self" prop_stringifyString
@@ -61,7 +64,7 @@ tests = testGroup "Language.Ginger.Interpret"
       , testProperty "List literal" (prop_literal (ListE . map IntLitE))
       , testProperty "Dict literal" (prop_literal (DictE . map (\(k, v) -> (IntLitE k, IntLitE v)) . Map.toList))
       ]
-    , testGroup "binops"
+    , testGroup "BinaryE"
       [ testProperty "Integer addition" (prop_binop @Integer BinopPlus (+))
       , testProperty "Integer subtraction" (prop_binop @Integer BinopMinus (-))
       , testProperty "Integer multiplication" (prop_binop @Integer BinopMul (*))
@@ -109,11 +112,27 @@ tests = testGroup "Language.Ginger.Interpret"
       , testProperty "Bytes concatenation" (prop_binopCond @ByteString (Just . BS.pack) (Just . BS.pack) BinopConcat (<>))
       , testProperty "String concatenation" (prop_binopCond @Text (Just . Text.pack) (Just . Text.pack) BinopConcat (<>))
       ]
-      , testProperty "Ternary operation" prop_ternary
-      , testGroup "Variables"
+      , testGroup "CallE"
+        [ testProperty "Native nullary" prop_nativeNullary
+        , testProperty "Native identity" prop_nativeIdentity
+        , testProperty "User nullary" prop_userNullary
+        ]
+      , testProperty "TernaryE" prop_ternary
+      , testGroup "VarE"
         [ testProperty "existing variable" prop_var
         , testProperty "nonexisting variable" prop_varNeg
         ]
+    ]
+  , testGroup "Statement"
+    [ testProperty "Immediate statement outputs itself" prop_immediateStatementOutput
+    , testProperty "Interpolation statement outputs its argument" prop_interpolationStatementOutput
+    , testProperty "Comment statement outputs None" prop_commentStatementOutput
+    , testProperty "IfS outputs the correct branch" prop_ifStatementOutput
+    , testProperty "ForS simple loop" prop_forStatementSimple
+    , testProperty "ForS simple loop with key" prop_forStatementWithKey
+    , testProperty "ForS loop with else branch" prop_forStatementEmpty
+    , testProperty "ForS loop with filter" prop_forStatementFilter
+    , testProperty "ForS loop loop object" prop_forStatementLoopVars
     ]
   ]
 
@@ -136,9 +155,13 @@ runGingerIdentityEither :: GingerT Identity a -> Either RuntimeError a
 runGingerIdentityEither action =
   runIdentity (runGingerT action defContext emptyEnv)
 
-prop_noBottoms :: Expr -> Bool
+prop_noBottoms :: (Eval Identity a, Arbitrary a) => a -> Bool
 prop_noBottoms e =
   runGingerIdentityEither (eval e) `seq` True
+
+isProcedure :: Value m -> Bool
+isProcedure ProcedureV {} = True
+isProcedure _ = False
 
 prop_setVarLookupVar :: Identifier -> Value Identity -> Property
 prop_setVarLookupVar k v =
@@ -150,8 +173,10 @@ prop_setVarLookupVar k v =
         v' <- lookupVar k
         (,) <$> pure v' <*> valuesEqual v v'
   in
-    counterexample (show w) $
-    equal === True
+    -- exclude procedures, because we cannot compare those
+    (not . getAny) (traverseValue (Any . isProcedure) v) ==>
+    counterexample (show w)
+    (equal === True)
 
 prop_stringifyString :: String -> Property
 prop_stringifyString str =
@@ -247,3 +272,167 @@ prop_varNeg name1 val1 name2 =
   in
     name1 /= name2 ==>
     resultG === Left (NotInScopeError (Just $ identifierName name2))
+
+prop_nativeNullary :: Identifier -> Integer -> Property
+prop_nativeNullary varName constVal =
+  let fVal = ProcedureV . NativeProcedure $ const . pure @Identity . Right . toValue $ constVal
+      expr = CallE (VarE varName) [] []
+      result = runGingerIdentity (setVar varName fVal >> eval expr)
+  in
+    result === toValue constVal
+
+prop_nativeIdentity :: Identifier -> Identifier -> Integer -> Property
+prop_nativeIdentity varName argVarName arg =
+  let fVal = toValue (id :: Value Identity -> Value Identity)
+      argVal = toValue arg
+      expr = CallE (VarE varName) [VarE argVarName] []
+      result = runGingerIdentity $ do
+                setVar varName fVal
+                setVar argVarName argVal
+                eval expr
+  in
+    result === argVal
+
+prop_userNullary :: Identifier -> Expr -> Property
+prop_userNullary varName bodyExpr =
+  let fVal = ProcedureV $ GingerProcedure [] bodyExpr
+      resultCall = runGingerIdentityEither $ do
+                    setVar varName fVal
+                    eval $ CallE (VarE varName) [] []
+      resultDirect = runGingerIdentityEither $ do
+                        eval bodyExpr
+  in
+    resultCall === resultDirect
+
+prop_immediateStatementOutput :: Encoded -> Property
+prop_immediateStatementOutput str =
+  let stmt = ImmediateS str
+      result = runGingerIdentity (eval stmt)
+  in
+    result === EncodedV str
+
+prop_commentStatementOutput :: String -> Property
+prop_commentStatementOutput str =
+  let stmt = CommentS (Text.pack str)
+      result = runGingerIdentity (eval stmt)
+  in
+    result === NoneV
+
+prop_interpolationStatementOutput :: Expr -> Property
+prop_interpolationStatementOutput expr =
+  let resultS = runGingerIdentityEither (eval $ InterpolationS expr)
+      resultE = runGingerIdentityEither (eval expr)
+  in
+    isRight resultE ==>
+    resultS === resultE
+
+prop_ifStatementOutput :: Bool -> Statement -> Statement -> Property
+prop_ifStatementOutput cond yes no =
+  let resultYes = runGingerIdentityEither (eval yes)
+      resultNo = runGingerIdentityEither (eval no)
+      resultE = if cond then resultYes else resultNo
+      resultIf = runGingerIdentityEither (eval $ IfS (BoolE cond) yes (Just no))
+  in
+    isRight resultE ==>
+    resultIf === resultE
+
+prop_forStatementSimple :: Identifier -> Identifier -> [String] -> Property
+prop_forStatementSimple itereeName varName strItems =
+  let items = ListV $ map (StringV . Text.pack) strItems
+      expected = StringV . Text.pack . mconcat $ strItems
+      resultFor = runGingerIdentity $ do
+                    setVar itereeName items
+                    eval $ ForS
+                            Nothing -- loop key var
+                            varName-- loop value var
+                            (VarE itereeName) -- iteree
+                            Nothing -- loop condition
+                            NotRecursive
+                            (InterpolationS (VarE varName)) -- loop body
+                            Nothing -- empty body
+  in
+    not (null strItems) ==>
+    resultFor === expected
+
+prop_forStatementWithKey :: Identifier -> Identifier -> Identifier -> [String] -> Property
+prop_forStatementWithKey itereeName varName keyName strItems =
+  let items = ListV $ map (StringV . Text.pack) strItems
+      expected = StringV . Text.pack . mconcat $ [ show k ++ v | (k, v) <- zip [(0 :: Int) ..] strItems ]
+      resultFor = runGingerIdentity $ do
+                    setVar itereeName items
+                    eval $ ForS
+                            (Just keyName) -- loop key var
+                            varName-- loop value var
+                            (VarE itereeName) -- iteree
+                            Nothing -- loop condition
+                            NotRecursive
+                            (GroupS
+                              [ InterpolationS (VarE keyName)
+                              , InterpolationS (VarE varName)
+                              ]
+                            ) -- loop body
+                            Nothing -- empty body
+  in
+    not (null strItems) ==>
+    resultFor === expected
+
+prop_forStatementEmpty :: Statement -> Property
+prop_forStatementEmpty body =
+  let resultDirect = runGingerIdentityEither (eval body)
+      resultFor = runGingerIdentityEither
+                    (eval $ ForS
+                      Nothing
+                      "item"
+                      (ListE [])
+                      Nothing
+                      NotRecursive
+                      (InterpolationS (VarE "item"))
+                      (Just body)
+                    )
+  in
+    isRight resultDirect ==>
+    resultFor === resultDirect
+
+prop_forStatementFilter :: [Integer] -> Property
+prop_forStatementFilter intItems =
+  let items = ListV $ map IntV intItems
+      expected = StringV . Text.pack . mconcat $ [ show i | i <- intItems, i > 0 ]
+      resultFor = runGingerIdentity $ do
+                    setVar "items" items
+                    eval $ ForS
+                            Nothing
+                            "item"
+                            (VarE "items") -- iteree
+                            (Just $ BinaryE BinopGT (VarE "item") (IntLitE 0))
+                            NotRecursive
+                            (InterpolationS (VarE "item"))
+                            Nothing
+  in
+    length (filter (> 0) intItems) > 1 ==>
+    resultFor === expected
+
+prop_forStatementLoopVars :: [Integer] -> Property
+prop_forStatementLoopVars intItems = 
+  let items = ListV $ map IntV intItems
+      expected = StringV . Text.pack . mconcat $
+          [ show (succ i) ++ show (i :: Int) ++ show v
+          | (i, v) <- zip [0..] intItems
+          ]
+      resultFor = runGingerIdentity $ do
+                    setVar "items" items
+                    eval $ ForS
+                            Nothing
+                            "item"
+                            (VarE "items") -- iteree
+                            Nothing
+                            NotRecursive
+                            (GroupS
+                              [ InterpolationS (BinaryE BinopIndex (VarE "loop") (StringLitE "index"))
+                              , InterpolationS (BinaryE BinopIndex (VarE "loop") (StringLitE "index0"))
+                              , InterpolationS (VarE "item")
+                              ]
+                            )
+                            Nothing
+  in
+    not (null intItems) ==>
+    resultFor === expected

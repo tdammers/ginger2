@@ -316,6 +316,8 @@ valuesEqual (ListV (x:xs)) (ListV (y:ys)) =
     (&&) <$> valuesEqual x y
          <*> valuesEqual (ListV xs) (ListV ys)
 valuesEqual (DictV a) (DictV b) = dictsEqual a b
+valuesEqual (NativeV a) (NativeV b) =
+  native $ a --> nativeObjectEq b
 valuesEqual _ _ = pure False
 
 compareValues :: Monad m => Value m -> Value m -> GingerT m Ordering
@@ -458,6 +460,7 @@ evalS (WithS varEs bodyS) = do
   scoped $ do
     setVars vars
     evalS bodyS
+evalS (GroupS xs) = evalSs xs
 
 asBool :: Monad m => Text -> Value m -> GingerT m Bool
 asBool _ (BoolV b) = pure b

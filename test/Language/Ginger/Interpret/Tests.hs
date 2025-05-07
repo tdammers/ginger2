@@ -128,11 +128,16 @@ tests = testGroup "Language.Ginger.Interpret"
     , testProperty "Interpolation statement outputs its argument" prop_interpolationStatementOutput
     , testProperty "Comment statement outputs None" prop_commentStatementOutput
     , testProperty "IfS outputs the correct branch" prop_ifStatementOutput
-    , testProperty "ForS simple loop" prop_forStatementSimple
-    , testProperty "ForS simple loop with key" prop_forStatementWithKey
-    , testProperty "ForS loop with else branch" prop_forStatementEmpty
-    , testProperty "ForS loop with filter" prop_forStatementFilter
-    , testProperty "ForS loop loop object" prop_forStatementLoopVars
+    , testGroup "ForS"
+      [ testProperty "simple loop" prop_forStatementSimple
+      , testProperty "simple loop with key" prop_forStatementWithKey
+      , testProperty "with else branch" prop_forStatementEmpty
+      , testProperty "with filter" prop_forStatementFilter
+      , testProperty "loop object" prop_forStatementLoopVars
+      ]
+    , testGroup "CallS"
+      [ testProperty "no args" prop_callNoArgs
+      ]
     ]
   ]
 
@@ -436,3 +441,13 @@ prop_forStatementLoopVars intItems =
   in
     not (null intItems) ==>
     resultFor === expected
+
+prop_callNoArgs :: Expr -> Property
+prop_callNoArgs body =
+  let resultDirect = runGingerIdentityEither (eval body)
+      resultCall = runGingerIdentityEither $ do
+                      setVar "f" $ ProcedureV (GingerProcedure [] body)
+                      eval $ CallS "f" [] []
+  in
+    isRight resultDirect ==>
+    resultCall === resultDirect

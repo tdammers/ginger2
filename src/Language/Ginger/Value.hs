@@ -235,6 +235,12 @@ instance ToValue Word32 a where
 instance ToValue Word64 a where
   toValue = ScalarV . toScalar
 
+instance ToValue Double a where
+  toValue = ScalarV . toScalar
+
+instance ToValue Float a where
+  toValue = ScalarV . toScalar
+
 instance ToValue Text a where
   toValue = ScalarV . toScalar
 

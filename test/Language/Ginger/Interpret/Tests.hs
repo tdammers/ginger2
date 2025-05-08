@@ -144,6 +144,10 @@ tests = testGroup "Language.Ginger.Interpret"
       ]
     , testGroup "CallS"
       [ testProperty "no args" prop_callNoArgs
+      , testProperty "identity" prop_callIdentity
+      ]
+    , testGroup "FilterS"
+      [
       ]
     ]
   ]
@@ -335,7 +339,7 @@ prop_nativeIdentity varName argVarName arg =
 
 prop_userNullary :: Identifier -> Expr -> Property
 prop_userNullary varName bodyExpr =
-  let fVal = ProcedureV $ GingerProcedure [] bodyExpr
+  let fVal = ProcedureV $ GingerProcedure mempty [] bodyExpr
       resultCall = runGingerIdentityEither $ do
                     setVar varName fVal
                     eval $ CallE (VarE varName) [] []
@@ -480,10 +484,34 @@ prop_forStatementLoopVars intItems =
 
 prop_callNoArgs :: Expr -> Property
 prop_callNoArgs body =
-  let resultDirect = runGingerIdentityEither (eval body)
+  let resultDirect = runGingerIdentityEither $ do
+                      eval body
       resultCall = runGingerIdentityEither $ do
-                      setVar "f" $ ProcedureV (GingerProcedure [] body)
+                      setVar "f" $ ProcedureV (GingerProcedure mempty [] body)
                       eval $ CallS "f" [] []
+      cat = case resultDirect of
+              Right {} -> "OK"
+              Left err -> unwords . take 1 . words $ show err
   in
-    isRight resultDirect ==>
+    label cat $
+    resultCall === resultDirect
+
+prop_callIdentity :: Expr -> Property
+prop_callIdentity body =
+  -- Some trickery is needed to make sure that if anything inside @body@
+  -- references a variable @f@, it points to the same thing in both cases.
+  let body' = StatementE $ GroupS
+                              [ SetS "f" NoneE
+                              , InterpolationS body
+                              ]
+      resultDirect = runGingerIdentityEither $
+                      eval body'
+      resultCall = runGingerIdentityEither $ do
+                      setVar "f" $ toValue (id :: Value Identity -> Value Identity)
+                      eval $ CallS "f" [body'] []
+      cat = case resultDirect of
+              Right {} -> "OK"
+              Left err -> unwords . take 1 . words $ show err
+  in
+    label cat $
     resultCall === resultDirect

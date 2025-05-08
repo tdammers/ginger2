@@ -115,6 +115,17 @@ scoped action = do
   put s
   return retval
 
+withEnv :: Monad m
+        => Map Identifier (Value m)
+        -> GingerT m a
+        -> GingerT m a
+withEnv vars action = do
+  s <- get
+  put (s { envVars = vars })
+  retval <- action
+  put s
+  return retval
+
 stringify :: Monad m => Value m -> GingerT m Text
 stringify NoneV = pure ""
 stringify (BoolV True) = pure "true"
@@ -156,7 +167,7 @@ encode (ProcedureV _) = pure $ Encoded "[[procedure]]"
 encode v = encodeText =<< stringify v
 
 mapArgs :: forall m. Monad m
-        => [(Identifier, Maybe Expr)]
+        => [(Identifier, Maybe (Value m))]
         -> [(Maybe Identifier, Value m)]
         -> GingerT m (Map Identifier (Value m))
 mapArgs spec args =
@@ -165,7 +176,7 @@ mapArgs spec args =
     posArgs = [ v | (Nothing, v) <- args ]
     kwArgs = Map.fromList [ (k, v) | (Just k, v) <- args ]
 
-    go :: [(Identifier, Maybe Expr)]
+    go :: [(Identifier, Maybe (Value m))]
        -> [Value m]
        -> Map Identifier (Value m)
        -> GingerT m (Map Identifier (Value m))
@@ -187,7 +198,7 @@ mapArgs spec args =
               -- No positional argument found, see if we have a default
               case defEMay of
                 Just defE -> do
-                  cur <- Map.singleton name <$> evalE defE
+                  let cur = Map.singleton name defE
                   rest <- go specs ps kw
                   pure $ cur <> rest
                 Nothing ->
@@ -202,12 +213,14 @@ call callable posArgsExpr namedArgsExpr = do
   let args = zip (repeat Nothing) posArgs ++ namedArgs
   case callable of
     ProcedureV (NativeProcedure f) ->
-      native $ f args
-    ProcedureV (GingerProcedure argsSig f) -> do
-      argDict <- mapArgs argsSig args
-      scoped $ do
-        setVars argDict
-        evalE f
+      withEnv mempty $ do
+        native $ f args
+    ProcedureV (GingerProcedure env argsSig f) -> do
+      withEnv env $ do
+        argDict <- mapArgs argsSig args
+        scoped $ do
+          setVars argDict
+          evalE f
     DictV m -> do
       let callable' = Map.lookup "__call__" m
       case callable' of
@@ -474,7 +487,13 @@ evalS (IfS condE yesS noSMay) = do
   cond <- evalE condE >>= asBool "condition"
   if cond then evalS yesS else maybe (pure NoneV) evalS noSMay
 evalS (MacroS name argsSig body) = do
-  setVar name . ProcedureV $ GingerProcedure argsSig (StatementE body)
+  env <- gets envVars
+  argsSig' <- mapM (\(argname, defEMay) -> do
+                  defMay <- maybe (pure Nothing) (fmap Just . evalE) defEMay
+                  pure (argname, defMay)
+                )
+                argsSig
+  setVar name . ProcedureV $ GingerProcedure env argsSig' (StatementE body)
   pure NoneV
 
 evalS (CallS name posArgsExpr namedArgsExpr) = do
@@ -583,7 +602,7 @@ evalLoop loopKeyMay loopName iteree loopCondMay recursivity bodyS elseSMay recur
             , "depth0" .= recursionLevel
             , "previtem" .= prevVal
             , "nextitem" .= (snd <$> listToMaybe xs)
-            , "changed" .= changedFunc
+            , "changed" .= changedFunc (envVars env) v
             , "__call__" .= if is recursivity then Just (recurFunc ctx env) else Nothing
             ]
         body <- evalS bodyS
@@ -592,8 +611,8 @@ evalLoop loopKeyMay loopName iteree loopCondMay recursivity bodyS elseSMay recur
       rest <- go (succ n) num prevVal' xs
       concatValues body rest
 
-    changedFunc :: Value m
-    changedFunc = ProcedureV $ GingerProcedure [("val", Just (VarE loopName))] $
+    changedFunc :: Map Identifier (Value m) -> Value m -> Value m
+    changedFunc env v = ProcedureV $ GingerProcedure env [("val", Just v)] $
       BinaryE BinopEqual (BinaryE BinopIndex (VarE "loop") (StringLitE "previtem")) (VarE "val")
 
     recurFunc :: Context m -> Env m -> Value m

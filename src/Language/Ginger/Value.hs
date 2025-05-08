@@ -94,7 +94,7 @@ pattern FloatV v = ScalarV (FloatScalar v)
 
 data Procedure m
   = NativeProcedure !([(Maybe Identifier, Value m)] -> m (Either RuntimeError (Value m)))
-  | GingerProcedure ![(Identifier, Maybe Expr)] !Expr
+  | GingerProcedure !(Map Identifier (Value m)) ![(Identifier, Maybe (Value m))] !Expr
 
 data NativeObject m =
   NativeObject

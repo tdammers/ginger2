@@ -20,6 +20,9 @@ data RuntimeError
       (Maybe Text) -- ^ Identifier
   | NotImplementedError
       (Maybe Text) -- ^ The thing that isn't implemented
+  | NumericError
+      (Maybe Text) -- ^ Identifier / object / context
+      (Maybe Text) -- ^ Error description
   deriving (Show, Eq)
 
 instance Exception RuntimeError where

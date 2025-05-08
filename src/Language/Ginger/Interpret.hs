@@ -15,7 +15,20 @@ import Language.Ginger.AST
 import Language.Ginger.RuntimeError
 import Language.Ginger.Value
 
-import Control.Monad (foldM)
+import Control.Monad (foldM, (>=>))
+import Control.Monad.Except
+  ( ExceptT (..)
+  , MonadError (..)
+  , runExceptT
+  , throwError
+  )
+import Control.Monad.Reader
+  ( ReaderT
+  , MonadReader
+  , runReaderT
+  , ask
+  , asks
+  )
 import Control.Monad.State
   ( StateT (..)
   , MonadState (..)
@@ -25,27 +38,14 @@ import Control.Monad.State
   , gets
   , modify
   )
-import Control.Monad.Reader
-  ( ReaderT
-  , MonadReader
-  , runReaderT
-  , ask
-  , asks
-  )
-import Control.Monad.Except
-  ( ExceptT (..)
-  , MonadError (..)
-  , runExceptT
-  , throwError
-  )
 import qualified Data.ByteString.Base64 as Base64
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (listToMaybe)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Text.Encoding (decodeUtf8)
-import Data.Maybe (listToMaybe)
 
 newtype Env m =
   Env
@@ -272,22 +272,53 @@ numericBinop :: Monad m
              -> Value m
              -> Value m
              -> GingerT m (Value m)
-numericBinop f _ (IntV a) (IntV b) = pure . IntV $ a `f` b
-numericBinop _ f (FloatV a) (FloatV b) = pure . FloatV $ a `f` b
-numericBinop _ f (IntV a) (FloatV b) = pure . FloatV $ fromInteger a `f` b
-numericBinop _ f (FloatV a) (IntV b) = pure . FloatV $ a `f` fromInteger b
-numericBinop _ _ (FloatV _) b = throwError (TagError Nothing (Just "number") (Just . tagNameOf $ b))
-numericBinop _ _ (IntV _) b = throwError (TagError Nothing (Just "number") (Just . tagNameOf $ b))
-numericBinop _ _ b _ = throwError (TagError Nothing (Just "number") (Just . tagNameOf $ b))
+numericBinop f g =
+  numericBinopCatch f' g'
+  where
+    f' x y = Right (f x y)
+    g' x y = Right (g x y)
+
+numericBinopCatch :: Monad m
+                  => (Integer -> Integer -> Either RuntimeError Integer)
+                  -> (Double -> Double -> Either RuntimeError Double)
+                  -> Value m
+                  -> Value m
+                  -> GingerT m (Value m)
+numericBinopCatch f _ (IntV a) (IntV b) = IntV <$> eitherCatch (a `f` b)
+numericBinopCatch _ f (FloatV a) (FloatV b) = FloatV <$> (eitherCatch >=> catchNaN) (a `f` b)
+numericBinopCatch _ f (IntV a) (FloatV b) = FloatV <$> (eitherCatch >=> catchNaN) (fromInteger a `f` b)
+numericBinopCatch _ f (FloatV a) (IntV b) = FloatV <$> (eitherCatch >=> catchNaN) (a `f` fromInteger b)
+numericBinopCatch _ _ (FloatV _) b = throwError (TagError Nothing (Just "number") (Just . tagNameOf $ b))
+numericBinopCatch _ _ (IntV _) b = throwError (TagError Nothing (Just "number") (Just . tagNameOf $ b))
+numericBinopCatch _ _ b _ = throwError (TagError Nothing (Just "number") (Just . tagNameOf $ b))
+
+eitherCatch :: Monad m => (Either RuntimeError a) -> GingerT m a
+eitherCatch = either throwError pure
+
+catchNaN :: Monad m => Double -> GingerT m Double
+catchNaN c | isNaN c = throwError $ NumericError Nothing (Just "not a number")
+catchNaN c | isInfinite c = throwError $ NumericError Nothing (Just "infinity")
+catchNaN c = pure c
 
 intBinop :: Monad m
-         => (Integer -> Integer -> Integer)
+         => (Integer -> Integer -> Either RuntimeError Integer)
          -> Value m
          -> Value m
          -> GingerT m (Value m)
-intBinop f (IntV a) (IntV b) = pure . IntV $ a `f` b
+intBinop f (IntV a) (IntV b) = IntV <$> eitherCatch (a `f` b)
 intBinop _ (IntV _) b = throwError (TagError Nothing (Just "int") (Just . tagNameOf $ b))
 intBinop _ b _ = throwError (TagError Nothing (Just "int") (Just . tagNameOf $ b))
+
+floatBinop :: Monad m
+         => (Double -> Double -> Either RuntimeError Double)
+         -> Value m
+         -> Value m
+         -> GingerT m (Value m)
+floatBinop f (IntV a) b = floatBinop f (FloatV $ fromIntegral a) b
+floatBinop f (FloatV a) (IntV b) = floatBinop f (FloatV a) (FloatV $ fromIntegral b)
+floatBinop f (FloatV a) (FloatV b) = FloatV <$> eitherCatch (a `f` b)
+floatBinop _ (FloatV _) b = throwError (TagError Nothing (Just "float") (Just . tagNameOf $ b))
+floatBinop _ b _ = throwError (TagError Nothing (Just "float") (Just . tagNameOf $ b))
 
 boolBinop :: Monad m
          => (Bool -> Bool -> Bool)
@@ -348,11 +379,11 @@ dictsEqual m1 m2 =
 evalBinary :: Monad m => BinaryOperator -> Value m -> Value m -> GingerT m (Value m)
 evalBinary BinopPlus a b = numericBinop (+) (+) a b
 evalBinary BinopMinus a b = numericBinop (-) (-) a b
-evalBinary BinopDiv a b = numericBinop (div) (/) a b
-evalBinary BinopIntDiv a b = intBinop div a b
-evalBinary BinopMod a b = intBinop mod a b
+evalBinary BinopDiv a b = floatBinop safeDiv a b
+evalBinary BinopIntDiv a b = intBinop safeIntDiv a b
+evalBinary BinopMod a b = intBinop safeIntMod a b
 evalBinary BinopMul a b = numericBinop (*) (*) a b
-evalBinary BinopPower a b = numericBinop (^) (**) a b
+evalBinary BinopPower a b = numericBinopCatch safeIntPow (\x y -> Right (x ** y)) a b
 evalBinary BinopEqual a b = BoolV <$> valuesEqual a b
 evalBinary BinopNotEqual a b = BoolV . not <$> valuesEqual a b
 evalBinary BinopGT a b = valueComparison (== GT) a b
@@ -386,6 +417,26 @@ evalBinary BinopIndex a b = case a of
     x -> throwError $ TagError (Just "in") (Just "int") (Just . tagNameOf $ x)
   x -> throwError $ TagError (Just "in") (Just "list or dict") (Just . tagNameOf $ x)
 evalBinary BinopConcat a b = concatValues a b
+
+safeIntPow :: Integer -> Integer -> Either RuntimeError Integer
+safeIntPow _ b | b < 0 = Left (NumericError (Just "**") (Just "negative exponent"))
+safeIntPow a b = Right (a ^ b)
+
+safeIntDiv :: Integer -> Integer -> Either RuntimeError Integer
+safeIntDiv _ 0 = Left (NumericError (Just "//") (Just "division by zero"))
+safeIntDiv a b = Right (a `div` b)
+
+safeIntMod :: Integer -> Integer -> Either RuntimeError Integer
+safeIntMod _ 0 = Left (NumericError (Just "%") (Just "modulo by zero"))
+safeIntMod a b = Right (a `mod` b)
+
+safeDiv :: Double -> Double -> Either RuntimeError Double
+safeDiv a b =
+  case a / b of
+    c | isNaN c -> Left (NumericError (Just "/") (Just "not a number"))
+    c | isInfinite c -> Left (NumericError (Just "/") (Just $ "division by zero"))
+    c -> Right c
+  
 
 concatValues :: Monad m => (Value m) -> (Value m) -> GingerT m (Value m)
 concatValues a b = case (a, b) of

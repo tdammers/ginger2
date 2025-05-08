@@ -69,6 +69,7 @@ tests = testGroup "Language.Ginger.Interpret"
       , testProperty "Integer subtraction" (prop_binop @Integer BinopMinus (-))
       , testProperty "Integer multiplication" (prop_binop @Integer BinopMul (*))
       , testProperty "Integer division" (prop_binopCond @Integer Just justNonzero BinopIntDiv div)
+      , testProperty "Integer division by zero" prop_intDivByZero
       , testProperty "Integer modulo" (prop_binopCond @Integer Just justNonzero BinopMod mod)
       , testProperty "Integer power" (prop_binopCond @Integer @Integer justPositive justPositive BinopPower (^))
 
@@ -76,6 +77,8 @@ tests = testGroup "Language.Ginger.Interpret"
       , testProperty "Double subtraction" (prop_binop @Double BinopMinus (-))
       , testProperty "Double multiplication" (prop_binop @Double BinopMul (*))
       , testProperty "Double division" (prop_binopCond @Double Just justNonzero BinopDiv (/))
+      , testProperty "Double division by zero" prop_divByZero
+      , testProperty "Double division to NaN" prop_divToNaN
       , testProperty "Double power" (prop_binopCond @Double justPositive Just BinopPower (**))
 
       , testProperty "Integer equal" (prop_binop @Integer BinopEqual (==))
@@ -109,8 +112,12 @@ tests = testGroup "Language.Ginger.Interpret"
       , testProperty "List index (Word8/Integer)" (prop_binop @[Integer] @Word8 BinopIndex (flip $ safeAt . fromIntegral))
       , testProperty "Dict index (Word8/Integer)" (prop_binop @(Map Word8 Integer) @Word8 BinopIndex (flip Map.lookup))
 
-      , testProperty "Bytes concatenation" (prop_binopCond @ByteString (Just . BS.pack) (Just . BS.pack) BinopConcat (<>))
-      , testProperty "String concatenation" (prop_binopCond @Text (Just . Text.pack) (Just . Text.pack) BinopConcat (<>))
+      , testProperty "Bytes concatenation" $
+          prop_binopCond @ByteString (Just . BS.pack) (Just . BS.pack) BinopConcat (<>)
+      , testProperty "String concatenation" $
+          prop_binopCond @Text (Just . Text.pack) (Just . Text.pack) BinopConcat (<>)
+      , testProperty "Int concatenation" $
+          prop_binop @Int @Int @Text BinopConcat (\a b -> Text.show a <> Text.show b)
       ]
       , testGroup "CallE"
         [ testProperty "Native nullary" prop_nativeNullary
@@ -245,6 +252,31 @@ prop_binopCond fX fY binop f x' y' =
     isJust y ==>
     resultG === resultH
 
+prop_intDivByZero :: Integer -> Property
+prop_intDivByZero i =
+  let result = runGingerIdentityEither $ do
+                  setVar "i" (toValue i)
+                  eval (BinaryE BinopIntDiv (IntLitE i) (IntLitE 0))
+  in
+    i /= 0 ==>
+    result === Left (NumericError (Just "//") (Just "division by zero"))
+
+prop_divByZero :: Double -> Property
+prop_divByZero d =
+  let result = runGingerIdentityEither $ do
+                  setVar "d" (toValue d)
+                  eval (BinaryE BinopDiv (FloatLitE d) (FloatLitE 0))
+  in
+    d /= 0 ==>
+    result === Left (NumericError (Just "/") (Just "division by zero"))
+
+prop_divToNaN :: Property
+prop_divToNaN =
+  let result = runGingerIdentityEither $ do
+                  eval (BinaryE BinopDiv (FloatLitE 0) (FloatLitE 0))
+  in
+    result === Left (NumericError (Just "/") (Just "not a number"))
+
 prop_literal :: ToValue a Identity => (a -> Expr) -> a -> Property
 prop_literal = prop_literalWith id
 
@@ -296,6 +328,9 @@ prop_nativeIdentity varName argVarName arg =
                 setVar argVarName argVal
                 eval expr
   in
+    counterexample (show fVal) $
+    counterexample (show argVal) $
+    varName /= argVarName ==>
     result === argVal
 
 prop_userNullary :: Identifier -> Expr -> Property
@@ -338,7 +373,7 @@ prop_ifStatementOutput cond yes no =
       resultE = if cond then resultYes else resultNo
       resultIf = runGingerIdentityEither (eval $ IfS (BoolE cond) yes (Just no))
   in
-    isRight resultE ==>
+    -- isRight resultE ==>
     resultIf === resultE
 
 prop_forStatementSimple :: Identifier -> Identifier -> [String] -> Property
@@ -362,7 +397,8 @@ prop_forStatementSimple itereeName varName strItems =
 prop_forStatementWithKey :: Identifier -> Identifier -> Identifier -> [String] -> Property
 prop_forStatementWithKey itereeName varName keyName strItems =
   let items = ListV $ map (StringV . Text.pack) strItems
-      expected = StringV . Text.pack . mconcat $ [ show k ++ v | (k, v) <- zip [(0 :: Int) ..] strItems ]
+      expected = StringV . Text.pack . mconcat $
+                  [ show k ++ v | (k, v) <- zip [(0 :: Int) ..] strItems ]
       resultFor = runGingerIdentity $ do
                     setVar itereeName items
                     eval $ ForS
@@ -378,6 +414,7 @@ prop_forStatementWithKey itereeName varName keyName strItems =
                             ) -- loop body
                             Nothing -- empty body
   in
+    varName /= keyName ==>
     not (null strItems) ==>
     resultFor === expected
 
@@ -395,7 +432,6 @@ prop_forStatementEmpty body =
                       (Just body)
                     )
   in
-    isRight resultDirect ==>
     resultFor === resultDirect
 
 prop_forStatementFilter :: [Integer] -> Property

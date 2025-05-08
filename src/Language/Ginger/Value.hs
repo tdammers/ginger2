@@ -29,20 +29,20 @@ import Language.Ginger.RuntimeError
 
 data Scalar
   = NoneScalar
-  | BoolScalar Bool
-  | StringScalar Text
-  | EncodedScalar Encoded
-  | BytesScalar ByteString
-  | IntScalar Integer
-  | FloatScalar Double
+  | BoolScalar !Bool
+  | StringScalar !Text
+  | EncodedScalar !Encoded
+  | BytesScalar !ByteString
+  | IntScalar !Integer
+  | FloatScalar !Double
   deriving (Show, Eq, Ord)
 
 data Value m
-  = ScalarV Scalar
-  | ListV [Value m]
-  | DictV (Map Scalar (Value m))
-  | NativeV (NativeObject m)
-  | ProcedureV (Procedure m)
+  = ScalarV !Scalar
+  | ListV ![Value m]
+  | DictV !(Map Scalar (Value m))
+  | NativeV !(NativeObject m)
+  | ProcedureV !(Procedure m)
 
 traverseValue :: Monoid a => (Value m -> a) -> Value m -> a
 traverseValue p v@(ListV xs) =
@@ -93,8 +93,8 @@ pattern FloatV :: Double -> Value m
 pattern FloatV v = ScalarV (FloatScalar v)
 
 data Procedure m
-  = NativeProcedure ([(Maybe Identifier, Value m)] -> m (Either RuntimeError (Value m)))
-  | GingerProcedure [(Identifier, Maybe Expr)] Expr
+  = NativeProcedure !([(Maybe Identifier, Value m)] -> m (Either RuntimeError (Value m)))
+  | GingerProcedure ![(Identifier, Maybe Expr)] !Expr
 
 data NativeObject m =
   NativeObject

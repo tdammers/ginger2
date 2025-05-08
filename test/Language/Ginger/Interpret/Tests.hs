@@ -376,8 +376,12 @@ prop_ifStatementOutput cond yes no =
       resultNo = runGingerIdentityEither (eval no)
       resultE = if cond then resultYes else resultNo
       resultIf = runGingerIdentityEither (eval $ IfS (BoolE cond) yes (Just no))
+      hasProcedure = case resultE of
+                        Left _ -> False
+                        Right v -> getAny (traverseValue (Any . isProcedure) v)
   in
-    -- isRight resultE ==>
+    -- exclude procedures, because we cannot compare those
+    not hasProcedure ==>
     resultIf === resultE
 
 prop_forStatementSimple :: Identifier -> Identifier -> [String] -> Property

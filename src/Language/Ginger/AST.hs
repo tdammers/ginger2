@@ -88,7 +88,7 @@ data Statement
       !Required -- required block?
   | WithS ![(Identifier, Expr)] Statement
   | GroupS ![Statement]
-  deriving (Show)
+  deriving (Show, Eq)
 
 instance Arbitrary Statement where
   arbitrary = arbitraryStatement mempty
@@ -196,7 +196,7 @@ data Expr
   | CallE !Expr ![Expr] ![(Identifier, Expr)]
   | TernaryE !Expr !Expr !Expr
   | VarE !Identifier
-  deriving (Show)
+  deriving (Show, Eq)
 
 instance Arbitrary Expr where
   arbitrary = arbitraryExpr mempty

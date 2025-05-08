@@ -22,13 +22,15 @@ library
                    , Language.Ginger.AST
                    , Language.Ginger.Value
                    , Language.Ginger.Interpret
+                   , Language.Ginger.Parse
                    , Language.Ginger.RuntimeError
     -- other-modules:
     -- other-extensions:
     build-depends: base ^>=4.20.0.0
                  , base64-bytestring >=1.2.1.0 && <1.3
                  , bytestring >=0.12.2.0 && <0.13
-                 , containers >=0.8 && <0.9
+                 , containers >=0.7 && <0.9
+                 , megaparsec >=9.7.0 && <9.8
                  , mtl >=2.3.1 && <2.4
                  , tasty >=1.5.3 && <1.6
                  , tasty-quickcheck >=0.11.1 && <0.12
@@ -58,12 +60,15 @@ test-suite ginger-test
     other-modules: Language.Ginger.Value.Tests
                  , Language.Ginger.AST.Tests
                  , Language.Ginger.Interpret.Tests
+                 , Language.Ginger.Parse.Tests
     build-depends: base ^>=4.20.0.0
                  , ginger
                  , base64-bytestring >=1.2.1.0 && <1.3
                  , bytestring >=0.12.2.0 && <0.13
-                 , containers >=0.8 && <0.9
+                 , containers >=0.7 && <0.9
+                 , megaparsec >=9.7.0 && <9.8
                  , mtl >=2.3.1 && <2.4
                  , tasty >=1.5.3 && <1.6
                  , tasty-quickcheck >=0.11.1 && <0.12
+                 , tasty-hunit >=0.10.2 && <0.11
                  , text >= 2.0 && <2.3

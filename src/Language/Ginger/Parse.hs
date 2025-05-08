@@ -4,13 +4,14 @@
 module Language.Ginger.Parse
 where
 
-import Control.Monad (void)
+import Control.Monad (void, when)
 import qualified Data.Text as Text
 import Data.Text (Text)
 import Data.Void (Void)
 import Text.Megaparsec
 import Text.Megaparsec.Char
-import Data.Char (isAlphaNum, isAlpha)
+import Data.Char (isAlphaNum, isAlpha, isDigit)
+import Data.List.NonEmpty (NonEmpty (..))
 
 -- import Language.Ginger.Value
 import Language.Ginger.AST
@@ -66,6 +67,40 @@ stringLitP = do
 stringLitCharP :: P Char
 stringLitCharP = escapedStringLitCharP <|> plainStringLitCharP
 
+intLitP :: P Integer
+intLitP = do
+  read <$> intDigitsP
+
+intDigitsP :: P String
+intDigitsP = do
+  sign <- option "" $ "-" <$ char '-'
+  x <- satisfy (\c -> isDigit c && c /= '0')
+  xs <- many digitP
+  space
+  pure (sign ++ (x : xs))
+
+floatLitP :: P Double
+floatLitP = do
+  m <- do
+    sign <- option "" $ "-" <$ char '-'
+    intPart <- many digitP
+    void $ char '.'
+    fracPart <- many digitP
+    when (null intPart && null fracPart)
+      (unexpected $ Label $ 'd' :| "ot-only float")
+    pure $ sign ++
+           (if null intPart then "0" else intPart) ++
+           "." ++
+           (if null fracPart then "0" else fracPart)
+  e <- option "" $ do
+    void $ char 'E' <|> char 'e'
+    ('e' :) <$> intDigitsP
+  pure . read $ m ++ e
+
+
+digitP :: P Char
+digitP = satisfy isDigit
+
 escapedStringLitCharP :: P Char
 escapedStringLitCharP = do
   void $ char '\\'
@@ -82,7 +117,19 @@ plainStringLitCharP :: P Char
 plainStringLitCharP = satisfy (`notElem` ['\\', '"'])
 
 exprP :: P Expr
-exprP = booleanExprP
+exprP = ternaryExprP
+
+ternaryExprP :: P Expr
+ternaryExprP = do
+  lhs <- booleanExprP
+  option lhs $ tailP lhs
+  where
+    tailP lhs = do
+      keywordP "if"
+      cond <- booleanExprP
+      keywordP "else"
+      rhs <- ternaryExprP
+      pure $ TernaryE cond lhs rhs
 
 binaryExprP :: P BinaryOperator -> P Expr -> P Expr
 binaryExprP opP subP = do
@@ -102,8 +149,8 @@ booleanExprP = binaryExprP booleanOpP comparativeExprP
 
 booleanOpP :: P BinaryOperator
 booleanOpP = choice
-  [ BinopAnd <$ operatorP "&&"
-  , BinopOr <$ operatorP "||"
+  [ BinopAnd <$ keywordP "and"
+  , BinopOr <$ keywordP "or"
   ]
 
 comparativeExprP :: P Expr
@@ -160,6 +207,7 @@ memberAccessExprP = do
     tailP lhs = dotTailP lhs
               <|> bracketsTailP lhs
               <|> callTailP lhs
+              <|> filterTailP lhs
               <|> pure lhs
 
     dotTailP lhs = do
@@ -175,6 +223,12 @@ memberAccessExprP = do
       (posArgs, kwArgs) <- callArgsP
       tailP (CallE lhs posArgs kwArgs)
 
+    filterTailP lhs = do
+      operatorP "|"
+      callable <- simpleExprP
+      (posArgs, kwArgs) <- option ([], []) $ callArgsP
+      tailP (CallE callable (lhs : posArgs) kwArgs)
+
 callArgsP :: P ([Expr], [(Identifier, Expr)])
 callArgsP = do
   args <- parenthesized $ argPairP `sepBy` commaP
@@ -188,11 +242,25 @@ argPairP = try kwArgPairP <|> ((Nothing ,) <$> exprP)
 kwArgPairP :: P (Maybe Identifier, Expr)
 kwArgPairP =
   (,) <$> (Just <$> identifierP) <*> (equalsP *> exprP)
-  
+
+listP :: P [Expr]
+listP = bracketed (exprP `sepBy` commaP)
+
+dictP :: P [(Expr, Expr)]
+dictP = braced (dictPairP `sepBy` commaP)
+
+dictPairP :: P (Expr, Expr)
+dictPairP =
+  (,) <$> exprP <*> (colonP *> exprP)
+
 simpleExprP :: P Expr
 simpleExprP = choice
   [ parenthesized exprP
   , StringLitE <$> stringLitP
+  , ListE <$> listP
+  , DictE <$> dictP
+  , FloatLitE <$> try floatLitP
+  , IntLitE <$> try intLitP
   , BoolE True <$ (keywordP "true" <|> keywordP "True")
   , BoolE False <$ (keywordP "false" <|> keywordP "False")
   , NoneE <$ (keywordP "none" <|> keywordP "None")
@@ -205,6 +273,9 @@ equalsP = char '=' *> space
 commaP :: P ()
 commaP = char ',' *> space
 
+colonP :: P ()
+colonP = char ':' *> space
+
 parenthesized :: P a -> P a
 parenthesized = betweenT "(" ")"
 
@@ -212,7 +283,7 @@ bracketed :: P a -> P a
 bracketed = betweenT "[" "]"
 
 braced :: P a -> P a
-braced = between "{" "}"
+braced = betweenT "{" "}"
 
 betweenT :: Text -> Text -> P c -> P c
 betweenT o c =

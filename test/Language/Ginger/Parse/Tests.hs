@@ -20,6 +20,26 @@ tests = testGroup "Language.Ginger.Parse"
     [ testGroup "Simple"
       [ testCase "StringLitE simple" $
           test_parser exprP "\"Hello\"" (StringLitE "Hello")
+      , testCase "IntLitE positive" $
+          test_parser exprP "2134" (IntLitE 2134)
+      , testCase "IntLitE negative" $
+          test_parser exprP "-2134" (IntLitE (-2134))
+      , testCase "FloatLitE positive decimal" $
+          test_parser exprP "21.34" (FloatLitE 21.34)
+      , testCase "FloatLitE negative decimal" $
+          test_parser exprP "-21.34" (FloatLitE (-21.34))
+      , testCase "FloatLitE positive exponential" $
+          test_parser exprP "21.34e10" (FloatLitE 21.34e10)
+      , testCase "FloatLitE negative exponential" $
+          test_parser exprP "-21.34e10" (FloatLitE (-21.34e10))
+      , testCase "FloatLitE positive exponential, negative exponent" $
+          test_parser exprP "21.34e-10" (FloatLitE 21.34e-10)
+      , testCase "FloatLitE positive decimal, leading dot" $
+          test_parser exprP ".34" (FloatLitE 0.34)
+      , testCase "FloatLitE positive decimal, trailing dot" $
+          test_parser exprP "12." (FloatLitE 12)
+      , testCase "FloatLitE negative decimal, leading dot" $
+          test_parser exprP "-.34" (FloatLitE (-0.34))
       , testCase "NoneE" $
           test_parser exprP "none" NoneE
       , testCase "BoolE True" $
@@ -59,11 +79,49 @@ tests = testGroup "Language.Ginger.Parse"
           , (BinopGTE, ">=")
           , (BinopLT, "<")
           , (BinopLTE, "<=")
-          , (BinopAnd, "&&")
-          , (BinopOr, "||")
+          , (BinopAnd, "and")
+          , (BinopOr, "or")
           , (BinopIn, "in")
           , (BinopConcat, "~")
           ]
+    , testGroup "List"
+      [ testCase "empty list" $
+          test_parser exprP "[]" (ListE [])
+      , testCase "single-item list" $
+          test_parser exprP "[ 1 ] " (ListE [IntLitE 1])
+      , testCase "multi-item list" $
+          test_parser exprP "[ 1, \"aaa\" ] " (ListE [IntLitE 1, StringLitE "aaa"])
+      , testCase "nested list" $
+          test_parser exprP "[ [ none ], true, false ] "
+            (ListE
+              [ ListE [ NoneE ]
+              , BoolE True
+              , BoolE False
+              ])
+      ]
+    , testGroup "Dict"
+      [ testCase "empty dict" $
+          test_parser exprP "{}" (DictE [])
+      , testCase "single-item dict" $
+          test_parser exprP "{ 1: none } " (DictE [(IntLitE 1, NoneE)])
+      , testCase "multi-item dict" $
+          test_parser exprP "{ foo: 1, bar: \"aaa\" } " (DictE [(VarE "foo", IntLitE 1), (VarE "bar", StringLitE "aaa")])
+      , testCase "nested dict" $
+          test_parser exprP "{ \"a\": {}, \"b\": { \"c\": 123 }}"
+            (DictE
+              [ (StringLitE "a", DictE [])
+              , (StringLitE "b", DictE [(StringLitE "c", IntLitE 123)])
+              ])
+      ]
+    , testGroup "ternary" $
+      [ testCase "simple" $
+          test_parser exprP "foo if bar else baz"
+            (TernaryE (VarE "bar") (VarE "foo") (VarE "baz"))
+      , testCase "nested" $
+          test_parser exprP "foo if bar else baz if quux else none"
+            (TernaryE (VarE "bar") (VarE "foo")
+              (TernaryE (VarE "quux") (VarE "baz") NoneE))
+      ]
     , testGroup "Call and index"
       [ testCase "call nullary" $
           test_parser exprP "foo()" (CallE (VarE "foo") [] [])
@@ -81,6 +139,12 @@ tests = testGroup "Language.Ginger.Parse"
           test_parser exprP "foo[bar]" (BinaryE BinopIndex (VarE "foo") (VarE "bar"))
       , testCase "dot-member" $
           test_parser exprP "foo.bar" (BinaryE BinopIndex (VarE "foo") (StringLitE "bar"))
+      , testCase "filter (no args)" $
+          test_parser exprP "foo|bar" (CallE (VarE "bar") [VarE "foo"] [])
+      , testCase "filter (positional arg)" $
+          test_parser exprP "foo|bar(baz)" (CallE (VarE "bar") [VarE "foo", VarE "baz"] [])
+      , testCase "filter (kw arg)" $
+          test_parser exprP "foo|bar(baz=quux)" (CallE (VarE "bar") [VarE "foo"] [("baz", VarE "quux")])
       ]
     ]
     , testGroup "Precedence"
@@ -105,9 +169,9 @@ tests = testGroup "Language.Ginger.Parse"
               (BinaryE BinopPlus (VarE "a") (VarE "b"))
               (BinaryE BinopPlus (VarE "c") (VarE "d"))
             )
-      , testCase "== vs &&" $
+      , testCase "== vs and" $
           test_parser exprP
-            "a == b && c == d"
+            "a == b and c == d"
             (BinaryE BinopAnd
               (BinaryE BinopEqual (VarE "a") (VarE "b"))
               (BinaryE BinopEqual (VarE "c") (VarE "d"))

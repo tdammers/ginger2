@@ -241,7 +241,7 @@ memberAccessExprP = do
       operatorP "|"
       callable <- simpleExprP
       (posArgs, kwArgs) <- option ([], []) $ callArgsP
-      tailP (CallE callable (lhs : posArgs) kwArgs)
+      tailP (FilterE lhs callable posArgs kwArgs)
 
 callArgsP :: P ([Expr], [(Identifier, Expr)])
 callArgsP = do

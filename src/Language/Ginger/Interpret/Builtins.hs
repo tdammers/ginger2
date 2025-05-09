@@ -29,19 +29,78 @@ defEnv =
 
 defEnvVars :: forall m. Monad m => Map Identifier (Value m)
 defEnvVars = Map.fromList
-  [ ("defined", TestV $ NativeTest isDefined)
-  , ("undefined", TestV $ NativeTest isUndefined)
-  , ("callable", toValue (isCallable @m))
-  , ("boolean", toValue (isBool @m))
-  , ("integer", toValue (isInteger @m))
-  , ("float", toValue (isFloat @m))
-  , ("number", toValue (isNumber @m))
-  , ("string", toValue (isString @m))
-  , ("test", toValue (isTest @m))
-  , ("filter", toValue (isCallable @m))
-  , ("iterable", toValue (isIterable @m))
-  , ("mapping", toValue (isMapping @m))
-  , ("sequence", toValue (isSequence @m))
+  [ ( "jinja-tests"
+    , dictV
+        [ ("defined", TestV $ NativeTest isDefined)
+        , ("undefined", TestV $ NativeTest isUndefined)
+        , ("callable", toValue (isCallable @m))
+        , ("boolean", toValue (isBool @m))
+        , ("integer", toValue (isInteger @m))
+        , ("float", toValue (isFloat @m))
+        , ("number", toValue (isNumber @m))
+        , ("string", toValue (isString @m))
+        , ("test", toValue (isTest @m))
+        , ("filter", toValue (isCallable @m))
+        , ("iterable", toValue (isIterable @m))
+        , ("mapping", toValue (isMapping @m))
+        , ("sequence", toValue (isSequence @m))
+        -- , ("upper", toValue (isUpper @m))
+        ]
+    )
+  , ( "jinja-filters"
+    , dictV []
+    )
+  -- , ("abs", undefined)
+  -- , ("attr", undefined)
+  -- , ("batch", undefined)
+  -- , ("capitalize", undefined)
+  -- , ("center", undefined)
+  -- , ("default", undefined)
+  -- , ("dictsort", undefined)
+  -- , ("escape", undefined)
+  -- , ("filesizeformat", undefined)
+  -- , ("first", undefined)
+  -- , ("float", undefined)
+  -- , ("forceescape", undefined)
+  -- , ("format", undefined)
+  -- , ("groupby", undefined)
+  -- , ("indent", undefined)
+  -- , ("int", undefined)
+  -- , ("items", undefined)
+  -- , ("join", undefined)
+  -- , ("last", undefined)
+  -- , ("length", undefined)
+  -- , ("list", undefined)
+  -- , ("lower", undefined)
+  -- , ("map", undefined)
+  -- , ("max", undefined)
+  -- , ("min", undefined)
+  -- , ("pprint", undefined)
+  -- , ("random", undefined)
+  -- , ("reject", undefined)
+  -- , ("rejectattr", undefined)
+  -- , ("replace", undefined)
+  -- , ("reverse", undefined)
+  -- , ("round", undefined)
+  -- , ("safe", undefined)
+  -- , ("select", undefined)
+  -- , ("selectattr", undefined)
+  -- , ("slice", undefined)
+  -- , ("sort", undefined)
+  -- , ("string", undefined)
+  -- , ("striptags", undefined)
+  -- , ("sum", undefined)
+  -- , ("title", undefined)
+  -- , ("tojson", undefined)
+  -- , ("trim", undefined)
+  -- , ("truncate", undefined)
+  -- , ("unique", undefined)
+  -- , ("upper", undefined)
+  -- , ("urlencode", undefined)
+  -- , ("urlize", undefined)
+  -- , ("wordcount", undefined)
+  -- , ("wordwrap", undefined)
+  -- , ("xmlattr", undefined)
   ]
 
 isCallable :: Monad m => Value m -> Value m
@@ -139,6 +198,12 @@ isDefined (DictE ((k, v):xs)) [] ctx env = do
   pure $ allEitherBool [definedK, definedV, definedXS]
 isDefined (IsE {}) [] _ _ = pure . Right $ True
 isDefined (StatementE {}) [] _ _ = pure . Right $ True
+isDefined (FilterE posArg0 callee posArgs kwArgs) [] ctx env = do
+  definedPosArg0 <- isDefined posArg0 [] ctx env
+  definedCallee <- isDefined callee [] ctx env
+  definedPosArgs <- allEitherBool <$> mapM (\x -> isDefined x [] ctx env) posArgs
+  definedKWArgs <- allEitherBool <$> mapM (\(_, x) -> isDefined x [] ctx env) kwArgs
+  pure $ allEitherBool [definedPosArg0, definedCallee, definedPosArgs, definedKWArgs]
 isDefined (CallE callee posArgs kwArgs) [] ctx env = do
   definedCallee <- isDefined callee [] ctx env
   definedPosArgs <- allEitherBool <$> mapM (\x -> isDefined x [] ctx env) posArgs

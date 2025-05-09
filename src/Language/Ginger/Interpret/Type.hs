@@ -7,6 +7,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LambdaCase #-}
 
 module Language.Ginger.Interpret.Type
 where
@@ -15,6 +16,7 @@ import Language.Ginger.AST
 import Language.Ginger.RuntimeError
 import Language.Ginger.Value
 
+import Control.Monad (forM)
 import Control.Monad.Except
   ( ExceptT (..)
   , MonadError (..)
@@ -98,3 +100,18 @@ withEnv vars action = do
   put s
   return retval
 
+scopify :: forall m. Monad m
+        => Identifier
+        -> GingerT m ()
+scopify name = do
+  lookupVar name >>= \case
+    DictV items -> do
+      items' <- forM (Map.toList items) $ \(k, v) -> do
+        k' <- scalarToIdentifier k
+        pure (k', v)
+      setVars $ Map.fromList items'
+    x -> throwError $ TagError (Just "liftScope") (Just "dict") (Just . tagNameOf $ x)
+  where
+    scalarToIdentifier :: Scalar -> GingerT m Identifier
+    scalarToIdentifier (StringScalar txt) = pure $ Identifier txt
+    scalarToIdentifier x = throwError $ TagError (Just "liftScope") (Just "string") (Just . tagNameOf $ ScalarV x)

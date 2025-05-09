@@ -151,11 +151,11 @@ tests = testGroup "Language.Ginger.Parse"
       , testCase "dot-member" $
           test_parser exprP "foo.bar" (IndexE (VarE "foo") (StringLitE "bar"))
       , testCase "filter (no args)" $
-          test_parser exprP "foo|bar" (CallE (VarE "bar") [VarE "foo"] [])
+          test_parser exprP "foo|bar" (FilterE (VarE "foo") (VarE "bar") [] [])
       , testCase "filter (positional arg)" $
-          test_parser exprP "foo|bar(baz)" (CallE (VarE "bar") [VarE "foo", VarE "baz"] [])
+          test_parser exprP "foo|bar(baz)" (FilterE (VarE "foo") (VarE "bar") [VarE "baz"] [])
       , testCase "filter (kw arg)" $
-          test_parser exprP "foo|bar(baz=quux)" (CallE (VarE "bar") [VarE "foo"] [("baz", VarE "quux")])
+          test_parser exprP "foo|bar(baz=quux)" (FilterE (VarE "foo") (VarE "bar") [] [("baz", VarE "quux")])
       ]
     ]
     , testGroup "Precedence"

@@ -199,6 +199,8 @@ data Expr
   | IsE !Expr !Expr ![Expr] ![(Identifier, Expr)]
     -- | @CallE callee args kwargs@
   | CallE !Expr ![Expr] ![(Identifier, Expr)]
+    -- | @FilterE arg0 filter args kwargs@
+  | FilterE !Expr !Expr ![Expr] ![(Identifier, Expr)]
     -- | @TernaryE cond yes no@
   | TernaryE !Expr !Expr !Expr
   | VarE !Identifier

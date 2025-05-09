@@ -195,6 +195,9 @@ evalE (BinaryE op aExpr bExpr) = do
 evalE (CallE callableExpr posArgsExpr namedArgsExpr) = do
   callable <- evalE callableExpr
   call callable posArgsExpr namedArgsExpr
+evalE (FilterE posArg0Expr callableExpr posArgsExpr namedArgsExpr) = do
+  callable <- scoped $ scopify "jinja-filters" >> evalE callableExpr
+  call callable (posArg0Expr : posArgsExpr) namedArgsExpr
 evalE (TernaryE condExpr yesExpr noExpr) = do
   cond <- evalE condExpr >>= asBool "condition"
   evalE (if cond then yesExpr else noExpr)
@@ -203,7 +206,7 @@ evalE (VarE name) =
 evalE (StatementE statement) = do
   evalS statement
 evalE (IsE scrutinee testE args kwargs) = do
-  test <- evalE testE
+  test <- scoped $ scopify "jinja-tests" >> evalE testE
   callTest test scrutinee args kwargs
 
 evalKV :: Monad m => (Expr, Expr) -> GingerT m (Scalar, Value m)

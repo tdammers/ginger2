@@ -145,13 +145,19 @@ binaryExprP opP subP = do
       ]
 
 booleanExprP :: P Expr
-booleanExprP = binaryExprP booleanOpP comparativeExprP
+booleanExprP = binaryExprP booleanOpP unaryNotExprP
 
 booleanOpP :: P BinaryOperator
 booleanOpP = choice
   [ BinopAnd <$ keywordP "and"
   , BinopOr <$ keywordP "or"
   ]
+
+unaryNotExprP :: P Expr
+unaryNotExprP =
+  (keywordP "not" *> (NotE <$> unaryNotExprP))
+  <|>
+  comparativeExprP
 
 comparativeExprP :: P Expr
 comparativeExprP = binaryExprP comparativeOpP testExprP
@@ -176,9 +182,15 @@ testExprP = do
 
     tailP lhs = do
       keywordP "is"
+      wrapper <- option id $ NotE <$ keywordP "not"
       test <- VarE <$> identifierP
-      (posArgs, kwArgs) <- option ([], []) callArgsP
-      pure $ IsE lhs test posArgs kwArgs
+      (posArgs, kwArgs) <- option ([], []) (callArgsP <|> soloArgP)
+      pure . wrapper $ IsE lhs test posArgs kwArgs
+
+soloArgP :: P ([Expr], [(Identifier, Expr)])
+soloArgP = do
+  arg <- exprP
+  pure ([arg], [])
 
 
 concatExprP :: P Expr
@@ -275,6 +287,7 @@ simpleExprP = choice
   , DictE <$> dictP
   , FloatLitE <$> try floatLitP
   , IntLitE <$> try intLitP
+  , operatorP "-" *> (NegateE <$> (parenthesized exprP <|> (VarE <$> identifierP)))
   , BoolE True <$ (keywordP "true" <|> keywordP "True")
   , BoolE False <$ (keywordP "false" <|> keywordP "False")
   , NoneE <$ (keywordP "none" <|> keywordP "None")

@@ -57,6 +57,18 @@ tests = testGroup "Language.Ginger.Parse"
       , testCase "Parenthesized" $
           test_parser exprP "(foo)" (VarE "foo")
       ]
+    , testGroup "Unops" $
+        map
+          (\(unop, sym) ->
+              testCase (show unop) $
+                test_parser
+                  exprP
+                  (sym <> " foo")
+                  (UnaryE unop (VarE "foo"))
+          )
+          [ (UnopNot, "not")
+          , (UnopNegate, "-")
+          ]
     , testGroup "Binops" $
         map
           (\(binop, sym) ->
@@ -131,6 +143,12 @@ tests = testGroup "Language.Ginger.Parse"
             (IsE (VarE "foo") (VarE "bar") [] [])
       , testCase "with arg" $
           test_parser exprP "foo is bar(baz)"
+            (IsE (VarE "foo") (VarE "bar") [VarE "baz"] [])
+      , testCase "is not" $
+          test_parser exprP "foo is not bar"
+            (NotE $ IsE (VarE "foo") (VarE "bar") [] [])
+      , testCase "single arg without parentheses" $
+          test_parser exprP "foo is bar baz"
             (IsE (VarE "foo") (VarE "bar") [VarE "baz"] [])
       ]
     , testGroup "Call and index"

@@ -176,6 +176,8 @@ isDefined (IndexE parent selector) [] ctx env = do
         Right (BoolV b) -> pure . Right $ b
         Right _ -> pure . Left $ FatalError "Evaluating an 'in' expression produced non-boolean result"
     x -> pure x
+isDefined (UnaryE _ a) [] ctx env =
+  isDefined a [] ctx env
 isDefined (BinaryE _ a b) [] ctx env = do
   definedA <- isDefined a [] ctx env
   definedB <- isDefined b [] ctx env

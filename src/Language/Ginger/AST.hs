@@ -193,6 +193,8 @@ data Expr
   | StatementE !Statement
   | ListE ![Expr]
   | DictE ![(Expr, Expr)]
+    -- | @UnaryE op rhs
+  | UnaryE !UnaryOperator !Expr
     -- | @BinaryE op lhs rhs
   | BinaryE !BinaryOperator !Expr !Expr
     -- | @IsE scrutinee test args kwargs@
@@ -257,6 +259,17 @@ arbitraryExpr defined = do
             ]
         options = baseOptions <> extraOptions
     QC.frequency options
+
+data UnaryOperator
+  = UnopNot
+  | UnopNegate
+  deriving (Show, Eq, Enum, Ord, Bounded)
+
+pattern NotE :: Expr -> Expr
+pattern NotE a = UnaryE UnopNot a
+
+pattern NegateE :: Expr -> Expr
+pattern NegateE a = UnaryE UnopNegate a
 
 data BinaryOperator
     -- Math

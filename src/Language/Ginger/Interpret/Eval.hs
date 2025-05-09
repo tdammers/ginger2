@@ -188,6 +188,9 @@ evalE (FloatLitE d) = pure (FloatV d)
 evalE (ListE xs) = ListV <$> mapM evalE xs
 evalE (DictE xs) =
   DictV . Map.fromList <$> mapM evalKV xs
+evalE (UnaryE op expr) = do
+  v <- evalE expr
+  evalUnary op v
 evalE (BinaryE op aExpr bExpr) = do
   a <- evalE aExpr
   b <- evalE bExpr
@@ -332,6 +335,13 @@ dictsEqual m1 m2 =
   and <$> mapM (\k -> (valuesEqual (toValue $ Map.lookup k m1) (toValue $ Map.lookup k m2))) keys
   where
     keys = Set.toList (Map.keysSet m1 <> Map.keysSet m2)
+
+evalUnary :: Monad m => UnaryOperator -> Value m -> GingerT m (Value m)
+evalUnary UnopNot (BoolV b) = pure (BoolV $ not b)
+evalUnary UnopNot x = throwError $ TagError (Just "not") (Just "boolean") (Just . tagNameOf $ x)
+evalUnary UnopNegate (IntV x) = pure (IntV $ negate x)
+evalUnary UnopNegate (FloatV x) = pure (FloatV $ negate x)
+evalUnary UnopNegate x = throwError $ TagError (Just "unary -") (Just "number") (Just . tagNameOf $ x)
 
 evalBinary :: Monad m => BinaryOperator -> Value m -> Value m -> GingerT m (Value m)
 evalBinary BinopPlus a b = numericBinop (+) (+) a b

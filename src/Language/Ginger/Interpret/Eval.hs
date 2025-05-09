@@ -41,8 +41,8 @@ import Data.Text.Encoding (decodeUtf8)
 
 stringify :: Monad m => Value m -> GingerT m Text
 stringify NoneV = pure ""
-stringify (BoolV True) = pure "true"
-stringify (BoolV False) = pure ""
+stringify TrueV = pure "true"
+stringify FalseV = pure ""
 stringify (StringV str) = pure str
 stringify (BytesV b) =
   pure . decodeUtf8 . Base64.encode $ b
@@ -135,6 +135,12 @@ callTest testV scrutinee posArgsExpr namedArgsExpr = do
       ctx <- ask
       env <- get
       BoolV <$> native (runTest test scrutinee args ctx env)
+
+    ScalarV {} -> do
+      BoolV <$> (valuesEqual testV =<< evalE scrutinee)
+      `catchError` \err -> case err of
+        NotInScopeError {} -> pure FalseV
+        _ -> throwError err
       
     x -> do
       call x (scrutinee : posArgsExpr) namedArgsExpr
@@ -158,7 +164,9 @@ call callable posArgsExpr namedArgsExpr = do
         Nothing -> throwError $ NonCallableObjectError (Just "dict")
         Just c -> call c posArgsExpr namedArgsExpr
     NativeV obj -> do
-      native $ nativeObjectCall obj obj args
+      case nativeObjectCall obj of
+        Just f -> native $ f obj args
+        Nothing -> throwError $ NonCallableObjectError (Just "native object")
     x ->
       throwError $ NonCallableObjectError (Just . tagNameOf $ x)
 

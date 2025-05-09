@@ -2,6 +2,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 
 module Language.Ginger.Interpret.Tests
 where
@@ -105,10 +107,10 @@ tests = testGroup "Language.Ginger.Interpret"
       , testProperty "String less-than" (prop_binopCond @Text (Just . Text.pack) (Just . Text.pack) BinopLT (<))
       , testProperty "String less-than-equal" (prop_binopCond @Text (Just . Text.pack) (Just . Text.pack) BinopLTE (<=))
 
-      , testProperty "List membership (Word8)" (prop_binop @Word8 @[Word8] BinopIn elem)
-      , testProperty "Dict membership (Word8)" (prop_binop @Word8 @(Map Word8 Word8) BinopIn (Map.member))
-      , testProperty "List index (Word8)" (prop_binop @[Word8] @Word8 BinopIndex (flip $ safeAt . fromIntegral))
-      , testProperty "Dict index (Word8)" (prop_binop @(Map Word8 Word8) @Word8 BinopIndex (flip Map.lookup))
+      , testProperty "List membership Word8" (prop_binop @Word8 @[Word8] BinopIn elem)
+      , testProperty "Dict membership Word8" (prop_binop @Word8 @(Map Word8 Word8) BinopIn (Map.member))
+      , testProperty "List index Word8" (prop_binop @[Word8] @Word8 BinopIndex (flip $ safeAt . fromIntegral))
+      , testProperty "Dict index Word8" (prop_binop @(Map Word8 Word8) @Word8 BinopIndex (flip Map.lookup))
       , testProperty "List index (Word8/Integer)" (prop_binop @[Integer] @Word8 BinopIndex (flip $ safeAt . fromIntegral))
       , testProperty "Dict index (Word8/Integer)" (prop_binop @(Map Word8 Integer) @Word8 BinopIndex (flip Map.lookup))
 
@@ -130,9 +132,63 @@ tests = testGroup "Language.Ginger.Interpret"
         , testProperty "nonexisting variable" prop_varNeg
         ]
     , testGroup "IsE"
-      [ testProperty "is defined (true)" prop_isDefinedTrue
-      , testProperty "is defined (false)" prop_isDefinedFalse
-      , testProperty "is defined (dict)" prop_isDefinedTrueDict
+      [ testGroup "defined"
+        [ testProperty "is defined true" prop_isDefinedTrue
+        , testProperty "is defined false" prop_isDefinedFalse
+        , testProperty "is defined dict" prop_isDefinedTrueDict
+        ]
+      , testGroup "boolean"
+        [ testProperty "boolean is boolean" $ prop_is @Bool "boolean" True
+        , testProperty "integer is not boolean" $ prop_is @Integer "boolean" False
+        , testProperty "float is not boolean" $ prop_is @Double "boolean" False
+        , testProperty "none is not boolean" $ prop_is @() "boolean" False
+        , testProperty "text is not boolean" $ prop_is @ArbitraryText "boolean" False
+        , testProperty "list is not boolean" $ prop_is @[Bool] "boolean" False
+        , testProperty "dict is not boolean" $ prop_is @(Map Bool Bool) "boolean" False
+        ]
+      , testGroup "integer"
+        [ testProperty "boolean is not int" $ prop_is @Bool "integer" False
+        , testProperty "integer is int" $ prop_is @Integer "integer" True
+        , testProperty "float is not int" $ prop_is @Double "integer" False
+        , testProperty "none is not int" $ prop_is @() "integer" False
+        , testProperty "text is not int" $ prop_is @ArbitraryText "integer" False
+        , testProperty "list is not int" $ prop_is @[Bool] "integer" False
+        , testProperty "dict is not int" $ prop_is @(Map Bool Bool) "integer" False
+        ]
+      , testGroup "float"
+        [ testProperty "boolean is not float" $ prop_is @Bool "float" False
+        , testProperty "integer is not float" $ prop_is @Integer "float" False
+        , testProperty "float is float" $ prop_is @Double "float" True
+        , testProperty "none is not float" $ prop_is @() "float" False
+        , testProperty "text is not float" $ prop_is @ArbitraryText "float" False
+        , testProperty "list is not float" $ prop_is @[Bool] "float" False
+        , testProperty "dict is not float" $ prop_is @(Map Bool Bool) "float" False
+        ]
+      , testGroup "none"
+        [ testProperty "boolean is not none" $ prop_is @Bool "none" False
+        , testProperty "integer is not none" $ prop_is @Integer "none" False
+        , testProperty "float is none" $ prop_is @Double "none" False
+        , testProperty "none is none" $ prop_is @() "none" True
+        , testProperty "text is not none" $ prop_is @ArbitraryText "none" False
+        , testProperty "list is not none" $ prop_is @[Bool] "none" False
+        , testProperty "dict is not none" $ prop_is @(Map Bool Bool) "none" False
+        ]
+      , testGroup "true"
+        [ testProperty "integer is not true" $ prop_is @Integer "true" False
+        , testProperty "float is true" $ prop_is @Double "true" False
+        , testProperty "none is not true" $ prop_is @() "true" False
+        , testProperty "text is not true" $ prop_is @ArbitraryText "true" False
+        , testProperty "list is not true" $ prop_is @[Bool] "true" False
+        , testProperty "dict is not true" $ prop_is @(Map Bool Bool) "true" False
+        ]
+      , testGroup "false"
+        [ testProperty "integer is not false" $ prop_is @Integer "false" False
+        , testProperty "float is false" $ prop_is @Double "false" False
+        , testProperty "none is not false" $ prop_is @() "false" False
+        , testProperty "text is not false" $ prop_is @ArbitraryText "false" False
+        , testProperty "list is not false" $ prop_is @[Bool] "false" False
+        , testProperty "dict is not false" $ prop_is @(Map Bool Bool) "false" False
+        ]
       ]
     ]
   , testGroup "Statement"
@@ -363,7 +419,7 @@ prop_isDefinedTrue name val =
                 setVar name (toValue val)
                 eval $ IsE (VarE name) (VarE "defined") [] []
   in
-    result === BoolV True
+    result === TrueV
 
 prop_isDefinedFalse :: Identifier -> Property
 prop_isDefinedFalse name =
@@ -371,7 +427,7 @@ prop_isDefinedFalse name =
                 eval $ IsE (VarE name) (VarE "defined") [] []
   in
     not (name `Map.member` envVars (defEnv @Identity)) ==>
-    result === BoolV False
+    result === FalseV
 
 prop_isDefinedTrueDict :: Identifier -> Identifier -> Integer -> Property
 prop_isDefinedTrueDict name selector val =
@@ -379,7 +435,20 @@ prop_isDefinedTrueDict name selector val =
                 setVar name (dictV [toScalar (identifierName selector) .= val])
                 eval $ IsE (IndexE (VarE name) (StringLitE $ identifierName selector)) (VarE "defined") [] []
   in
-    result === BoolV True
+    result === TrueV
+
+prop_is :: ToValue a Identity => Identifier -> Bool -> a -> Property
+prop_is testName expected val =
+  let testE = case testName of
+                "none" -> NoneE
+                "true" -> TrueE
+                "false" -> FalseE
+                t -> VarE t
+      result = runGingerIdentity $ do
+                  setVar "v" (toValue val)
+                  eval $ IsE (VarE "v") testE [] []
+  in
+    result === BoolV expected
 
 --------------------------------------------------------------------------------
 -- Statement properties
@@ -556,3 +625,15 @@ prop_callIdentity body =
   in
     label cat $
     resultCall === resultDirect
+
+newtype ArbitraryText = ArbitraryText Text
+  deriving (Eq, Ord)
+
+instance Show ArbitraryText where
+  show (ArbitraryText t) = show t
+
+instance Arbitrary ArbitraryText where
+  arbitrary = ArbitraryText . Text.pack <$> listOf arbitrary
+
+instance Monad m => ToValue ArbitraryText m where
+  toValue (ArbitraryText t) = toValue t

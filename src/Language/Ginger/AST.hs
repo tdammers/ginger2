@@ -204,6 +204,12 @@ data Expr
   | VarE !Identifier
   deriving (Show, Eq)
 
+pattern TrueE :: Expr
+pattern TrueE = BoolE True
+
+pattern FalseE :: Expr
+pattern FalseE = BoolE False
+
 instance Arbitrary Expr where
   arbitrary = arbitraryExpr mempty
 

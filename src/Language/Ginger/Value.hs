@@ -20,7 +20,6 @@ import qualified Data.Map.Strict as Map
 import Data.Word
 import Data.Int
 import GHC.Float (float2Double)
-import Control.Exception (throw)
 import Test.Tasty.QuickCheck (Arbitrary (..))
 import qualified Test.Tasty.QuickCheck as QC
 
@@ -99,6 +98,12 @@ pattern NoneV = ScalarV NoneScalar
 pattern BoolV :: Bool -> Value m
 pattern BoolV b = ScalarV (BoolScalar b)
 
+pattern TrueV :: Value m
+pattern TrueV = BoolV True
+
+pattern FalseV :: Value m
+pattern FalseV = BoolV False
+
 pattern StringV :: Text -> Value m
 pattern StringV v = ScalarV (StringScalar v)
 
@@ -135,7 +140,7 @@ data NativeObject m =
     , nativeObjectStringified :: m Text
     , nativeObjectEncoded :: m Encoded
     , nativeObjectAsList :: m (Maybe [Value m])
-    , nativeObjectCall :: NativeObject m -> [(Maybe Identifier, Value m)] -> m (Either RuntimeError (Value m))
+    , nativeObjectCall :: Maybe (NativeObject m -> [(Maybe Identifier, Value m)] -> m (Either RuntimeError (Value m)))
     , nativeObjectEq :: NativeObject m -> NativeObject m -> m (Either RuntimeError Bool)
     }
 
@@ -150,7 +155,7 @@ defNativeObject =
     , nativeObjectStringified = pure "<native object>"
     , nativeObjectEncoded = pure (Encoded "[[native object]]")
     , nativeObjectAsList = pure Nothing
-    , nativeObjectCall = \self _ -> throw . NonCallableObjectError . Just =<< nativeObjectStringified self
+    , nativeObjectCall = Nothing
     , nativeObjectEq = \_self _other -> pure . Right $ False
     }
 

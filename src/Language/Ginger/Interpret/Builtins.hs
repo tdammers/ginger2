@@ -19,6 +19,7 @@ import Language.Ginger.Interpret.Eval
 
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (isJust)
 
 defEnv :: Monad m => Env m
 defEnv =
@@ -26,10 +27,75 @@ defEnv =
     { envVars = defEnvVars
     }
 
-defEnvVars :: Monad m => Map Identifier (Value m)
+defEnvVars :: forall m. Monad m => Map Identifier (Value m)
 defEnvVars = Map.fromList
   [ ("defined", TestV $ NativeTest isDefined)
+  , ("undefined", TestV $ NativeTest isUndefined)
+  , ("callable", toValue (isCallable @m))
+  , ("boolean", toValue (isBool @m))
+  , ("integer", toValue (isInteger @m))
+  , ("float", toValue (isFloat @m))
+  , ("number", toValue (isNumber @m))
+  , ("string", toValue (isString @m))
+  , ("test", toValue (isTest @m))
+  , ("filter", toValue (isCallable @m))
+  , ("iterable", toValue (isIterable @m))
+  , ("mapping", toValue (isMapping @m))
+  , ("sequence", toValue (isSequence @m))
   ]
+
+isCallable :: Monad m => Value m -> Value m
+isCallable (ProcedureV {}) = TrueV
+isCallable (NativeV n) =
+  BoolV $ isJust (nativeObjectCall n)
+isCallable (DictV d) =
+  maybe (FalseV) isCallable (Map.lookup "__call__" d)
+isCallable _ = FalseV
+
+isMapping :: Monad m => Value m -> Value m
+isMapping (NativeV {}) = TrueV
+isMapping (DictV {}) = TrueV
+isMapping _ = FalseV
+
+isIterable :: Monad m => Value m -> Value m
+isIterable (NativeV {}) = TrueV
+isIterable (DictV {}) = TrueV
+isIterable (ListV {}) = TrueV
+isIterable _ = FalseV
+
+isSequence :: Monad m => Value m -> Value m
+isSequence (NativeV {}) = TrueV
+isSequence (ListV {}) = TrueV
+isSequence _ = FalseV
+
+isTest :: Monad m => Value m -> Value m
+isTest (TestV {}) = TrueV
+isTest x = isCallable x
+
+isEscaped :: Monad m => Value m -> Value m
+isEscaped (EncodedV {}) = TrueV
+isEscaped _ = FalseV
+
+isBool :: Monad m => Value m -> Value m
+isBool (BoolV {}) = TrueV
+isBool _ = FalseV
+
+isInteger :: Monad m => Value m -> Value m
+isInteger (IntV {}) = TrueV
+isInteger _ = FalseV
+
+isFloat :: Monad m => Value m -> Value m
+isFloat (FloatV {}) = TrueV
+isFloat _ = FalseV
+
+isNumber :: Monad m => Value m -> Value m
+isNumber (IntV {}) = TrueV
+isNumber (FloatV {}) = TrueV
+isNumber _ = FalseV
+
+isString :: Monad m => Value m -> Value m
+isString (StringV {}) = TrueV
+isString _ = FalseV
 
 isDefined :: Monad m => TestFunc m
 isDefined _ (_:_) _ _ = pure $ Left $ ArgumentError (Just "defined") (Just "0") (Just "end of arguments") (Just "argument")
@@ -78,6 +144,11 @@ isDefined (CallE callee posArgs kwArgs) [] ctx env = do
   definedPosArgs <- allEitherBool <$> mapM (\x -> isDefined x [] ctx env) posArgs
   definedKWArgs <- allEitherBool <$> mapM (\(_, x) -> isDefined x [] ctx env) kwArgs
   pure $ allEitherBool [definedCallee, definedPosArgs, definedKWArgs]
+
+isUndefined :: Monad m => TestFunc m
+isUndefined expr args ctx env = do
+  defined <- isDefined expr args ctx env
+  pure $ not <$> defined
 
 allEitherBool :: [(Either a Bool)] -> Either a Bool
 allEitherBool [] = Right True

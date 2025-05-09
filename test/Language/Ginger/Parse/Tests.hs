@@ -113,7 +113,7 @@ tests = testGroup "Language.Ginger.Parse"
               , (StringLitE "b", DictE [(StringLitE "c", IntLitE 123)])
               ])
       ]
-    , testGroup "ternary" $
+    , testGroup "ternary"
       [ testCase "simple" $
           test_parser exprP "foo if bar else baz"
             (TernaryE (VarE "bar") (VarE "foo") (VarE "baz"))
@@ -121,6 +121,17 @@ tests = testGroup "Language.Ginger.Parse"
           test_parser exprP "foo if bar else baz if quux else none"
             (TernaryE (VarE "bar") (VarE "foo")
               (TernaryE (VarE "quux") (VarE "baz") NoneE))
+      ]
+    , testGroup "is"
+      [ testCase "simple" $
+          test_parser exprP "foo is bar"
+            (IsE (VarE "foo") (VarE "bar") [] [])
+      , testCase "empty arg list" $
+          test_parser exprP "foo is bar()"
+            (IsE (VarE "foo") (VarE "bar") [] [])
+      , testCase "with arg" $
+          test_parser exprP "foo is bar(baz)"
+            (IsE (VarE "foo") (VarE "bar") [VarE "baz"] [])
       ]
     , testGroup "Call and index"
       [ testCase "call nullary" $
@@ -136,9 +147,9 @@ tests = testGroup "Language.Ginger.Parse"
       , testCase "call mixed args" $
           test_parser exprP "foo(a, b = c)" (CallE (VarE "foo") [VarE "a"] [("b", VarE "c")])
       , testCase "index" $
-          test_parser exprP "foo[bar]" (BinaryE BinopIndex (VarE "foo") (VarE "bar"))
+          test_parser exprP "foo[bar]" (IndexE (VarE "foo") (VarE "bar"))
       , testCase "dot-member" $
-          test_parser exprP "foo.bar" (BinaryE BinopIndex (VarE "foo") (StringLitE "bar"))
+          test_parser exprP "foo.bar" (IndexE (VarE "foo") (StringLitE "bar"))
       , testCase "filter (no args)" $
           test_parser exprP "foo|bar" (CallE (VarE "bar") [VarE "foo"] [])
       , testCase "filter (positional arg)" $
@@ -151,40 +162,47 @@ tests = testGroup "Language.Ginger.Parse"
       [ testCase "+ vs *" $
           test_parser exprP
             "a * b + c * d"
-            (BinaryE BinopPlus
-              (BinaryE BinopMul (VarE "a") (VarE "b"))
-              (BinaryE BinopMul (VarE "c") (VarE "d"))
+            (PlusE
+              (MulE (VarE "a") (VarE "b"))
+              (MulE (VarE "c") (VarE "d"))
             )
       , testCase "* vs **" $
           test_parser exprP
             "a ** b * c ** d"
-            (BinaryE BinopMul
-              (BinaryE BinopPower (VarE "a") (VarE "b"))
-              (BinaryE BinopPower (VarE "c") (VarE "d"))
+            (MulE
+              (PowerE (VarE "a") (VarE "b"))
+              (PowerE (VarE "c") (VarE "d"))
             )
       , testCase "+ vs ~" $
           test_parser exprP
             "a + b ~ c + d"
-            (BinaryE BinopConcat
-              (BinaryE BinopPlus (VarE "a") (VarE "b"))
-              (BinaryE BinopPlus (VarE "c") (VarE "d"))
+            (ConcatE
+              (PlusE (VarE "a") (VarE "b"))
+              (PlusE (VarE "c") (VarE "d"))
             )
       , testCase "== vs and" $
           test_parser exprP
             "a == b and c == d"
-            (BinaryE BinopAnd
-              (BinaryE BinopEqual (VarE "a") (VarE "b"))
-              (BinaryE BinopEqual (VarE "c") (VarE "d"))
+            (AndE
+              (EqualE (VarE "a") (VarE "b"))
+              (EqualE (VarE "c") (VarE "d"))
             )
       , testCase "+ vs ." $
           test_parser exprP
             "a + b[c]"
-            (BinaryE BinopPlus
+            (PlusE
               (VarE "a")
-              (BinaryE BinopIndex
+              (IndexE
                 (VarE "b")
                 (VarE "c")
               )
+            )
+      , testCase "is vs ==" $
+          test_parser exprP
+            "a is b == c"
+            (EqualE
+              (IsE (VarE "a") (VarE "b") [] [])
+              (VarE "c")
             )
       ]
   ]

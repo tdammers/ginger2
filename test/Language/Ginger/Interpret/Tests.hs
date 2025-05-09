@@ -129,6 +129,11 @@ tests = testGroup "Language.Ginger.Interpret"
         [ testProperty "existing variable" prop_var
         , testProperty "nonexisting variable" prop_varNeg
         ]
+    , testGroup "IsE"
+      [ testProperty "is defined (true)" prop_isDefinedTrue
+      , testProperty "is defined (false)" prop_isDefinedFalse
+      , testProperty "is defined (dict)" prop_isDefinedTrueDict
+      ]
     ]
   , testGroup "Statement"
     [ testProperty "Immediate statement outputs itself" prop_immediateStatementOutput
@@ -169,7 +174,7 @@ runGingerIdentity action =
 
 runGingerIdentityEither :: GingerT Identity a -> Either RuntimeError a
 runGingerIdentityEither action =
-  runIdentity (runGingerT action defContext emptyEnv)
+  runIdentity (runGingerT action defContext defEnv)
 
 prop_noBottoms :: (Eval Identity a, Arbitrary a) => a -> Bool
 prop_noBottoms e =
@@ -226,6 +231,10 @@ prop_scopedVarsDisappear (name1, val1) (name2, val2) =
     exists1c <- isJust <$> lookupVarMaybe name1
     notExists2 <- isNothing <$> lookupVarMaybe name2
     pure $ and [ exists1a, exists1c, exists2, notExists2 ]
+
+--------------------------------------------------------------------------------
+-- Expression properties
+--------------------------------------------------------------------------------
 
 prop_binop :: (ToValue a Identity, ToValue b Identity, ToValue c Identity)
            => BinaryOperator
@@ -347,6 +356,34 @@ prop_userNullary varName bodyExpr =
                         eval bodyExpr
   in
     resultCall === resultDirect
+
+prop_isDefinedTrue :: Identifier -> Integer -> Property
+prop_isDefinedTrue name val =
+  let result = runGingerIdentity $ do
+                setVar name (toValue val)
+                eval $ IsE (VarE name) (VarE "defined") [] []
+  in
+    result === BoolV True
+
+prop_isDefinedFalse :: Identifier -> Property
+prop_isDefinedFalse name =
+  let result = runGingerIdentity $ do
+                eval $ IsE (VarE name) (VarE "defined") [] []
+  in
+    not (name `Map.member` envVars (defEnv @Identity)) ==>
+    result === BoolV False
+
+prop_isDefinedTrueDict :: Identifier -> Identifier -> Integer -> Property
+prop_isDefinedTrueDict name selector val =
+  let result = runGingerIdentity $ do
+                setVar name (dictV [toScalar (identifierName selector) .= val])
+                eval $ IsE (IndexE (VarE name) (StringLitE $ identifierName selector)) (VarE "defined") [] []
+  in
+    result === BoolV True
+
+--------------------------------------------------------------------------------
+-- Statement properties
+--------------------------------------------------------------------------------
 
 prop_immediateStatementOutput :: Encoded -> Property
 prop_immediateStatementOutput str =

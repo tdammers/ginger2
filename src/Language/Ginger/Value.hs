@@ -27,6 +27,25 @@ import qualified Test.Tasty.QuickCheck as QC
 import Language.Ginger.AST
 import Language.Ginger.RuntimeError
 
+newtype Env m =
+  Env
+    { envVars :: Map Identifier (Value m)
+    }
+
+emptyEnv :: Env m
+emptyEnv = Env mempty
+
+data Context m =
+  Context
+    { contextEncode :: Text -> m Encoded
+    }
+
+defContext :: Applicative m => Context m
+defContext =
+  Context
+    { contextEncode = pure . Encoded
+    }
+
 data Scalar
   = NoneScalar
   | BoolScalar !Bool
@@ -43,6 +62,7 @@ data Value m
   | DictV !(Map Scalar (Value m))
   | NativeV !(NativeObject m)
   | ProcedureV !(Procedure m)
+  | TestV !(Test m)
 
 traverseValue :: Monoid a => (Value m -> a) -> Value m -> a
 traverseValue p v@(ListV xs) =
@@ -57,6 +77,7 @@ instance Show (Value m) where
   show (DictV m) = show m
   show (NativeV {}) = "<<native>>"
   show (ProcedureV {}) = "<<procedure>>"
+  show (TestV {}) = "<<test>>"
 
 instance Eq (Value m) where
   ScalarV a == ScalarV b = a == b
@@ -70,6 +91,7 @@ tagNameOf ListV {} = "list"
 tagNameOf DictV {} = "dict"
 tagNameOf NativeV {} = "native"
 tagNameOf ProcedureV {} = "procedure"
+tagNameOf TestV {} = "test"
 
 pattern NoneV :: Value m
 pattern NoneV = ScalarV NoneScalar
@@ -95,6 +117,16 @@ pattern FloatV v = ScalarV (FloatScalar v)
 data Procedure m
   = NativeProcedure !([(Maybe Identifier, Value m)] -> m (Either RuntimeError (Value m)))
   | GingerProcedure !(Map Identifier (Value m)) ![(Identifier, Maybe (Value m))] !Expr
+
+type TestFunc m =
+     Expr
+  -> [(Maybe Identifier, Value m)]
+  -> Context m
+  -> Env m
+  -> m (Either RuntimeError Bool)
+
+newtype Test m
+  = NativeTest { runTest :: TestFunc m }
 
 data NativeObject m =
   NativeObject

@@ -154,7 +154,7 @@ booleanOpP = choice
   ]
 
 comparativeExprP :: P Expr
-comparativeExprP = binaryExprP comparativeOpP concatExprP
+comparativeExprP = binaryExprP comparativeOpP testExprP
 
 comparativeOpP :: P BinaryOperator
 comparativeOpP = choice
@@ -166,6 +166,20 @@ comparativeOpP = choice
   , BinopLTE <$ operatorP "<="
   , BinopIn <$ keywordP "in"
   ]
+
+testExprP :: P Expr
+testExprP = do
+  lhs <- subP
+  option lhs $ tailP lhs
+  where
+    subP = concatExprP
+
+    tailP lhs = do
+      keywordP "is"
+      test <- VarE <$> identifierP
+      (posArgs, kwArgs) <- option ([], []) callArgsP
+      pure $ IsE lhs test posArgs kwArgs
+
 
 concatExprP :: P Expr
 concatExprP = binaryExprP concatOpP additiveExprP
@@ -213,11 +227,11 @@ memberAccessExprP = do
     dotTailP lhs = do
       operatorP "."
       selector <- StringLitE <$> identifierNameP
-      tailP (BinaryE BinopIndex lhs selector)
+      tailP (IndexE lhs selector)
 
     bracketsTailP lhs = do
       selector <- bracketed exprP
-      tailP (BinaryE BinopIndex lhs selector)
+      tailP (IndexE lhs selector)
 
     callTailP lhs = do
       (posArgs, kwArgs) <- callArgsP

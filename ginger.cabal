@@ -22,6 +22,9 @@ library
                    , Language.Ginger.AST
                    , Language.Ginger.Value
                    , Language.Ginger.Interpret
+                   , Language.Ginger.Interpret.Builtins
+                   , Language.Ginger.Interpret.Type
+                   , Language.Ginger.Interpret.Eval
                    , Language.Ginger.Parse
                    , Language.Ginger.RuntimeError
     -- other-modules:

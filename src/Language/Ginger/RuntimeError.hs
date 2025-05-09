@@ -23,6 +23,8 @@ data RuntimeError
   | NumericError
       (Maybe Text) -- ^ Identifier / object / context
       (Maybe Text) -- ^ Error description
+  | FatalError
+      Text
   deriving (Show, Eq)
 
 instance Exception RuntimeError where

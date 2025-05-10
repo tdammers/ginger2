@@ -21,6 +21,7 @@ module Language.Ginger.Interpret
 , lookupVarMaybe
 , stringify
 , scoped
+ ,bind
 , valuesEqual
 )
 where

@@ -34,6 +34,12 @@ newtype Env m =
 emptyEnv :: Env m
 emptyEnv = Env mempty
 
+instance Semigroup (Env m) where
+  a <> b = Env { envVars = envVars a <> envVars b }
+
+instance Monoid (Env m) where
+  mempty = Env mempty
+
 data Context m =
   Context
     { contextEncode :: Text -> m Encoded
@@ -121,7 +127,7 @@ pattern FloatV v = ScalarV (FloatScalar v)
 
 data Procedure m
   = NativeProcedure !([(Maybe Identifier, Value m)] -> m (Either RuntimeError (Value m)))
-  | GingerProcedure !(Map Identifier (Value m)) ![(Identifier, Maybe (Value m))] !Expr
+  | GingerProcedure !(Env m) ![(Identifier, Maybe (Value m))] !Expr
 
 type TestFunc m =
      Expr

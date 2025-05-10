@@ -29,7 +29,7 @@ import Control.Monad.Except
   , throwError
   )
 import Control.Monad.Reader (ask , asks)
-import Control.Monad.State (MonadState (..), get, gets)
+import Control.Monad.State (MonadState (..), get)
 import qualified Data.ByteString.Base64 as Base64
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -143,10 +143,10 @@ callTest testV scrutinee posArgsExpr namedArgsExpr = do
         _ -> throwError err
       
     x -> do
-      call x (scrutinee : posArgsExpr) namedArgsExpr
+      call Nothing x (scrutinee : posArgsExpr) namedArgsExpr
 
-call :: Monad m => Value m -> [Expr] -> [(Identifier, Expr)] -> GingerT m (Value m)
-call callable posArgsExpr namedArgsExpr = do
+call :: Monad m => Maybe (Value m) -> Value m -> [Expr] -> [(Identifier, Expr)] -> GingerT m (Value m)
+call callerMay callable posArgsExpr namedArgsExpr = do
   args <- evalCallArgs posArgsExpr namedArgsExpr
   case callable of
     ProcedureV (NativeProcedure f) ->
@@ -154,6 +154,7 @@ call callable posArgsExpr namedArgsExpr = do
         native $ f args
     ProcedureV (GingerProcedure env argsSig f) -> do
       withEnv env $ do
+        maybe (pure ()) (setVar "caller") callerMay
         argDict <- mapArgs argsSig args
         scoped $ do
           setVars argDict
@@ -162,7 +163,7 @@ call callable posArgsExpr namedArgsExpr = do
       let callable' = Map.lookup "__call__" m
       case callable' of
         Nothing -> throwError $ NonCallableObjectError (Just "dict")
-        Just c -> call c posArgsExpr namedArgsExpr
+        Just c -> call callerMay c posArgsExpr namedArgsExpr
     NativeV obj -> do
       case nativeObjectCall obj of
         Just f -> native $ f obj args
@@ -197,10 +198,10 @@ evalE (BinaryE op aExpr bExpr) = do
   evalBinary op a b
 evalE (CallE callableExpr posArgsExpr namedArgsExpr) = do
   callable <- evalE callableExpr
-  call callable posArgsExpr namedArgsExpr
+  call Nothing callable posArgsExpr namedArgsExpr
 evalE (FilterE posArg0Expr callableExpr posArgsExpr namedArgsExpr) = do
   callable <- scoped $ scopify "jinja-filters" >> evalE callableExpr
-  call callable (posArg0Expr : posArgsExpr) namedArgsExpr
+  call Nothing callable (posArg0Expr : posArgsExpr) namedArgsExpr
 evalE (TernaryE condExpr yesExpr noExpr) = do
   cond <- evalE condExpr >>= asBool "condition"
   evalE (if cond then yesExpr else noExpr)
@@ -441,7 +442,7 @@ evalS (IfS condE yesS noSMay) = do
   cond <- evalE condE >>= asBool "condition"
   if cond then evalS yesS else maybe (pure NoneV) evalS noSMay
 evalS (MacroS name argsSig body) = do
-  env <- gets envVars
+  env <- get
   argsSig' <- mapM (\(argname, defEMay) -> do
                   defMay <- maybe (pure Nothing) (fmap Just . evalE) defEMay
                   pure (argname, defMay)
@@ -452,14 +453,13 @@ evalS (MacroS name argsSig body) = do
 
 evalS (CallS name posArgsExpr namedArgsExpr bodyS) = do
   callee <- lookupVar name
-  env <- gets envVars
-  scoped $ do
-    setVar "caller" $ ProcedureV $ GingerProcedure env [] (StatementE bodyS)
-    call callee posArgsExpr namedArgsExpr
+  callerVal <- eval bodyS
+  let caller = ProcedureV $ NativeProcedure (const . pure . Right $ callerVal)
+  call (Just caller) callee posArgsExpr namedArgsExpr
 evalS (FilterS name posArgsExpr namedArgsExpr bodyS) = do
   callee <- lookupVar name
   let posArgsExpr' = StatementE bodyS : posArgsExpr
-  call callee posArgsExpr' namedArgsExpr
+  call Nothing callee posArgsExpr' namedArgsExpr
 
 evalS (SetS name valE) = do
   val <- evalE valE
@@ -559,7 +559,7 @@ evalLoop loopKeyMay loopName iteree loopCondMay recursivity bodyS elseSMay recur
             , "depth0" .= recursionLevel
             , "previtem" .= prevVal
             , "nextitem" .= (snd <$> listToMaybe xs)
-            , "changed" .= changedFunc (envVars env) v
+            , "changed" .= changedFunc env v
             , "__call__" .= if is recursivity then Just (recurFunc ctx env) else Nothing
             ]
         body <- evalS bodyS
@@ -568,7 +568,7 @@ evalLoop loopKeyMay loopName iteree loopCondMay recursivity bodyS elseSMay recur
       rest <- go (succ n) num prevVal' xs
       concatValues body rest
 
-    changedFunc :: Map Identifier (Value m) -> Value m -> Value m
+    changedFunc :: Env m -> Value m -> Value m
     changedFunc env v = ProcedureV $ GingerProcedure env [("val", Just v)] $
       EqualE (IndexE (VarE "loop") (StringLitE "previtem")) (VarE "val")
 

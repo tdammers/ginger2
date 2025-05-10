@@ -90,15 +90,29 @@ scoped action = do
   return retval
 
 withEnv :: Monad m
-        => Map Identifier (Value m)
+        => Env m
         -> GingerT m a
         -> GingerT m a
-withEnv vars action = do
+withEnv env action = do
   s <- get
-  put (s { envVars = vars })
+  put env
   retval <- action
   put s
   return retval
+
+withExtEnv :: Monad m
+        => Env m
+        -> GingerT m a
+        -> GingerT m a
+withExtEnv env action = do
+  s <- get
+  put (s <> env)
+  retval <- action
+  put s
+  return retval
+
+bind :: Monad m => (Env m -> a) -> GingerT m a
+bind f = f <$> get
 
 -- | Lift a dictionary value into the current scope, such that dictionary keys
 -- become variables bound to the respective values in the dictionary.

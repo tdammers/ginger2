@@ -23,6 +23,7 @@ import Test.Tasty
 import Test.Tasty.QuickCheck
 import Data.Monoid (Any (..))
 import Data.Either (isRight)
+import Control.Monad.State (get)
 
 import Language.Ginger.AST
 import Language.Ginger.Interpret
@@ -211,6 +212,8 @@ tests = testGroup "Language.Ginger.Interpret"
     , testGroup "CallS"
       [ testProperty "no args" prop_callNoArgs
       , testProperty "identity" prop_callIdentity
+      , testProperty "echo" prop_callEcho
+      , testProperty "ginger macro" prop_callMacro
       ]
     , testGroup "FilterS"
       [
@@ -626,7 +629,7 @@ prop_callNoArgs body =
                       eval body
       resultCall = runGingerIdentityEither $ do
                       setVar "f" $ ProcedureV (GingerProcedure mempty [] body)
-                      eval $ CallS "f" [] []
+                      eval $ CallS "f" [] [] (InterpolationS NoneE)
       cat = case resultDirect of
               Right {} -> "OK"
               Left err -> unwords . take 1 . words $ show err
@@ -646,7 +649,59 @@ prop_callIdentity body =
                       eval body'
       resultCall = runGingerIdentityEither $ do
                       setVar "f" $ toValue (id :: Value Identity -> Value Identity)
-                      eval $ CallS "f" [body'] []
+                      eval $ CallS "f" [body'] [] (InterpolationS NoneE)
+      cat = case resultDirect of
+              Right {} -> "OK"
+              Left err -> unwords . take 1 . words $ show err
+  in
+    label cat $
+    resultCall === resultDirect
+
+prop_callEcho :: Expr -> Property
+prop_callEcho body =
+  -- Some trickery is needed to make sure that if anything inside @body@
+  -- references a variable @f@, it points to the same thing in both cases.
+  let body' = GroupS
+                 [ SetS "f" NoneE
+                 , InterpolationS body
+                 ]
+      resultDirect = runGingerIdentityEither $
+                      eval body'
+      resultCall = runGingerIdentityEither $ do
+                      env <- get
+                      setVar "f" $
+                        ProcedureV $
+                          GingerProcedure env [] $ CallE (VarE "caller") [] []
+                      eval $ CallS "f" [] [] body'
+      cat = case resultDirect of
+              Right {} -> "OK"
+              Left err -> unwords . take 1 . words $ show err
+  in
+    label cat $
+    resultCall === resultDirect
+
+prop_callMacro :: Statement -> Property
+prop_callMacro body =
+  -- Some trickery is needed to make sure that if anything inside @body@
+  -- references a variable @f@, it points to the same thing in both cases.
+  let body' = GroupS
+                 [ SetS "f" NoneE
+                 , body
+                 ]
+      resultDirect = runGingerIdentityEither $
+                      eval $ GroupS
+                        [ ImmediateS $ Encoded "Hello, "
+                        , body'
+                        ]
+      resultCall = runGingerIdentityEither $
+                      eval $
+                        GroupS
+                          [ MacroS "f" [] $ GroupS
+                            [ ImmediateS $ Encoded "Hello, "
+                            , InterpolationS (CallE (VarE "caller") [] [])
+                            ]
+                          , CallS "f" [] [] body'
+                          ]
       cat = case resultDirect of
               Right {} -> "OK"
               Left err -> unwords . take 1 . words $ show err

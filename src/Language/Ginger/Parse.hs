@@ -68,11 +68,14 @@ identifier :: P Identifier
 identifier = Identifier <$> identifierRaw
 
 stringLit :: P Text
-stringLit = do
-  char '"' *> (Text.pack <$> many stringLitChar) <* char '"' <* space
+stringLit =
+  choice
+    [ char q *> (Text.pack <$> many (stringLitChar q)) <* char q <* space
+    | q <- ['"', '\'']
+    ]
 
-stringLitChar :: P Char
-stringLitChar = escapedStringLitChar <|> plainStringLitChar
+stringLitChar :: Char -> P Char
+stringLitChar q = escapedStringLitChar <|> plainStringLitChar q
 
 escapedStringLitChar :: P Char
 escapedStringLitChar = do
@@ -86,8 +89,8 @@ escapedStringLitChar = do
     'b' -> pure '\b'
     _ -> pure c
 
-plainStringLitChar :: P Char
-plainStringLitChar = satisfy (`notElem` ['\\', '"'])
+plainStringLitChar :: Char -> P Char
+plainStringLitChar q = satisfy (`notElem` ['\\', q])
 
 intLit :: P Integer
 intLit = do

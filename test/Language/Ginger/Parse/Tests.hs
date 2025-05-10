@@ -18,8 +18,14 @@ tests :: TestTree
 tests = testGroup "Language.Ginger.Parse"
   [ testGroup "Expr"
     [ testGroup "Simple"
-      [ testCase "StringLitE simple" $
+      [ testCase "StringLitE simple (double-quoted)" $
           test_parser expr "\"Hello\"" (StringLitE "Hello")
+      , testCase "StringLitE simple (single-quoted)" $
+          test_parser expr "'Hello'" (StringLitE "Hello")
+      , testCase "StringLitE with escapes (double-quoted)" $
+          test_parser expr "\"Hello\\\n\\\"world\\\"\"" (StringLitE "Hello\n\"world\"")
+      , testCase "StringLitE with escapes (single-quoted)" $
+          test_parser expr "'Hello\\\n\\'world\\''" (StringLitE "Hello\n'world'")
       , testCase "IntLitE positive" $
           test_parser expr "2134" (IntLitE 2134)
       , testCase "IntLitE negative" $

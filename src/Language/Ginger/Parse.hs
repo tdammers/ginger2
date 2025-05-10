@@ -163,6 +163,15 @@ kwArgPair :: P (Maybe Identifier, Expr)
 kwArgPair =
   (,) <$> (Just <$> identifier) <*> (equals *> expr)
 
+argsSig :: P [(Identifier, Maybe Expr)]
+argsSig = parenthesized $ argSig `sepBy` comma
+
+argSig :: P (Identifier, Maybe Expr)
+argSig =
+  (,) <$> identifier
+      <*> optional (operator "=" *> expr)
+  
+
 --------------------------------------------------------------------------------
 -- Expression parsers
 --------------------------------------------------------------------------------
@@ -399,6 +408,9 @@ controlStatement =
   choice
     [ ifStatement
     , forStatement
+    , macroStatement
+    , callStatement
+    , filterStatement
     ]
 
 flow :: Text -> P a -> P a
@@ -448,3 +460,33 @@ forStatement = do
       pure (body, elseMay)
     makeFor (keyMay, val, iteree, filterMay, recursivity) (body, elseMay) =
       ForS keyMay val iteree filterMay recursivity body elseMay
+
+macroStatement :: P Statement
+macroStatement = do
+  withFlow "macro" macroHeader macroBody makeMacro
+  where
+    macroHeader :: P (Identifier, [MacroArg])
+    macroHeader =
+      (,) <$> identifier <*> option [] argsSig
+    macroBody =
+      statement
+    makeMacro :: (Identifier, [MacroArg]) -> Statement -> Statement
+    makeMacro (name, args) body = MacroS name args body
+
+callStatement :: P Statement
+callStatement = do
+  withFlow "call" callHeader callBody makeCall
+  where
+    callHeader = do
+      (,) <$> identifier <*> callArgs
+    callBody = statement
+    makeCall (callee, (args, kwargs)) body = CallS callee args kwargs body
+
+filterStatement :: P Statement
+filterStatement = do
+  withFlow "filter" filterHeader filterBody makeFilter
+  where
+    filterHeader = do
+      (,) <$> identifier <*> callArgs
+    filterBody = statement
+    makeFilter (filteree, (args, kwargs)) body = FilterS filteree args kwargs body

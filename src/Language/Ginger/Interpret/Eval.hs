@@ -450,9 +450,12 @@ evalS (MacroS name argsSig body) = do
   setVar name . ProcedureV $ GingerProcedure env argsSig' (StatementE body)
   pure NoneV
 
-evalS (CallS name posArgsExpr namedArgsExpr) = do
+evalS (CallS name posArgsExpr namedArgsExpr bodyS) = do
   callee <- lookupVar name
-  call callee posArgsExpr namedArgsExpr
+  env <- gets envVars
+  scoped $ do
+    setVar "caller" $ ProcedureV $ GingerProcedure env [] (StatementE bodyS)
+    call callee posArgsExpr namedArgsExpr
 evalS (FilterS name posArgsExpr namedArgsExpr bodyS) = do
   callee <- lookupVar name
   let posArgsExpr' = StatementE bodyS : posArgsExpr

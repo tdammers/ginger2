@@ -68,6 +68,7 @@ data Statement
       !Identifier -- callee
       ![Expr] -- positional args
       ![(Identifier, Expr)] -- keyword args
+      !Statement -- body (@caller()@)
   | FilterS
       !Identifier -- name
       ![Expr] -- positional args
@@ -125,8 +126,9 @@ arbitraryStatement defined = do
             name <- arbitrary
             pure $ MacroS name args body
         , CallS <$> arbitrary
-                 <*> QC.resize (fuel `div` 2) (QC.listOf (arbitraryExpr defined))
-                 <*> QC.resize (fuel `div` 2) (QC.listOf ((,) <$> arbitrary <*> arbitraryExpr defined))
+                 <*> QC.resize (fuel `div` 4) (QC.listOf (arbitraryExpr defined))
+                 <*> QC.resize (fuel `div` 4) (QC.listOf ((,) <$> arbitrary <*> arbitraryExpr defined))
+                 <*> QC.resize (fuel `div` 2) (arbitraryStatement $ defined <> Set.singleton "caller")
         , FilterS <$> arbitrary
                   <*> QC.resize (fuel `div` 3) (QC.listOf (arbitraryExpr defined))
                   <*> QC.resize (fuel `div` 3) (QC.listOf ((,) <$> arbitrary <*> arbitraryExpr defined))

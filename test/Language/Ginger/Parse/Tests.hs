@@ -252,6 +252,18 @@ tests = testGroup "Language.Ginger.Parse"
         test_parser statement
           "{% if foo %}blah{% else %}pizza{% endif %}"
           (IfS (VarE "foo") (ImmediateS $ Encoded "blah") (Just (ImmediateS $ Encoded "pizza")))
+    , testCase "set" $
+        test_parser statement
+          "{% set foo = bar %}"
+          (SetS "foo" (VarE "bar"))
+    , testCase "set block" $
+        test_parser statement
+          "{% set foo %}foo{% endset %}"
+          (SetBlockS "foo" (ImmediateS $ Encoded "foo") Nothing)
+    , testCase "set block with filter" $
+        test_parser statement
+          "{% set foo | bar %}foo{% endset %}"
+          (SetBlockS "foo" (ImmediateS $ Encoded "foo") (Just (VarE "bar")))
     , testCase "for" $
         test_parser statement
           "{% for user in users %}{{ user.name }}{% endfor %}"
@@ -304,12 +316,55 @@ tests = testGroup "Language.Ginger.Parse"
             (InterpolationS (IndexE (VarE "user") (StringLitE "name")))
             Nothing
           )
+    , testCase "include" $
+        test_parser statement
+          "{% include \"foo\" %}"
+          (IncludeS (StringLitE "foo") RequireMissing WithContext)
+    , testCase "include without context" $
+        test_parser statement
+          "{% include \"foo\" without context %}"
+          (IncludeS (StringLitE "foo") RequireMissing WithoutContext)
+    , testCase "include ignore missing" $
+        test_parser statement
+          "{% include \"foo\" ignore missing %}"
+          (IncludeS (StringLitE "foo") IgnoreMissing WithContext)
+    , testCase "include ignore missing without context" $
+        test_parser statement
+          "{% include \"foo\" ignore missing without context %}"
+          (IncludeS (StringLitE "foo") IgnoreMissing WithoutContext)
+    , testCase "extends" $
+        test_parser statement
+          "{% extends \"foo\" %}"
+          (ExtendsS (StringLitE "foo"))
+    , testCase "block" $
+        test_parser statement
+          "{% block foo %}Hello{% endblock %}"
+          (BlockS "foo" (ImmediateS . Encoded $ "Hello") NotScoped Optional)
+    , testCase "block (repeat block name)" $
+        test_parser statement
+          "{% block foo %}Hello{% endblock foo %}"
+          (BlockS "foo" (ImmediateS . Encoded $ "Hello") NotScoped Optional)
+    , testCase "block (repeat wrong block name)" $
+        test_parserEx statement
+          "{% block foo %}Hello{% endblock bar %}"
+          (Left . unlines $
+                  [ "1:33:"
+                  , "  |"
+                  , "1 | {% block foo %}Hello{% endblock bar %}"
+                  , "  |                                 ^^"
+                  , "unexpected \"ba\""
+                  , "expecting \"%}\", \"foo\", or white space"
+                  ])
     ]
   ]
 
 test_parser :: (Eq a, Show a) => P a -> Text -> a -> Assertion
-test_parser p input expected = do
-  assertEqual "" (Right expected) actual
+test_parser p input expected =
+  test_parserEx p input (Right expected)
+
+test_parserEx :: (Eq a, Show a) => P a -> Text -> (Either String a) -> Assertion
+test_parserEx p input expected = do
+  assertEqual "" expected actual
   where
     actual = mapLeft errorBundlePretty $ parse (p <* eof) "" input
 

@@ -81,7 +81,7 @@ data Statement
       !Identifier -- variable name
       !Statement -- body
       !(Maybe Expr) -- optional filter
-  | IncludeS Expr
+  | IncludeS Expr IncludeMissingPolicy IncludeContextPolicy
   | ExtendsS Expr
   | BlockS
       !Identifier -- block name
@@ -92,8 +92,24 @@ data Statement
   | GroupS ![Statement]
   deriving (Show, Eq)
 
+data IncludeMissingPolicy
+  = RequireMissing
+  | IgnoreMissing
+  deriving (Show, Eq, Ord, Enum, Bounded)
+
+data IncludeContextPolicy
+  = WithContext
+  | WithoutContext
+  deriving (Show, Eq, Ord, Enum, Bounded)
+
 instance Arbitrary Statement where
   arbitrary = arbitraryStatement mempty
+
+instance Arbitrary IncludeMissingPolicy where
+  arbitrary = QC.oneof $ map pure [minBound .. maxBound]
+
+instance Arbitrary IncludeContextPolicy where
+  arbitrary = QC.oneof $ map pure [minBound .. maxBound]
 
 arbitraryStatement :: Set Identifier -> QC.Gen Statement
 arbitraryStatement defined = do

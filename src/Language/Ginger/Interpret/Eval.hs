@@ -476,7 +476,7 @@ evalS (SetBlockS name bodyS filterEMaybe) = do
                 evalE (CallE callee [StatementE bodyS] mempty)
   setVar name body
   pure NoneV
-evalS (IncludeS _nameE) = do
+evalS (IncludeS _nameE _missingPolicy _contextPolicy) = do
   throwError $ NotImplementedError (Just "include")
 evalS (ExtendsS _nameE) = do
   throwError $ NotImplementedError (Just "extends")

@@ -382,6 +382,11 @@ singleStatement =
     , interpolationStatement
     , controlStatement
     , immediateStatement
+    , setStatement
+    , setBlockStatement
+    , includeStatement
+    , extendsStatement
+    , blockStatement
     ]
 
 immediateStatement :: P Statement
@@ -490,3 +495,41 @@ filterStatement = do
       (,) <$> identifier <*> callArgs
     filterBody = statement
     makeFilter (filteree, (args, kwargs)) body = FilterS filteree args kwargs body
+
+setStatement :: P Statement
+setStatement = try $ do
+  flow "set" $ SetS <$> identifier <* operator "=" <*> expr
+
+setBlockStatement :: P Statement
+setBlockStatement = do
+  withFlow "set" setBlockHeader setBlockBody makeSetBlock
+  where
+    setBlockHeader = (,) <$> identifier <*> optional (keyword "|" *> expr)
+    setBlockBody = statement
+    makeSetBlock (name, filterMay) body =
+      SetBlockS name body filterMay
+
+includeStatement :: P Statement
+includeStatement =
+  flow "include" $
+    IncludeS
+      <$> expr
+      <*> option RequireMissing (IgnoreMissing <$ keyword "ignore" <* keyword "missing")
+      <*> option WithContext (choice
+            [ WithContext <$ keyword "with" <* keyword "context"
+            , WithoutContext <$ keyword "without" <* keyword "context"
+            ]
+          )
+
+extendsStatement :: P Statement
+extendsStatement = flow "extends" $ ExtendsS <$> expr
+
+blockStatement :: P Statement
+blockStatement = do
+  (name, scopedness, requiredness) <- flow "block" $
+    (,,) <$> identifier
+         <*> (option NotScoped $ Scoped <$ keyword "scoped")
+         <*> (option Optional $ Required <$ keyword "required")
+  body <- statement
+  void $ flow "endblock" (optional $ keyword (identifierName name))
+  pure $ BlockS name body scopedness requiredness

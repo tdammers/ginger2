@@ -66,6 +66,11 @@ tests = testGroup "Language.Ginger.Interpret"
       , testProperty "List literal" (prop_literal (ListE . map IntLitE))
       , testProperty "Dict literal" (prop_literal (DictE . map (\(k, v) -> (IntLitE k, IntLitE v)) . Map.toList))
       ]
+    , testGroup "UnaryE"
+      [ testProperty "Integer negation" (prop_unop @Integer UnopNegate negate)
+      , testProperty "Double negation" (prop_unop @Double UnopNegate negate)
+      , testProperty "Boolean not" (prop_unop @Bool UnopNot not)
+      ]
     , testGroup "BinaryE"
       [ testProperty "Integer addition" (prop_binop @Integer BinopPlus (+))
       , testProperty "Integer subtraction" (prop_binop @Integer BinopMinus (-))
@@ -291,6 +296,29 @@ prop_scopedVarsDisappear (name1, val1) (name2, val2) =
 --------------------------------------------------------------------------------
 -- Expression properties
 --------------------------------------------------------------------------------
+
+prop_unop :: (ToValue a Identity, ToValue b Identity)
+           => UnaryOperator
+           -> (a -> b)
+           -> a
+           -> Property
+prop_unop = prop_unopCond Just
+
+prop_unopCond :: (ToValue a' Identity, ToValue b Identity)
+               => (a -> Maybe a')
+               -> UnaryOperator
+               -> (a' -> b)
+               -> a
+               -> Property
+prop_unopCond fX unop f x' =
+  let x = fX x'
+      resultG = runGingerIdentity $ do
+                  setVar "a" (toValue x)
+                  eval (UnaryE unop (VarE "a"))
+      resultH = toValue $ f <$> x
+  in
+    isJust x ==>
+    resultG === resultH
 
 prop_binop :: (ToValue a Identity, ToValue b Identity, ToValue c Identity)
            => BinaryOperator

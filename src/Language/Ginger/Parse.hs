@@ -2,6 +2,10 @@
 {-# LANGUAGE TupleSections #-}
 
 module Language.Ginger.Parse
+( P
+, expr
+, statement
+)
 where
 
 import Control.Monad (void, when)
@@ -13,20 +17,23 @@ import Text.Megaparsec.Char
 import Data.Char (isAlphaNum, isAlpha, isDigit)
 import Data.List.NonEmpty (NonEmpty (..))
 
--- import Language.Ginger.Value
 import Language.Ginger.AST
 
 type P = Parsec Void Text
 
-identifierCharP :: P Char
-identifierCharP = satisfy isIdentifierChar
+--------------------------------------------------------------------------------
+-- Primitives etc.
+--------------------------------------------------------------------------------
+
+identifierChar :: P Char
+identifierChar = satisfy isIdentifierChar
 
 isIdentifierChar :: Char -> Bool
 isIdentifierChar c =
   isAlphaNum c || c == '_'
 
-identifierInitialCharP :: P Char
-identifierInitialCharP = satisfy isIdentifierChar
+identifierInitialChar :: P Char
+identifierInitialChar = satisfy isIdentifierInitialChar
 
 isIdentifierInitialChar :: Char -> Bool
 isIdentifierInitialChar c =
@@ -34,75 +41,41 @@ isIdentifierInitialChar c =
 
 isOperatorChar :: Char -> Bool
 isOperatorChar c =
-  c `elem` ("&|%^*+-/~.=!" :: [Char])
+  c `elem` ("&|%^*+-/~.=![]{}()," :: [Char])
 
-operatorCharP :: P Char
-operatorCharP = satisfy isOperatorChar
+operatorChar :: P Char
+operatorChar = satisfy isOperatorChar
 
-operatorP :: Text -> P ()
-operatorP op = try $ do
+operator :: Text -> P ()
+operator op = try $ do
   void $ chunk op
-  notFollowedBy operatorCharP
+  notFollowedBy operatorChar
   space
 
-keywordP :: Text -> P ()
-keywordP kw = try $ do
+keyword :: Text -> P ()
+keyword kw = try $ do
   void $ chunk kw
-  notFollowedBy identifierCharP
+  notFollowedBy identifierChar
   space
 
-identifierNameP :: P Text
-identifierNameP = do
-  Text.cons <$> identifierInitialCharP
+identifierRaw :: P Text
+identifierRaw = do
+  Text.cons <$> identifierInitialChar
             <*> takeWhileP (Just "identifier char") isIdentifierChar
             <* space
 
-identifierP :: P Identifier
-identifierP = Identifier <$> identifierNameP
+identifier :: P Identifier
+identifier = Identifier <$> identifierRaw
 
-stringLitP :: P Text
-stringLitP = do
-  char '"' *> (Text.pack <$> many stringLitCharP) <* char '"' <* space
+stringLit :: P Text
+stringLit = do
+  char '"' *> (Text.pack <$> many stringLitChar) <* char '"' <* space
 
-stringLitCharP :: P Char
-stringLitCharP = escapedStringLitCharP <|> plainStringLitCharP
+stringLitChar :: P Char
+stringLitChar = escapedStringLitChar <|> plainStringLitChar
 
-intLitP :: P Integer
-intLitP = do
-  read <$> intDigitsP
-
-intDigitsP :: P String
-intDigitsP = do
-  sign <- option "" $ "-" <$ char '-'
-  x <- satisfy (\c -> isDigit c && c /= '0')
-  xs <- many digitP
-  space
-  pure (sign ++ (x : xs))
-
-floatLitP :: P Double
-floatLitP = do
-  m <- do
-    sign <- option "" $ "-" <$ char '-'
-    intPart <- many digitP
-    void $ char '.'
-    fracPart <- many digitP
-    when (null intPart && null fracPart)
-      (unexpected $ Label $ 'd' :| "ot-only float")
-    pure $ sign ++
-           (if null intPart then "0" else intPart) ++
-           "." ++
-           (if null fracPart then "0" else fracPart)
-  e <- option "" $ do
-    void $ char 'E' <|> char 'e'
-    ('e' :) <$> intDigitsP
-  pure . read $ m ++ e
-
-
-digitP :: P Char
-digitP = satisfy isDigit
-
-escapedStringLitCharP :: P Char
-escapedStringLitCharP = do
+escapedStringLitChar :: P Char
+escapedStringLitChar = do
   void $ char '\\'
   c <- satisfy (const True)
   case c of
@@ -113,195 +86,51 @@ escapedStringLitCharP = do
     'b' -> pure '\b'
     _ -> pure c
 
-plainStringLitCharP :: P Char
-plainStringLitCharP = satisfy (`notElem` ['\\', '"'])
+plainStringLitChar :: P Char
+plainStringLitChar = satisfy (`notElem` ['\\', '"'])
 
-exprP :: P Expr
-exprP = ternaryExprP
+intLit :: P Integer
+intLit = do
+  read <$> intDigits
 
-ternaryExprP :: P Expr
-ternaryExprP = do
-  lhs <- booleanExprP
-  option lhs $ tailP lhs
-  where
-    tailP lhs = do
-      keywordP "if"
-      cond <- booleanExprP
-      keywordP "else"
-      rhs <- ternaryExprP
-      pure $ TernaryE cond lhs rhs
+intDigits :: P String
+intDigits = do
+  sign <- option "" $ "-" <$ char '-'
+  x <- satisfy (\c -> isDigit c && c /= '0')
+  xs <- many digit
+  space
+  pure (sign ++ (x : xs))
 
-binaryExprP :: P BinaryOperator -> P Expr -> P Expr
-binaryExprP opP subP = do
-  lhs <- subP
-  tailP lhs
-  where
-    tailP lhs = choice
-      [ do
-          op <- opP
-          rhs <- subP
-          tailP (BinaryE op lhs rhs)
-      , pure lhs
-      ]
-
-booleanExprP :: P Expr
-booleanExprP = binaryExprP booleanOpP unaryNotExprP
-
-booleanOpP :: P BinaryOperator
-booleanOpP = choice
-  [ BinopAnd <$ keywordP "and"
-  , BinopOr <$ keywordP "or"
-  ]
-
-unaryNotExprP :: P Expr
-unaryNotExprP =
-  (keywordP "not" *> (NotE <$> unaryNotExprP))
-  <|>
-  comparativeExprP
-
-comparativeExprP :: P Expr
-comparativeExprP = binaryExprP comparativeOpP testExprP
-
-comparativeOpP :: P BinaryOperator
-comparativeOpP = choice
-  [ BinopEqual <$ operatorP "=="
-  , BinopNotEqual <$ operatorP "!="
-  , BinopGT <$ operatorP ">"
-  , BinopGTE <$ operatorP ">="
-  , BinopLT <$ operatorP "<"
-  , BinopLTE <$ operatorP "<="
-  , BinopIn <$ keywordP "in"
-  ]
-
-testExprP :: P Expr
-testExprP = do
-  lhs <- subP
-  option lhs $ tailP lhs
-  where
-    subP = concatExprP
-
-    tailP lhs = do
-      keywordP "is"
-      wrapper <- option id $ NotE <$ keywordP "not"
-      test <- VarE <$> identifierP
-      (posArgs, kwArgs) <- option ([], []) (callArgsP <|> soloArgP)
-      pure . wrapper $ IsE lhs test posArgs kwArgs
-
-soloArgP :: P ([Expr], [(Identifier, Expr)])
-soloArgP = do
-  arg <- exprP
-  pure ([arg], [])
+floatLit :: P Double
+floatLit = do
+  m <- do
+    sign <- option "" $ "-" <$ char '-'
+    intPart <- many digit
+    void $ char '.'
+    fracPart <- many digit
+    when (null intPart && null fracPart)
+      (unexpected $ Label $ 'd' :| "ot-only float")
+    pure $ sign ++
+           (if null intPart then "0" else intPart) ++
+           "." ++
+           (if null fracPart then "0" else fracPart)
+  e <- option "" $ do
+    void $ char 'E' <|> char 'e'
+    ('e' :) <$> intDigits
+  pure . read $ m ++ e
 
 
-concatExprP :: P Expr
-concatExprP = binaryExprP concatOpP additiveExprP
+digit :: P Char
+digit = satisfy isDigit
 
-concatOpP :: P BinaryOperator
-concatOpP = BinopConcat <$ operatorP "~"
+equals :: P ()
+equals = char '=' *> space
 
-additiveExprP :: P Expr
-additiveExprP = binaryExprP additiveOpP multiplicativeExprP
+comma :: P ()
+comma = char ',' *> space
 
-additiveOpP :: P BinaryOperator
-additiveOpP = choice
-  [ BinopPlus <$ operatorP "+"
-  , BinopMinus <$ operatorP "-"
-  ]
-
-multiplicativeExprP :: P Expr
-multiplicativeExprP = binaryExprP multiplicativeOpP powerExprP
-
-multiplicativeOpP :: P BinaryOperator
-multiplicativeOpP = choice
-  [ BinopIntDiv <$ operatorP "//"
-  , BinopDiv <$ operatorP "/"
-  , BinopMod <$ operatorP "%"
-  , BinopMul <$ operatorP "*"
-  ]
-
-powerExprP :: P Expr
-powerExprP = binaryExprP powerOpP memberAccessExprP
-
-powerOpP :: P BinaryOperator
-powerOpP = BinopPower <$ operatorP "**"
-
-memberAccessExprP :: P Expr
-memberAccessExprP = do
-  lhs <- simpleExprP
-  tailP lhs
-  where
-    tailP lhs = dotTailP lhs
-              <|> bracketsTailP lhs
-              <|> callTailP lhs
-              <|> filterTailP lhs
-              <|> pure lhs
-
-    dotTailP lhs = do
-      operatorP "."
-      selector <- StringLitE <$> identifierNameP
-      tailP (IndexE lhs selector)
-
-    bracketsTailP lhs = do
-      selector <- bracketed exprP
-      tailP (IndexE lhs selector)
-
-    callTailP lhs = do
-      (posArgs, kwArgs) <- callArgsP
-      tailP (CallE lhs posArgs kwArgs)
-
-    filterTailP lhs = do
-      operatorP "|"
-      callable <- simpleExprP
-      (posArgs, kwArgs) <- option ([], []) $ callArgsP
-      tailP (FilterE lhs callable posArgs kwArgs)
-
-callArgsP :: P ([Expr], [(Identifier, Expr)])
-callArgsP = do
-  args <- parenthesized $ argPairP `sepBy` commaP
-  let posArgs = [ e | (Nothing, e) <- args ]
-      kwArgs = [ (k, e) | (Just k, e) <- args ]
-  pure (posArgs, kwArgs)
-
-argPairP :: P (Maybe Identifier, Expr)
-argPairP = try kwArgPairP <|> ((Nothing ,) <$> exprP)
-
-kwArgPairP :: P (Maybe Identifier, Expr)
-kwArgPairP =
-  (,) <$> (Just <$> identifierP) <*> (equalsP *> exprP)
-
-listP :: P [Expr]
-listP = bracketed (exprP `sepBy` commaP)
-
-dictP :: P [(Expr, Expr)]
-dictP = braced (dictPairP `sepBy` commaP)
-
-dictPairP :: P (Expr, Expr)
-dictPairP =
-  (,) <$> exprP <*> (colonP *> exprP)
-
-simpleExprP :: P Expr
-simpleExprP = choice
-  [ parenthesized exprP
-  , StringLitE <$> stringLitP
-  , ListE <$> listP
-  , DictE <$> dictP
-  , FloatLitE <$> try floatLitP
-  , IntLitE <$> try intLitP
-  , operatorP "-" *> (NegateE <$> (parenthesized exprP <|> (VarE <$> identifierP)))
-  , BoolE True <$ (keywordP "true" <|> keywordP "True")
-  , BoolE False <$ (keywordP "false" <|> keywordP "False")
-  , NoneE <$ (keywordP "none" <|> keywordP "None")
-  , VarE <$> identifierP
-  ]
-
-equalsP :: P ()
-equalsP = char '=' *> space
-
-commaP :: P ()
-commaP = char ',' *> space
-
-colonP :: P ()
-colonP = char ':' *> space
+colon :: P ()
+colon = char ':' *> space
 
 parenthesized :: P a -> P a
 parenthesized = betweenT "(" ")"
@@ -316,23 +145,306 @@ betweenT :: Text -> Text -> P c -> P c
 betweenT o c =
   between (chunk o *> space) (chunk c *> space)
 
-binopP :: P BinaryOperator
-binopP = choice
-  [ BinopPlus <$ operatorP "+"
-  , BinopMinus <$ operatorP "-"
-  , BinopDiv <$ operatorP "/"
-  , BinopIntDiv <$ operatorP "//"
-  , BinopMod <$ operatorP "%"
-  , BinopMul <$ operatorP "*"
-  , BinopPower <$ operatorP "**"
-  , BinopEqual <$ operatorP "=="
-  , BinopNotEqual <$ operatorP "!="
-  , BinopGT <$ operatorP ">"
-  , BinopGTE <$ operatorP ">="
-  , BinopLT <$ operatorP "<"
-  , BinopLTE <$ operatorP "<="
-  , BinopAnd <$ operatorP "&&"
-  , BinopOr <$ operatorP "||"
-  , BinopIn <$ keywordP "in"
-  , BinopConcat <$ operatorP "~"
+--------------------------------------------------------------------------------
+-- Argument lists
+--------------------------------------------------------------------------------
+
+callArgs :: P ([Expr], [(Identifier, Expr)])
+callArgs = do
+  args <- parenthesized $ argPair `sepBy` comma
+  let posArgs = [ e | (Nothing, e) <- args ]
+      kwArgs = [ (k, e) | (Just k, e) <- args ]
+  pure (posArgs, kwArgs)
+
+argPair :: P (Maybe Identifier, Expr)
+argPair = try kwArgPair <|> ((Nothing ,) <$> expr)
+
+kwArgPair :: P (Maybe Identifier, Expr)
+kwArgPair =
+  (,) <$> (Just <$> identifier) <*> (equals *> expr)
+
+--------------------------------------------------------------------------------
+-- Expression parsers
+--------------------------------------------------------------------------------
+
+expr :: P Expr
+expr = ternaryExpr
+
+ternaryExpr :: P Expr
+ternaryExpr = do
+  lhs <- booleanExpr
+  option lhs $ exprTail lhs
+  where
+    exprTail lhs = try $ do
+      keyword "if"
+      cond <- booleanExpr
+      keyword "else"
+      rhs <- ternaryExpr
+      pure $ TernaryE cond lhs rhs
+
+binaryExpr :: P BinaryOperator -> P Expr -> P Expr
+binaryExpr op sub = do
+  lhs <- sub
+  exprTail lhs
+  where
+    exprTail lhs = choice
+      [ do
+          o <- op
+          rhs <- sub
+          exprTail (BinaryE o lhs rhs)
+      , pure lhs
+      ]
+
+booleanExpr :: P Expr
+booleanExpr = binaryExpr booleanOp unaryNotExpr
+
+booleanOp :: P BinaryOperator
+booleanOp = choice
+  [ BinopAnd <$ keyword "and"
+  , BinopOr <$ keyword "or"
   ]
+
+unaryNotExpr :: P Expr
+unaryNotExpr =
+  (keyword "not" *> (NotE <$> unaryNotExpr))
+  <|>
+  comparativeExpr
+
+comparativeExpr :: P Expr
+comparativeExpr = binaryExpr comparativeOp testExpr
+
+comparativeOp :: P BinaryOperator
+comparativeOp = choice
+  [ BinopEqual <$ operator "=="
+  , BinopNotEqual <$ operator "!="
+  , BinopGT <$ operator ">"
+  , BinopGTE <$ operator ">="
+  , BinopLT <$ operator "<"
+  , BinopLTE <$ operator "<="
+  , BinopIn <$ keyword "in"
+  ]
+
+testExpr :: P Expr
+testExpr = do
+  lhs <- sub
+  option lhs $ exprTail lhs
+  where
+    sub = concatExpr
+
+    exprTail lhs = do
+      keyword "is"
+      wrapper <- option id $ NotE <$ keyword "not"
+      test <- VarE <$> identifier
+      (posArgs, kwArgs) <- option ([], []) (callArgs <|> soloArg)
+      pure . wrapper $ IsE lhs test posArgs kwArgs
+
+soloArg :: P ([Expr], [(Identifier, Expr)])
+soloArg = do
+  arg <- expr
+  pure ([arg], [])
+
+
+concatExpr :: P Expr
+concatExpr = binaryExpr concatOp additiveExpr
+
+concatOp :: P BinaryOperator
+concatOp = BinopConcat <$ operator "~"
+
+additiveExpr :: P Expr
+additiveExpr = binaryExpr additiveOp multiplicativeExpr
+
+additiveOp :: P BinaryOperator
+additiveOp = choice
+  [ BinopPlus <$ operator "+"
+  , BinopMinus <$ operator "-"
+  ]
+
+multiplicativeExpr :: P Expr
+multiplicativeExpr = binaryExpr multiplicativeOp powerExpr
+
+multiplicativeOp :: P BinaryOperator
+multiplicativeOp = choice
+  [ BinopIntDiv <$ operator "//"
+  , BinopDiv <$ operator "/"
+  , BinopMod <$ operator "%"
+  , BinopMul <$ operator "*"
+  ]
+
+powerExpr :: P Expr
+powerExpr = binaryExpr powerOp memberAccessExpr
+
+powerOp :: P BinaryOperator
+powerOp = BinopPower <$ operator "**"
+
+memberAccessExpr :: P Expr
+memberAccessExpr = do
+  lhs <- simpleExpr
+  exprTail lhs
+  where
+    exprTail lhs = dotTail lhs
+              <|> bracketsTail lhs
+              <|> callTail lhs
+              <|> filterTail lhs
+              <|> pure lhs
+
+    dotTail lhs = do
+      operator "."
+      selector <- StringLitE <$> identifierRaw
+      exprTail (IndexE lhs selector)
+
+    bracketsTail lhs = do
+      selector <- bracketed expr
+      exprTail (IndexE lhs selector)
+
+    callTail lhs = do
+      (posArgs, kwArgs) <- callArgs
+      exprTail (CallE lhs posArgs kwArgs)
+
+    filterTail lhs = do
+      operator "|"
+      callable <- simpleExpr
+      (posArgs, kwArgs) <- option ([], []) $ callArgs
+      exprTail (FilterE lhs callable posArgs kwArgs)
+
+list :: P [Expr]
+list = bracketed (expr `sepBy` comma)
+
+dict :: P [(Expr, Expr)]
+dict = braced (dictPair `sepBy` comma)
+
+dictPair :: P (Expr, Expr)
+dictPair =
+  (,) <$> expr <*> (colon *> expr)
+
+simpleExpr :: P Expr
+simpleExpr = choice
+  [ parenthesized expr
+  , StringLitE <$> stringLit
+  , ListE <$> list
+  , DictE <$> dict
+  , FloatLitE <$> try floatLit
+  , IntLitE <$> try intLit
+  , operator "-" *> (NegateE <$> (parenthesized expr <|> (VarE <$> identifier)))
+  , BoolE True <$ (keyword "true" <|> keyword "True")
+  , BoolE False <$ (keyword "false" <|> keyword "False")
+  , NoneE <$ (keyword "none" <|> keyword "None")
+  , VarE <$> identifier
+  ]
+
+-------------------------------------------------------------------------------- 
+-- Statement-level tokens
+--------------------------------------------------------------------------------
+
+openComment :: P ()
+openComment = operator "{#"
+
+closeComment :: P ()
+closeComment = void $ chunk "#}"
+
+openInterpolation :: P ()
+openInterpolation = operator "{{"
+
+closeInterpolation :: P ()
+closeInterpolation = void $ chunk "}}"
+
+openFlow :: P ()
+openFlow = operator "{%"
+
+closeFlow :: P ()
+closeFlow = void $ chunk "%}"
+
+
+-------------------------------------------------------------------------------- 
+-- Statement parsers
+--------------------------------------------------------------------------------
+
+statement :: P Statement
+statement =
+  wrap <$> many singleStatement
+  where
+    wrap [] = ImmediateS mempty
+    wrap [x] = x
+    wrap xs = GroupS xs
+
+singleStatement :: P Statement
+singleStatement =
+  choice
+    [ commentStatement
+    , interpolationStatement
+    , controlStatement
+    , immediateStatement
+    ]
+
+immediateStatement :: P Statement
+immediateStatement =
+  ImmediateS . Encoded . mconcat <$> 
+    some
+    ( takeWhile1P Nothing (/= '{')
+      <|>
+      (notFollowedBy (openComment <|> openInterpolation <|> openFlow) >> chunk "{")
+    )
+
+commentStatement :: P Statement
+commentStatement =
+  between openComment closeComment $
+    CommentS . Text.strip . Text.pack <$> many (notFollowedBy closeComment *> anySingle)
+
+interpolationStatement :: P Statement
+interpolationStatement =
+  between openInterpolation closeInterpolation $
+    InterpolationS <$> expr
+
+controlStatement :: P Statement
+controlStatement =
+  choice
+    [ ifStatement
+    , forStatement
+    ]
+
+flow :: Text -> P a -> P a
+flow kw inner = do
+  try (openFlow >> keyword kw)
+  inner <* closeFlow
+
+flow_ :: Text -> P ()
+flow_ kw = flow kw nop
+
+withFlow :: Text -> P a -> P b -> (a -> b -> c) -> P c
+withFlow kw header body combine =
+  combine <$> flow kw header <*> body <* flow_ ("end" <> kw)
+
+nop :: P ()
+nop = pure ()
+
+ifStatement :: P Statement
+ifStatement = do
+  withFlow "if" expr body makeIf
+  where
+    body = do
+      yes <- statement
+      noMay <- optional $ flow_ "else" *> statement
+      pure (yes, noMay)
+    makeIf cond (yes, noMay) = IfS cond yes noMay
+
+forStatement :: P Statement
+forStatement = do
+  withFlow "for" forHeader forBody makeFor
+  where
+    forHeader = do
+      (keyMay, val) <- do
+        a' <- identifier
+        bMay' <- optional $ comma *> identifier
+        pure $ case (a', bMay') of
+          (a, Just b) -> (Just a, b)
+          (a, Nothing) -> (Nothing, a)
+      keyword "in"
+      iteree <- expr
+      filterMay <- optional $ keyword "if" *> expr
+      recursivity <- option NotRecursive $ Recursive <$ keyword "recursive"
+      pure (keyMay, val, iteree, filterMay, recursivity)
+    forBody = do
+      body <- statement
+      elseMay <- optional $ flow_ "else" *> statement
+      pure (body, elseMay)
+    makeFor (keyMay, val, iteree, filterMay, recursivity) (body, elseMay) =
+      ForS keyMay val iteree filterMay recursivity body elseMay

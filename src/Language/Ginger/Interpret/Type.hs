@@ -100,6 +100,8 @@ withEnv vars action = do
   put s
   return retval
 
+-- | Lift a dictionary value into the current scope, such that dictionary keys
+-- become variables bound to the respective values in the dictionary.
 scopify :: forall m. Monad m
         => Identifier
         -> GingerT m ()

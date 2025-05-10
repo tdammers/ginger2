@@ -19,50 +19,50 @@ tests = testGroup "Language.Ginger.Parse"
   [ testGroup "Expr"
     [ testGroup "Simple"
       [ testCase "StringLitE simple" $
-          test_parser exprP "\"Hello\"" (StringLitE "Hello")
+          test_parser expr "\"Hello\"" (StringLitE "Hello")
       , testCase "IntLitE positive" $
-          test_parser exprP "2134" (IntLitE 2134)
+          test_parser expr "2134" (IntLitE 2134)
       , testCase "IntLitE negative" $
-          test_parser exprP "-2134" (IntLitE (-2134))
+          test_parser expr "-2134" (IntLitE (-2134))
       , testCase "FloatLitE positive decimal" $
-          test_parser exprP "21.34" (FloatLitE 21.34)
+          test_parser expr "21.34" (FloatLitE 21.34)
       , testCase "FloatLitE negative decimal" $
-          test_parser exprP "-21.34" (FloatLitE (-21.34))
+          test_parser expr "-21.34" (FloatLitE (-21.34))
       , testCase "FloatLitE positive exponential" $
-          test_parser exprP "21.34e10" (FloatLitE 21.34e10)
+          test_parser expr "21.34e10" (FloatLitE 21.34e10)
       , testCase "FloatLitE negative exponential" $
-          test_parser exprP "-21.34e10" (FloatLitE (-21.34e10))
+          test_parser expr "-21.34e10" (FloatLitE (-21.34e10))
       , testCase "FloatLitE positive exponential, negative exponent" $
-          test_parser exprP "21.34e-10" (FloatLitE 21.34e-10)
+          test_parser expr "21.34e-10" (FloatLitE 21.34e-10)
       , testCase "FloatLitE positive decimal, leading dot" $
-          test_parser exprP ".34" (FloatLitE 0.34)
+          test_parser expr ".34" (FloatLitE 0.34)
       , testCase "FloatLitE positive decimal, trailing dot" $
-          test_parser exprP "12." (FloatLitE 12)
+          test_parser expr "12." (FloatLitE 12)
       , testCase "FloatLitE negative decimal, leading dot" $
-          test_parser exprP "-.34" (FloatLitE (-0.34))
+          test_parser expr "-.34" (FloatLitE (-0.34))
       , testCase "NoneE" $
-          test_parser exprP "none" NoneE
+          test_parser expr "none" NoneE
       , testCase "BoolE True" $
-          test_parser exprP "true" (BoolE True)
+          test_parser expr "true" (BoolE True)
       , testCase "BoolE False" $
-          test_parser exprP "false" (BoolE False)
+          test_parser expr "false" (BoolE False)
       , testCase "NoneE (uppercase)" $
-          test_parser exprP "None" NoneE
+          test_parser expr "None" NoneE
       , testCase "BoolE True (uppercase)" $
-          test_parser exprP "True" (BoolE True)
+          test_parser expr "True" (BoolE True)
       , testCase "BoolE False (uppercase)" $
-          test_parser exprP "False" (BoolE False)
+          test_parser expr "False" (BoolE False)
       , testCase "VarE" $
-          test_parser exprP "foo" (VarE "foo")
+          test_parser expr "foo" (VarE "foo")
       , testCase "Parenthesized" $
-          test_parser exprP "(foo)" (VarE "foo")
+          test_parser expr "(foo)" (VarE "foo")
       ]
     , testGroup "Unops" $
         map
           (\(unop, sym) ->
               testCase (show unop) $
                 test_parser
-                  exprP
+                  expr
                   (sym <> " foo")
                   (UnaryE unop (VarE "foo"))
           )
@@ -74,7 +74,7 @@ tests = testGroup "Language.Ginger.Parse"
           (\(binop, sym) ->
               testCase (show binop) $
                 test_parser
-                  exprP
+                  expr
                   ("foo " <> sym <> " bar")
                   (BinaryE binop (VarE "foo") (VarE "bar"))
           )
@@ -98,13 +98,13 @@ tests = testGroup "Language.Ginger.Parse"
           ]
     , testGroup "List"
       [ testCase "empty list" $
-          test_parser exprP "[]" (ListE [])
+          test_parser expr "[]" (ListE [])
       , testCase "single-item list" $
-          test_parser exprP "[ 1 ] " (ListE [IntLitE 1])
+          test_parser expr "[ 1 ] " (ListE [IntLitE 1])
       , testCase "multi-item list" $
-          test_parser exprP "[ 1, \"aaa\" ] " (ListE [IntLitE 1, StringLitE "aaa"])
+          test_parser expr "[ 1, \"aaa\" ] " (ListE [IntLitE 1, StringLitE "aaa"])
       , testCase "nested list" $
-          test_parser exprP "[ [ none ], true, false ] "
+          test_parser expr "[ [ none ], true, false ] "
             (ListE
               [ ListE [ NoneE ]
               , BoolE True
@@ -113,13 +113,13 @@ tests = testGroup "Language.Ginger.Parse"
       ]
     , testGroup "Dict"
       [ testCase "empty dict" $
-          test_parser exprP "{}" (DictE [])
+          test_parser expr "{}" (DictE [])
       , testCase "single-item dict" $
-          test_parser exprP "{ 1: none } " (DictE [(IntLitE 1, NoneE)])
+          test_parser expr "{ 1: none } " (DictE [(IntLitE 1, NoneE)])
       , testCase "multi-item dict" $
-          test_parser exprP "{ foo: 1, bar: \"aaa\" } " (DictE [(VarE "foo", IntLitE 1), (VarE "bar", StringLitE "aaa")])
+          test_parser expr "{ foo: 1, bar: \"aaa\" } " (DictE [(VarE "foo", IntLitE 1), (VarE "bar", StringLitE "aaa")])
       , testCase "nested dict" $
-          test_parser exprP "{ \"a\": {}, \"b\": { \"c\": 123 }}"
+          test_parser expr "{ \"a\": {}, \"b\": { \"c\": 123 }}"
             (DictE
               [ (StringLitE "a", DictE [])
               , (StringLitE "b", DictE [(StringLitE "c", IntLitE 123)])
@@ -127,86 +127,86 @@ tests = testGroup "Language.Ginger.Parse"
       ]
     , testGroup "ternary"
       [ testCase "simple" $
-          test_parser exprP "foo if bar else baz"
+          test_parser expr "foo if bar else baz"
             (TernaryE (VarE "bar") (VarE "foo") (VarE "baz"))
       , testCase "nested" $
-          test_parser exprP "foo if bar else baz if quux else none"
+          test_parser expr "foo if bar else baz if quux else none"
             (TernaryE (VarE "bar") (VarE "foo")
               (TernaryE (VarE "quux") (VarE "baz") NoneE))
       ]
     , testGroup "is"
       [ testCase "simple" $
-          test_parser exprP "foo is bar"
+          test_parser expr "foo is bar"
             (IsE (VarE "foo") (VarE "bar") [] [])
       , testCase "empty arg list" $
-          test_parser exprP "foo is bar()"
+          test_parser expr "foo is bar()"
             (IsE (VarE "foo") (VarE "bar") [] [])
       , testCase "with arg" $
-          test_parser exprP "foo is bar(baz)"
+          test_parser expr "foo is bar(baz)"
             (IsE (VarE "foo") (VarE "bar") [VarE "baz"] [])
       , testCase "is not" $
-          test_parser exprP "foo is not bar"
+          test_parser expr "foo is not bar"
             (NotE $ IsE (VarE "foo") (VarE "bar") [] [])
       , testCase "single arg without parentheses" $
-          test_parser exprP "foo is bar baz"
+          test_parser expr "foo is bar baz"
             (IsE (VarE "foo") (VarE "bar") [VarE "baz"] [])
       ]
     , testGroup "Call and index"
       [ testCase "call nullary" $
-          test_parser exprP "foo()" (CallE (VarE "foo") [] [])
+          test_parser expr "foo()" (CallE (VarE "foo") [] [])
       , testCase "call 1 positional arg" $
-          test_parser exprP "foo(a)" (CallE (VarE "foo") [VarE "a"] [])
+          test_parser expr "foo(a)" (CallE (VarE "foo") [VarE "a"] [])
       , testCase "call 2 positional args" $
-          test_parser exprP "foo(a, b)" (CallE (VarE "foo") [VarE "a", VarE "b"] [])
+          test_parser expr "foo(a, b)" (CallE (VarE "foo") [VarE "a", VarE "b"] [])
       , testCase "call 1 named arg" $
-          test_parser exprP "foo(a=b)" (CallE (VarE "foo") [] [("a", VarE "b")])
+          test_parser expr "foo(a=b)" (CallE (VarE "foo") [] [("a", VarE "b")])
       , testCase "call 2 named args" $
-          test_parser exprP "foo(a=b, c = d)" (CallE (VarE "foo") [] [("a", VarE "b"), ("c", VarE "d")])
+          test_parser expr "foo(a=b, c = d)" (CallE (VarE "foo") [] [("a", VarE "b"), ("c", VarE "d")])
       , testCase "call mixed args" $
-          test_parser exprP "foo(a, b = c)" (CallE (VarE "foo") [VarE "a"] [("b", VarE "c")])
+          test_parser expr "foo(a, b = c)" (CallE (VarE "foo") [VarE "a"] [("b", VarE "c")])
       , testCase "index" $
-          test_parser exprP "foo[bar]" (IndexE (VarE "foo") (VarE "bar"))
+          test_parser expr "foo[bar]" (IndexE (VarE "foo") (VarE "bar"))
       , testCase "dot-member" $
-          test_parser exprP "foo.bar" (IndexE (VarE "foo") (StringLitE "bar"))
+          test_parser expr "foo.bar" (IndexE (VarE "foo") (StringLitE "bar"))
       , testCase "filter (no args)" $
-          test_parser exprP "foo|bar" (FilterE (VarE "foo") (VarE "bar") [] [])
+          test_parser expr "foo|bar" (FilterE (VarE "foo") (VarE "bar") [] [])
       , testCase "filter (positional arg)" $
-          test_parser exprP "foo|bar(baz)" (FilterE (VarE "foo") (VarE "bar") [VarE "baz"] [])
+          test_parser expr "foo|bar(baz)" (FilterE (VarE "foo") (VarE "bar") [VarE "baz"] [])
       , testCase "filter (kw arg)" $
-          test_parser exprP "foo|bar(baz=quux)" (FilterE (VarE "foo") (VarE "bar") [] [("baz", VarE "quux")])
+          test_parser expr "foo|bar(baz=quux)" (FilterE (VarE "foo") (VarE "bar") [] [("baz", VarE "quux")])
       ]
     ]
     , testGroup "Precedence"
       [ testCase "+ vs *" $
-          test_parser exprP
+          test_parser expr
             "a * b + c * d"
             (PlusE
               (MulE (VarE "a") (VarE "b"))
               (MulE (VarE "c") (VarE "d"))
             )
       , testCase "* vs **" $
-          test_parser exprP
+          test_parser expr
             "a ** b * c ** d"
             (MulE
               (PowerE (VarE "a") (VarE "b"))
               (PowerE (VarE "c") (VarE "d"))
             )
       , testCase "+ vs ~" $
-          test_parser exprP
+          test_parser expr
             "a + b ~ c + d"
             (ConcatE
               (PlusE (VarE "a") (VarE "b"))
               (PlusE (VarE "c") (VarE "d"))
             )
       , testCase "== vs and" $
-          test_parser exprP
+          test_parser expr
             "a == b and c == d"
             (AndE
               (EqualE (VarE "a") (VarE "b"))
               (EqualE (VarE "c") (VarE "d"))
             )
       , testCase "+ vs ." $
-          test_parser exprP
+          test_parser expr
             "a + b[c]"
             (PlusE
               (VarE "a")
@@ -216,13 +216,95 @@ tests = testGroup "Language.Ginger.Parse"
               )
             )
       , testCase "is vs ==" $
-          test_parser exprP
+          test_parser expr
             "a is b == c"
             (EqualE
               (IsE (VarE "a") (VarE "b") [] [])
               (VarE "c")
             )
       ]
+  , testGroup "Statement"
+    [ testCase "plain immediate" $
+        test_parser statement
+          "Hello, world!"
+          (ImmediateS $ Encoded "Hello, world!")
+    , testCase "immediate with curly braces" $
+        test_parser statement
+          "Hello, {world}!"
+          (ImmediateS $ Encoded "Hello, {world}!")
+    , testCase "interpolation" $
+        test_parser statement
+          "{{ world }}"
+          (InterpolationS (VarE "world"))
+    , testCase "dict interpolation" $
+        test_parser statement
+          "{{ {\"bar\": { \"foo\": world }} }}"
+          (InterpolationS (DictE [(StringLitE "bar", (DictE [(StringLitE "foo", VarE "world")]))]))
+    , testCase "comment" $
+        test_parser statement
+          "{# world #}"
+          (CommentS "world")
+    , testCase "if" $
+        test_parser statement
+          "{% if foo %}blah{% endif %}"
+          (IfS (VarE "foo") (ImmediateS $ Encoded "blah") Nothing)
+    , testCase "if-else" $
+        test_parser statement
+          "{% if foo %}blah{% else %}pizza{% endif %}"
+          (IfS (VarE "foo") (ImmediateS $ Encoded "blah") (Just (ImmediateS $ Encoded "pizza")))
+    , testCase "for" $
+        test_parser statement
+          "{% for user in users %}{{ user.name }}{% endfor %}"
+          (ForS
+            Nothing (Identifier "user") (VarE "users")
+            Nothing
+            NotRecursive
+            (InterpolationS (IndexE (VarE "user") (StringLitE "name")))
+            Nothing
+          )
+    , testCase "for-else" $
+        test_parser statement
+          "{% for user in users %}{{ user.name }}{% else %}Nope{% endfor %}"
+          (ForS
+            Nothing (Identifier "user") (VarE "users")
+            Nothing
+            NotRecursive
+            (InterpolationS (IndexE (VarE "user") (StringLitE "name")))
+            (Just (ImmediateS (Encoded "Nope")))
+          )
+    , testCase "for-if" $
+        test_parser statement
+          "{% for user in users if user.name is defined %}{{ user.name }}{% endfor %}"
+          (ForS
+            Nothing (Identifier "user") (VarE "users")
+            (Just (IsE (IndexE (VarE "user") (StringLitE "name")) (VarE "defined") [] []))
+            NotRecursive
+            (InterpolationS (IndexE (VarE "user") (StringLitE "name")))
+            Nothing
+          )
+    , testCase "for-if-else" $
+        test_parser statement
+          "{% for user in foo if not bar else baz %}{{ user.name }}{% endfor %}"
+          (ForS
+            Nothing (Identifier "user")
+            (TernaryE (NotE (VarE "bar")) (VarE "foo") (VarE "baz"))
+            Nothing
+            NotRecursive
+            (InterpolationS (IndexE (VarE "user") (StringLitE "name")))
+            Nothing
+          )
+    , testCase "for-if-recursive" $
+        test_parser statement
+          "{% for user in foo if bar recursive %}{{ user.name }}{% endfor %}"
+          (ForS
+            Nothing (Identifier "user")
+            (VarE "foo")
+            (Just (VarE "bar"))
+            Recursive
+            (InterpolationS (IndexE (VarE "user") (StringLitE "name")))
+            Nothing
+          )
+    ]
   ]
 
 test_parser :: (Eq a, Show a) => P a -> Text -> a -> Assertion

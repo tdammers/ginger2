@@ -18,50 +18,62 @@ tests :: TestTree
 tests = testGroup "Language.Ginger.Parse"
   [ testGroup "Expr"
     [ testGroup "Simple"
-      [ testCase "StringLitE simple (double-quoted)" $
-          test_parser expr "\"Hello\"" (StringLitE "Hello")
-      , testCase "StringLitE simple (single-quoted)" $
-          test_parser expr "'Hello'" (StringLitE "Hello")
-      , testCase "StringLitE with escapes (double-quoted)" $
-          test_parser expr "\"Hello\\\n\\\"world\\\"\"" (StringLitE "Hello\n\"world\"")
-      , testCase "StringLitE with escapes (single-quoted)" $
-          test_parser expr "'Hello\\\n\\'world\\''" (StringLitE "Hello\n'world'")
-      , testCase "IntLitE positive" $
-          test_parser expr "2134" (IntLitE 2134)
-      , testCase "IntLitE negative" $
-          test_parser expr "-2134" (IntLitE (-2134))
-      , testCase "FloatLitE positive decimal" $
-          test_parser expr "21.34" (FloatLitE 21.34)
-      , testCase "FloatLitE negative decimal" $
-          test_parser expr "-21.34" (FloatLitE (-21.34))
-      , testCase "FloatLitE positive exponential" $
-          test_parser expr "21.34e10" (FloatLitE 21.34e10)
-      , testCase "FloatLitE negative exponential" $
-          test_parser expr "-21.34e10" (FloatLitE (-21.34e10))
-      , testCase "FloatLitE positive exponential, negative exponent" $
-          test_parser expr "21.34e-10" (FloatLitE 21.34e-10)
-      , testCase "FloatLitE positive decimal, leading dot" $
-          test_parser expr ".34" (FloatLitE 0.34)
-      , testCase "FloatLitE positive decimal, trailing dot" $
-          test_parser expr "12." (FloatLitE 12)
-      , testCase "FloatLitE negative decimal, leading dot" $
-          test_parser expr "-.34" (FloatLitE (-0.34))
-      , testCase "NoneE" $
-          test_parser expr "none" NoneE
-      , testCase "BoolE True" $
-          test_parser expr "true" (BoolE True)
-      , testCase "BoolE False" $
-          test_parser expr "false" (BoolE False)
-      , testCase "NoneE (uppercase)" $
-          test_parser expr "None" NoneE
-      , testCase "BoolE True (uppercase)" $
-          test_parser expr "True" (BoolE True)
-      , testCase "BoolE False (uppercase)" $
-          test_parser expr "False" (BoolE False)
-      , testCase "VarE" $
-          test_parser expr "foo" (VarE "foo")
-      , testCase "Parenthesized" $
-          test_parser expr "(foo)" (VarE "foo")
+      [ testGroup "StringLitE"
+        [ testCase "simple (double-quoted)" $
+            test_parser expr "\"Hello\"" (StringLitE "Hello")
+        , testCase "simple (single-quoted)" $
+            test_parser expr "'Hello'" (StringLitE "Hello")
+        , testCase "with escapes (double-quoted)" $
+            test_parser expr "\"Hello\\\n\\\"world\\\"\"" (StringLitE "Hello\n\"world\"")
+        , testCase "with escapes (single-quoted)" $
+            test_parser expr "'Hello\\\n\\'world\\''" (StringLitE "Hello\n'world'")
+        ]
+      , testGroup "IntLitE"
+        [ testCase "IntLitE positive" $
+            test_parser expr "2134" (IntLitE 2134)
+        , testCase "IntLitE negative" $
+            test_parser expr "-2134" (IntLitE (-2134))
+        ]
+      , testGroup "FloatLitE"
+        [ testCase "FloatLitE positive decimal" $
+            test_parser expr "21.34" (FloatLitE 21.34)
+        , testCase "FloatLitE negative decimal" $
+            test_parser expr "-21.34" (FloatLitE (-21.34))
+        , testCase "FloatLitE positive exponential" $
+            test_parser expr "21.34e10" (FloatLitE 21.34e10)
+        , testCase "FloatLitE negative exponential" $
+            test_parser expr "-21.34e10" (FloatLitE (-21.34e10))
+        , testCase "FloatLitE positive exponential, negative exponent" $
+            test_parser expr "21.34e-10" (FloatLitE 21.34e-10)
+        , testCase "FloatLitE positive decimal, leading dot" $
+            test_parser expr ".34" (FloatLitE 0.34)
+        , testCase "FloatLitE positive decimal, trailing dot" $
+            test_parser expr "12." (FloatLitE 12)
+        , testCase "FloatLitE negative decimal, leading dot" $
+            test_parser expr "-.34" (FloatLitE (-0.34))
+        ]
+      , testGroup "NoneE"
+        [ testCase "none" $
+            test_parser expr "none" NoneE
+        , testCase "None (uppercase)" $
+            test_parser expr "None" NoneE
+        ]
+      , testGroup "BoolE"
+        [ testCase "BoolE True" $
+            test_parser expr "true" (BoolE True)
+        , testCase "BoolE False" $
+            test_parser expr "false" (BoolE False)
+        , testCase "BoolE True (uppercase)" $
+            test_parser expr "True" (BoolE True)
+        , testCase "BoolE False (uppercase)" $
+            test_parser expr "False" (BoolE False)
+        ]
+      , testGroup "VarE"
+        [ testCase "simple" $
+            test_parser expr "foo" (VarE "foo")
+        , testCase "parenthesized" $
+            test_parser expr "(foo)" (VarE "foo")
+        ]
       ]
     , testGroup "Unops" $
         map
@@ -230,137 +242,191 @@ tests = testGroup "Language.Ginger.Parse"
             )
       ]
   , testGroup "Statement"
-    [ testCase "plain immediate" $
-        test_parser statement
-          "Hello, world!"
-          (ImmediateS $ Encoded "Hello, world!")
-    , testCase "immediate with curly braces" $
-        test_parser statement
-          "Hello, {world}!"
-          (ImmediateS $ Encoded "Hello, {world}!")
-    , testCase "interpolation" $
-        test_parser statement
-          "{{ world }}"
-          (InterpolationS (VarE "world"))
-    , testCase "dict interpolation" $
-        test_parser statement
-          "{{ {\"bar\": { \"foo\": world }} }}"
-          (InterpolationS (DictE [(StringLitE "bar", (DictE [(StringLitE "foo", VarE "world")]))]))
-    , testCase "comment" $
+    [ testGroup "ImmediateS"
+      [ testCase "plain immediate" $
+          test_parser statement
+            "Hello, world!"
+            (ImmediateS $ Encoded "Hello, world!")
+      , testCase "immediate with curly braces" $
+          test_parser statement
+            "Hello, {world}!"
+            (ImmediateS $ Encoded "Hello, {world}!")
+      ]
+    , testGroup "InterpolationS"
+      [ testCase "interpolation" $
+          test_parser statement
+            "{{ world }}"
+            (InterpolationS (VarE "world"))
+      , testCase "dict interpolation" $
+          test_parser statement
+            "{{ {\"bar\": { \"foo\": world }} }}"
+            (InterpolationS (DictE [(StringLitE "bar", (DictE [(StringLitE "foo", VarE "world")]))]))
+      ]
+    , testCase "CommentS" $
         test_parser statement
           "{# world #}"
           (CommentS "world")
-    , testCase "if" $
-        test_parser statement
-          "{% if foo %}blah{% endif %}"
-          (IfS (VarE "foo") (ImmediateS $ Encoded "blah") Nothing)
-    , testCase "if-else" $
-        test_parser statement
-          "{% if foo %}blah{% else %}pizza{% endif %}"
-          (IfS (VarE "foo") (ImmediateS $ Encoded "blah") (Just (ImmediateS $ Encoded "pizza")))
-    , testCase "set" $
-        test_parser statement
-          "{% set foo = bar %}"
-          (SetS "foo" (VarE "bar"))
-    , testCase "set block" $
-        test_parser statement
-          "{% set foo %}foo{% endset %}"
-          (SetBlockS "foo" (ImmediateS $ Encoded "foo") Nothing)
-    , testCase "set block with filter" $
-        test_parser statement
-          "{% set foo | bar %}foo{% endset %}"
-          (SetBlockS "foo" (ImmediateS $ Encoded "foo") (Just (VarE "bar")))
-    , testCase "for" $
-        test_parser statement
-          "{% for user in users %}{{ user.name }}{% endfor %}"
-          (ForS
-            Nothing (Identifier "user") (VarE "users")
-            Nothing
-            NotRecursive
-            (InterpolationS (IndexE (VarE "user") (StringLitE "name")))
-            Nothing
-          )
-    , testCase "for-else" $
-        test_parser statement
-          "{% for user in users %}{{ user.name }}{% else %}Nope{% endfor %}"
-          (ForS
-            Nothing (Identifier "user") (VarE "users")
-            Nothing
-            NotRecursive
-            (InterpolationS (IndexE (VarE "user") (StringLitE "name")))
-            (Just (ImmediateS (Encoded "Nope")))
-          )
-    , testCase "for-if" $
-        test_parser statement
-          "{% for user in users if user.name is defined %}{{ user.name }}{% endfor %}"
-          (ForS
-            Nothing (Identifier "user") (VarE "users")
-            (Just (IsE (IndexE (VarE "user") (StringLitE "name")) (VarE "defined") [] []))
-            NotRecursive
-            (InterpolationS (IndexE (VarE "user") (StringLitE "name")))
-            Nothing
-          )
-    , testCase "for-if-else" $
-        test_parser statement
-          "{% for user in foo if not bar else baz %}{{ user.name }}{% endfor %}"
-          (ForS
-            Nothing (Identifier "user")
-            (TernaryE (NotE (VarE "bar")) (VarE "foo") (VarE "baz"))
-            Nothing
-            NotRecursive
-            (InterpolationS (IndexE (VarE "user") (StringLitE "name")))
-            Nothing
-          )
-    , testCase "for-if-recursive" $
-        test_parser statement
-          "{% for user in foo if bar recursive %}{{ user.name }}{% endfor %}"
-          (ForS
-            Nothing (Identifier "user")
-            (VarE "foo")
-            (Just (VarE "bar"))
-            Recursive
-            (InterpolationS (IndexE (VarE "user") (StringLitE "name")))
-            Nothing
-          )
-    , testCase "include" $
-        test_parser statement
-          "{% include \"foo\" %}"
-          (IncludeS (StringLitE "foo") RequireMissing WithContext)
-    , testCase "include without context" $
-        test_parser statement
-          "{% include \"foo\" without context %}"
-          (IncludeS (StringLitE "foo") RequireMissing WithoutContext)
-    , testCase "include ignore missing" $
-        test_parser statement
-          "{% include \"foo\" ignore missing %}"
-          (IncludeS (StringLitE "foo") IgnoreMissing WithContext)
-    , testCase "include ignore missing without context" $
-        test_parser statement
-          "{% include \"foo\" ignore missing without context %}"
-          (IncludeS (StringLitE "foo") IgnoreMissing WithoutContext)
-    , testCase "extends" $
-        test_parser statement
-          "{% extends \"foo\" %}"
-          (ExtendsS (StringLitE "foo"))
-    , testCase "block" $
-        test_parser statement
-          "{% block foo %}Hello{% endblock %}"
-          (BlockS "foo" (ImmediateS . Encoded $ "Hello") NotScoped Optional)
-    , testCase "block (repeat block name)" $
-        test_parser statement
-          "{% block foo %}Hello{% endblock foo %}"
-          (BlockS "foo" (ImmediateS . Encoded $ "Hello") NotScoped Optional)
-    , testCase "block (repeat wrong block name)" $
-        test_parserEx statement
-          "{% block foo %}Hello{% endblock bar %}"
-          (Left . unlines $
-                  [ "1:33:"
-                  , "  |"
-                  , "1 | {% block foo %}Hello{% endblock bar %}"
-                  , "  |                                 ^^"
-                  , "unexpected \"ba\""
-                  , "expecting \"%}\", \"foo\", or white space"
-                  ])
+    , testGroup "IfS"
+      [ testCase "if" $
+          test_parser statement
+            "{% if foo %}blah{% endif %}"
+            (IfS (VarE "foo") (ImmediateS $ Encoded "blah") Nothing)
+      , testCase "if-else" $
+          test_parser statement
+            "{% if foo %}blah{% else %}pizza{% endif %}"
+            (IfS (VarE "foo") (ImmediateS $ Encoded "blah") (Just (ImmediateS $ Encoded "pizza")))
+      ]
+    , testGroup "SetS, SetBlockS"
+      [ testCase "set" $
+          test_parser statement
+            "{% set foo = bar %}"
+            (SetS "foo" (VarE "bar"))
+      , testCase "set block" $
+          test_parser statement
+            "{% set foo %}foo{% endset %}"
+            (SetBlockS "foo" (ImmediateS $ Encoded "foo") Nothing)
+      , testCase "set block with filter" $
+          test_parser statement
+            "{% set foo | bar %}foo{% endset %}"
+            (SetBlockS "foo" (ImmediateS $ Encoded "foo") (Just (VarE "bar")))
+      ]
+    , testGroup "ForS"
+      [ testCase "for" $
+          test_parser statement
+            "{% for user in users %}{{ user.name }}{% endfor %}"
+            (ForS
+              Nothing (Identifier "user") (VarE "users")
+              Nothing
+              NotRecursive
+              (InterpolationS (IndexE (VarE "user") (StringLitE "name")))
+              Nothing
+            )
+      , testCase "for-else" $
+          test_parser statement
+            "{% for user in users %}{{ user.name }}{% else %}Nope{% endfor %}"
+            (ForS
+              Nothing (Identifier "user") (VarE "users")
+              Nothing
+              NotRecursive
+              (InterpolationS (IndexE (VarE "user") (StringLitE "name")))
+              (Just (ImmediateS (Encoded "Nope")))
+            )
+      , testCase "for-if" $
+          test_parser statement
+            "{% for user in users if user.name is defined %}{{ user.name }}{% endfor %}"
+            (ForS
+              Nothing (Identifier "user") (VarE "users")
+              (Just (IsE (IndexE (VarE "user") (StringLitE "name")) (VarE "defined") [] []))
+              NotRecursive
+              (InterpolationS (IndexE (VarE "user") (StringLitE "name")))
+              Nothing
+            )
+      , testCase "for-if-else" $
+          test_parser statement
+            "{% for user in foo if not bar else baz %}{{ user.name }}{% endfor %}"
+            (ForS
+              Nothing (Identifier "user")
+              (TernaryE (NotE (VarE "bar")) (VarE "foo") (VarE "baz"))
+              Nothing
+              NotRecursive
+              (InterpolationS (IndexE (VarE "user") (StringLitE "name")))
+              Nothing
+            )
+      , testCase "for-if-recursive" $
+          test_parser statement
+            "{% for user in foo if bar recursive %}{{ user.name }}{% endfor %}"
+            (ForS
+              Nothing (Identifier "user")
+              (VarE "foo")
+              (Just (VarE "bar"))
+              Recursive
+              (InterpolationS (IndexE (VarE "user") (StringLitE "name")))
+              Nothing
+            )
+      ]
+    , testGroup "IncludeS"
+      [ testCase "include" $
+          test_parser statement
+            "{% include \"foo\" %}"
+            (IncludeS (StringLitE "foo") RequireMissing WithContext)
+      , testCase "include without context" $
+          test_parser statement
+            "{% include \"foo\" without context %}"
+            (IncludeS (StringLitE "foo") RequireMissing WithoutContext)
+      , testCase "include ignore missing" $
+          test_parser statement
+            "{% include \"foo\" ignore missing %}"
+            (IncludeS (StringLitE "foo") IgnoreMissing WithContext)
+      , testCase "include ignore missing without context" $
+          test_parser statement
+            "{% include \"foo\" ignore missing without context %}"
+            (IncludeS (StringLitE "foo") IgnoreMissing WithoutContext)
+      ]
+    , testGroup "ImportS"
+      [ testCase "plain import" $
+          test_parser statement
+            "{% import 'foo.html' %}"
+            (ImportS (StringLitE "foo.html") Nothing [] RequireMissing WithoutContext)
+      , testCase "qualified import" $
+          test_parser statement
+            "{% import 'foo.html' as foo %}"
+            (ImportS (StringLitE "foo.html") (Just "foo") [] RequireMissing WithoutContext)
+      , testCase "from import" $
+          test_parser statement
+            "{% from 'foo.html' import bar %}"
+            (ImportS (StringLitE "foo.html") Nothing [("bar", Nothing)] RequireMissing WithoutContext)
+      , testCase "from import qualified" $
+          test_parser statement
+            "{% from 'foo.html' as foo import bar %}"
+            (ImportS (StringLitE "foo.html") (Just "foo") [("bar", Nothing)] RequireMissing WithoutContext)
+      , testCase "from import as" $
+          test_parser statement
+            "{% from 'foo.html' import bar as baz %}"
+            (ImportS (StringLitE "foo.html") Nothing [("bar", Just "baz")] RequireMissing WithoutContext)
+      , testCase "from import qualified as" $
+          test_parser statement
+            "{% from 'foo.html' as foo import bar as baz %}"
+            (ImportS (StringLitE "foo.html") (Just "foo") [("bar", Just "baz")] RequireMissing WithoutContext)
+      , testCase "from import qualified as ignore missing" $
+          test_parser statement
+            "{% from 'foo.html' as foo import bar as baz ignore missing %}"
+            (ImportS (StringLitE "foo.html") (Just "foo") [("bar", Just "baz")] IgnoreMissing WithoutContext)
+      , testCase "from import qualified as with context" $
+          test_parser statement
+            "{% from 'foo.html' as foo import bar as baz with context %}"
+            (ImportS (StringLitE "foo.html") (Just "foo") [("bar", Just "baz")] RequireMissing WithContext)
+      , testCase "from import qualified as ignore missing with context" $
+          test_parser statement
+            "{% from 'foo.html' as foo import bar as baz ignore missing with context %}"
+            (ImportS (StringLitE "foo.html") (Just "foo") [("bar", Just "baz")] IgnoreMissing WithContext)
+      ]
+    , testGroup "ExtendsS"
+      [ testCase "extends" $
+          test_parser statement
+            "{% extends \"foo\" %}"
+            (ExtendsS (StringLitE "foo"))
+      ]
+    , testGroup "BlockS"
+      [ testCase "block" $
+          test_parser statement
+            "{% block foo %}Hello{% endblock %}"
+            (BlockS "foo" (ImmediateS . Encoded $ "Hello") NotScoped Optional)
+      , testCase "block (repeat block name)" $
+          test_parser statement
+            "{% block foo %}Hello{% endblock foo %}"
+            (BlockS "foo" (ImmediateS . Encoded $ "Hello") NotScoped Optional)
+      , testCase "block (repeat wrong block name)" $
+          test_parserEx statement
+            "{% block foo %}Hello{% endblock bar %}"
+            (Left . unlines $
+                    [ "1:33:"
+                    , "  |"
+                    , "1 | {% block foo %}Hello{% endblock bar %}"
+                    , "  |                                 ^^"
+                    , "unexpected \"ba\""
+                    , "expecting \"%}\", \"foo\", or white space"
+                    ])
+      ]
     ]
   ]
 
@@ -370,7 +436,7 @@ test_parser p input expected =
 
 test_parserEx :: (Eq a, Show a) => P a -> Text -> (Either String a) -> Assertion
 test_parserEx p input expected = do
-  assertEqual "" expected actual
+  assertEqual "" actual expected
   where
     actual = mapLeft errorBundlePretty $ parse (p <* eof) "" input
 

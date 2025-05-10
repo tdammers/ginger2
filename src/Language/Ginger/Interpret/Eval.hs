@@ -482,6 +482,8 @@ evalS (ExtendsS _nameE) = do
   throwError $ NotImplementedError (Just "extends")
 evalS (BlockS _name _bodyS _scopedness _requiredness) = do
   throwError $ NotImplementedError (Just "block")
+evalS (ImportS _srcE _nameMay _identifiers _scopedness _requiredness) = do
+  throwError $ NotImplementedError (Just "import")
 evalS (WithS varEs bodyS) = do
   vars <- Map.fromList <$> mapM (\(k, valE) -> (k,) <$> evalE valE) varEs
   scoped $ do

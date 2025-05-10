@@ -385,11 +385,6 @@ singleStatement =
     , interpolationStatement
     , controlStatement
     , immediateStatement
-    , setStatement
-    , setBlockStatement
-    , includeStatement
-    , extendsStatement
-    , blockStatement
     ]
 
 immediateStatement :: P Statement
@@ -419,6 +414,12 @@ controlStatement =
     , macroStatement
     , callStatement
     , filterStatement
+    , setStatement
+    , setBlockStatement
+    , includeStatement
+    , importStatement
+    , extendsStatement
+    , blockStatement
     ]
 
 flow :: Text -> P a -> P a
@@ -523,6 +524,45 @@ includeStatement =
             , WithoutContext <$ keyword "without" <* keyword "context"
             ]
           )
+
+importStatement :: P Statement
+importStatement =
+  wildcardImportStatement <|> explicitImportStatement
+
+wildcardImportStatement :: P Statement
+wildcardImportStatement =
+  flow "import" $
+    ImportS
+      <$> expr
+      <*> optional (keyword "as" *> identifier)
+      <*> pure []
+      <*> option RequireMissing (IgnoreMissing <$ keyword "ignore" <* keyword "missing")
+      <*> option WithoutContext (choice
+            [ WithContext <$ keyword "with" <* keyword "context"
+            , WithoutContext <$ keyword "without" <* keyword "context"
+            ]
+          )
+
+explicitImportStatement :: P Statement
+explicitImportStatement =
+  flow "from" $
+    ImportS
+      <$> expr
+      <*> optional (keyword "as" *> identifier)
+      <*  keyword "import"
+      <*> (do
+            notFollowedBy (choice $ map keyword ["ignore", "with", "without"])
+            importPair `sepBy` comma
+          )
+      <*> option RequireMissing (IgnoreMissing <$ keyword "ignore" <* keyword "missing")
+      <*> option WithoutContext (choice
+            [ WithContext <$ keyword "with" <* keyword "context"
+            , WithoutContext <$ keyword "without" <* keyword "context"
+            ]
+          )
+
+importPair :: P (Identifier, Maybe Identifier)
+importPair = (,) <$> identifier <*> optional (keyword "as" *> identifier)
 
 extendsStatement :: P Statement
 extendsStatement = flow "extends" $ ExtendsS <$> expr

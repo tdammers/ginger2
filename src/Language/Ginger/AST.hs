@@ -81,7 +81,12 @@ data Statement
       !Identifier -- variable name
       !Statement -- body
       !(Maybe Expr) -- optional filter
-  | IncludeS Expr IncludeMissingPolicy IncludeContextPolicy
+  | IncludeS Expr !IncludeMissingPolicy !IncludeContextPolicy
+  | ImportS
+      !Expr -- filename
+      !(Maybe Identifier) -- local name
+      ![(Identifier, Maybe Identifier)] -- [ (imported name, local name) ]
+      !IncludeMissingPolicy !IncludeContextPolicy
   | ExtendsS Expr
   | BlockS
       !Identifier -- block name

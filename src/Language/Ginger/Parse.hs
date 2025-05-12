@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TupleSections #-}
+{-# OPTIONS_GHC -Wno-unused-imports  #-}
 
 module Language.Ginger.Parse
 ( P
@@ -12,7 +13,8 @@ module Language.Ginger.Parse
 where
 
 import Control.Monad (void, when)
-import Data.Char (isAlphaNum, isAlpha, isDigit)
+import Control.Monad.Reader (Reader, runReader, ask, asks)
+import Data.Char (isAlphaNum, isAlpha, isDigit, isSpace)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text (Text)
 import qualified Data.Text as Text
@@ -23,19 +25,76 @@ import Text.Megaparsec.Char
 
 import Language.Ginger.AST
 
-type P = Parsec Void Text
+--------------------------------------------------------------------------------
+-- Parser Type
+--------------------------------------------------------------------------------
+
+type P = ParsecT Void Text (Reader POptions)
+
+data BlockTrimming
+  = NoTrimBlocks
+  | TrimBlocks
+  deriving (Show, Read, Eq, Ord, Enum, Bounded)
+
+data BlockStripping
+  = NoStripBlocks
+  | StripBlocks
+  deriving (Show, Read, Eq, Ord, Enum, Bounded)
+
+data PolicyOverride
+  = Default
+  | Never
+  | Always
+  deriving (Show, Read, Eq, Ord, Enum, Bounded)
+
+class OverridablePolicy a where
+  override :: PolicyOverride -> a -> a
+
+instance OverridablePolicy BlockTrimming where
+  override Default a = a
+  override Never _ = NoTrimBlocks
+  override Always _ = TrimBlocks
+
+instance OverridablePolicy BlockStripping where
+  override Default a = a
+  override Never _ = NoStripBlocks
+  override Always _ = StripBlocks
+
+data POptions =
+  POptions
+    { pstateTrimBlocks :: !BlockTrimming
+    , pstateStripBlocks :: !BlockStripping
+    }
+  deriving (Show, Read, Eq)
+
+instance OverridablePolicy POptions where
+  override o (POptions tr st) = POptions (override o tr) (override o st)
+
+
+defPOptions :: POptions
+defPOptions = POptions
+  { pstateTrimBlocks = TrimBlocks
+  , pstateStripBlocks = NoStripBlocks
+  }
 
 --------------------------------------------------------------------------------
 -- Running Parsers
 --------------------------------------------------------------------------------
 
 parseGinger :: P a -> Text -> Either String a
-parseGinger p input =
-  mapLeft errorBundlePretty $ parse p "<input>" input
+parseGinger = parseGingerWith defPOptions
+
+parseGingerWith :: POptions -> P a -> Text -> Either String a
+parseGingerWith options p input =
+  mapLeft errorBundlePretty $ runReader (runParserT p "<input>" input) options
 
 parseGingerFile :: P a -> FilePath -> IO (Either String a)
-parseGingerFile p filename =
-  mapLeft errorBundlePretty . parse p filename <$> Text.readFile filename
+parseGingerFile = parseGingerFileWith defPOptions
+
+parseGingerFileWith :: POptions -> P a -> FilePath -> IO (Either String a)
+parseGingerFileWith options p filename = do
+  input <- Text.readFile filename
+  return $ mapLeft errorBundlePretty $ runReader (runParserT p filename input) options
 
 mapLeft :: (a -> b) -> Either a c -> Either b c
 mapLeft f (Left x) = Left (f x)
@@ -367,23 +426,67 @@ simpleExpr = choice
 -- Statement-level tokens
 --------------------------------------------------------------------------------
 
+overrideToken :: P PolicyOverride
+overrideToken =
+  choice
+    [ Always <$ chunk "-"
+    , Never <$ chunk "+"
+    , pure Default
+    ]
+
+openWithOverride :: Text -> P ()
+openWithOverride base = do
+  policy <- ask
+  let defLeader = case pstateStripBlocks policy of
+        StripBlocks -> inlineSpace
+        NoStripBlocks -> pure ()
+  void $ choice
+        [ try $ inlineSpace *> chunk base *> chunk "-" <* notFollowedBy operatorChar
+        , try $ chunk base *> chunk "+" <* notFollowedBy operatorChar
+        , try $ chunk base <* notFollowedBy operatorChar
+        , try $ defLeader *> chunk base <* notFollowedBy operatorChar
+        ]
+  space
+
+inlineSpace :: P ()
+inlineSpace =
+  void $
+    takeWhileP
+      (Just "non-newline whitespace")
+      (\c -> isSpace c && c `notElem` ['\r', '\n'])
+
+anyNewline :: P Text
+anyNewline =
+  choice
+    [ chunk "\r\n"
+    , chunk "\n"
+    , chunk "\r"
+    ]
+
+closeWithOverride :: Text -> P ()
+closeWithOverride base = do
+  ovr <- try $ overrideToken <* chunk base
+  policy <- asks (override ovr)
+  when (pstateTrimBlocks policy == TrimBlocks) $
+    void . try $ inlineSpace *> optional anyNewline
+
 openComment :: P ()
-openComment = operator "{#"
+openComment = openWithOverride "{#"
 
 closeComment :: P ()
-closeComment = void $ chunk "#}"
+closeComment = closeWithOverride "#}"
 
 openInterpolation :: P ()
-openInterpolation = operator "{{"
+openInterpolation = openWithOverride "{{"
 
 closeInterpolation :: P ()
-closeInterpolation = void $ chunk "}}"
+closeInterpolation = closeWithOverride "}}"
 
 openFlow :: P ()
-openFlow = operator "{%"
+openFlow = openWithOverride "{%"
 
 closeFlow :: P ()
-closeFlow = void $ chunk "%}"
+closeFlow = closeWithOverride "%}"
 
 
 -------------------------------------------------------------------------------- 
@@ -395,8 +498,12 @@ template = statement <* eof
 
 statement :: P Statement
 statement =
-  wrap <$> many singleStatement
+  wrap . joinImmediates <$> many singleStatement
   where
+    joinImmediates (ImmediateS a : ImmediateS b : xs) =
+      joinImmediates (ImmediateS (a <> b) : xs)
+    joinImmediates (x:xs) = x : joinImmediates xs
+    joinImmediates [] = []
     wrap [] = ImmediateS mempty
     wrap [x] = x
     wrap xs = GroupS xs
@@ -412,12 +519,14 @@ singleStatement =
 
 immediateStatement :: P Statement
 immediateStatement =
-  ImmediateS . Encoded . mconcat <$> 
-    some
-    ( takeWhile1P Nothing (/= '{')
-      <|>
-      (notFollowedBy (openComment <|> openInterpolation <|> openFlow) >> chunk "{")
-    )
+  ImmediateS . Encoded <$> 
+    choice
+      [ anyNewline
+      , fmap mconcat . some $
+          notFollowedBy (openComment <|> openInterpolation <|> openFlow) >> chunk "{"
+          <|>
+          takeWhile1P Nothing (`notElem` ['{', '\n', '\r'])
+      ]
 
 commentStatement :: P Statement
 commentStatement =

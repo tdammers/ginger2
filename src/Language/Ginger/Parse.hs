@@ -5,21 +5,41 @@ module Language.Ginger.Parse
 ( P
 , expr
 , statement
+, template
+, parseGinger
+, parseGingerFile
 )
 where
 
 import Control.Monad (void, when)
-import qualified Data.Text as Text
+import Data.Char (isAlphaNum, isAlpha, isDigit)
+import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text (Text)
+import qualified Data.Text as Text
+import qualified Data.Text.IO as Text
 import Data.Void (Void)
 import Text.Megaparsec
 import Text.Megaparsec.Char
-import Data.Char (isAlphaNum, isAlpha, isDigit)
-import Data.List.NonEmpty (NonEmpty (..))
 
 import Language.Ginger.AST
 
 type P = Parsec Void Text
+
+--------------------------------------------------------------------------------
+-- Primitives etc.
+--------------------------------------------------------------------------------
+
+parseGinger :: P a -> Text -> Either String a
+parseGinger p input =
+  mapLeft errorBundlePretty $ parse p "<input>" input
+
+parseGingerFile :: P a -> FilePath -> IO (Either String a)
+parseGingerFile p filename =
+  mapLeft errorBundlePretty . parse p filename <$> Text.readFile filename
+
+mapLeft :: (a -> b) -> Either a c -> Either b c
+mapLeft f (Left x) = Left (f x)
+mapLeft _ (Right x) = Right x
 
 --------------------------------------------------------------------------------
 -- Primitives etc.
@@ -369,6 +389,9 @@ closeFlow = void $ chunk "%}"
 -------------------------------------------------------------------------------- 
 -- Statement parsers
 --------------------------------------------------------------------------------
+
+template :: P Statement
+template = statement <* eof
 
 statement :: P Statement
 statement =

@@ -66,23 +66,23 @@ data Statement
       !Recursivity -- enable recursion?
       !Statement -- loop body
       !(Maybe Statement) -- else branch in case iteree is empty
-  | -- | @{% if condition %}yes branch{% else %}no branch{% endif %}
+  | -- | @{% if condition %}yes branch{% else %}no branch{% endif %}@
     IfS
       !Expr -- condition
       !Statement -- true branch
       !(Maybe Statement) -- false branch
-  | -- | @{% macro name(args) %}body{% endmacro %}
+  | -- | @{% macro name(args) %}body{% endmacro %}@
     MacroS
       !Identifier -- macro name
       ![MacroArg] -- arguments
       !Statement -- body
-  | -- | @{% call macroName(args) %}body{% endcall %}
+  | -- | @{% call macroName(args) %}body{% endcall %}@
     CallS
       !Identifier -- callee
       ![Expr] -- positional args
       ![(Identifier, Expr)] -- keyword args
       !Statement -- body (@caller()@)
-  | -- | @{% filter filterName(args, kwargs) %}body{% endfilter %}
+  | -- | @{% filter filterName(args, kwargs) %}body{% endfilter %}@
     FilterS
       !Identifier -- name
       ![Expr] -- positional args
@@ -108,13 +108,16 @@ data Statement
       !(Maybe Identifier) -- local name
       ![(Identifier, Maybe Identifier)] -- [ (imported name, local name) ]
       !IncludeMissingPolicy !IncludeContextPolicy
-  | -- | @{% block name with scope required %}body{% endblock %} ExtendsS Expr
+  | -- | @{% extends expr %}@
+    ExtendsS
+      !Expr
+  | -- | @{% block name with scope required %}body{% endblock %}@
     BlockS
       !Identifier -- block name
       !Statement -- body
       !Scoped -- scoped block?
       !Required -- required block?
-  | -- | {% with defs %}body{% endwith %}
+  | -- | @{% with defs %}body{% endwith %}@
     WithS
       ![(Identifier, Expr)]
       !Statement

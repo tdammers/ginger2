@@ -9,7 +9,7 @@ where
 import Data.Text (Text)
 import Test.Tasty
 import Test.Tasty.HUnit
-import Text.Megaparsec (parse, errorBundlePretty, eof)
+import Text.Megaparsec (eof)
 
 import Language.Ginger.AST
 import Language.Ginger.Parse
@@ -419,7 +419,7 @@ tests = testGroup "Language.Ginger.Parse"
           test_parserEx statement
             "{% block foo %}Hello{% endblock bar %}"
             (Left . unlines $
-                    [ "1:33:"
+                    [ "<input>:1:33:"
                     , "  |"
                     , "1 | {% block foo %}Hello{% endblock bar %}"
                     , "  |                                 ^^"
@@ -438,8 +438,4 @@ test_parserEx :: (Eq a, Show a) => P a -> Text -> (Either String a) -> Assertion
 test_parserEx p input expected = do
   assertEqual "" actual expected
   where
-    actual = mapLeft errorBundlePretty $ parse (p <* eof) "" input
-
-mapLeft :: (a -> b) -> Either a c -> Either b c
-mapLeft f (Left x) = Left (f x)
-mapLeft _ (Right x) = Right x
+    actual = parseGinger (p <* eof) input

@@ -427,6 +427,20 @@ tests = testGroup "Language.Ginger.Parse"
                     , "expecting \"%}\", \"foo\", or white space"
                     ])
       ]
+    , testGroup "WithS"
+      [ testCase "plain" $
+          test_parser statement
+            "{% with %}hello{% endwith %}"
+            (WithS [] (ImmediateS . Encoded $ "hello"))
+      , testCase "one variable" $
+          test_parser statement
+            "{% with foo = bar %}hello{% endwith %}"
+            (WithS [("foo", VarE "bar")] (ImmediateS . Encoded $ "hello"))
+      , testCase "two variables" $
+          test_parser statement
+            "{% with foo = bar, baz = 123 %}hello{% endwith %}"
+            (WithS [("foo", VarE "bar"), ("baz", IntLitE 123)] (ImmediateS . Encoded $ "hello"))
+      ]
     ]
   ]
 
@@ -436,6 +450,6 @@ test_parser p input expected =
 
 test_parserEx :: (Eq a, Show a) => P a -> Text -> (Either String a) -> Assertion
 test_parserEx p input expected = do
-  assertEqual "" actual expected
+  assertEqual "" expected actual
   where
     actual = parseGinger (p <* eof) input

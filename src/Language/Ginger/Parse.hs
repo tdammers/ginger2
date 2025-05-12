@@ -443,6 +443,7 @@ controlStatement =
     , importStatement
     , extendsStatement
     , blockStatement
+    , withStatement
     ]
 
 flow :: Text -> P a -> P a
@@ -523,9 +524,12 @@ filterStatement = do
     filterBody = statement
     makeFilter (filteree, (args, kwargs)) body = FilterS filteree args kwargs body
 
+setPair :: P (Identifier, Expr)
+setPair = (,) <$> identifier <* operator "=" <*> expr
+
 setStatement :: P Statement
 setStatement = try $ do
-  flow "set" $ SetS <$> identifier <* operator "=" <*> expr
+  flow "set" $ uncurry SetS <$> setPair
 
 setBlockStatement :: P Statement
 setBlockStatement = do
@@ -589,6 +593,14 @@ importPair = (,) <$> identifier <*> optional (keyword "as" *> identifier)
 
 extendsStatement :: P Statement
 extendsStatement = flow "extends" $ ExtendsS <$> expr
+
+withStatement :: P Statement
+withStatement = do
+  withFlow "with" withHeader withBody makeWith
+  where
+    withHeader = setPair `sepBy` comma
+    withBody = statement
+    makeWith = WithS
 
 blockStatement :: P Statement
 blockStatement = do

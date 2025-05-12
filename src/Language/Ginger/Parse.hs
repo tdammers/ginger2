@@ -26,7 +26,7 @@ import Language.Ginger.AST
 type P = Parsec Void Text
 
 --------------------------------------------------------------------------------
--- Primitives etc.
+-- Running Parsers
 --------------------------------------------------------------------------------
 
 parseGinger :: P a -> Text -> Either String a

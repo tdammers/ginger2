@@ -45,10 +45,20 @@ instance Arbitrary Encoded where
   arbitrary = Encoded . Text.pack <$> QC.listOf arbitrary
 
 data Statement
-  = ImmediateS !Encoded
-  | InterpolationS !Expr
-  | CommentS !Text
-  | ForS
+  = -- | Bare text written in the template, outside of any curly braces
+    ImmediateS !Encoded
+  | -- | An expression interpolation: @{{ expr }}@
+    InterpolationS !Expr
+  | -- | Comment: @{# comment text #}@
+    CommentS !Text
+  | -- | @@@
+    --   {% for keyVar, valueVar in iteree if loopCondition recursive %}
+    --   body
+    --   {% else %}
+    --   body if empty
+    --   {% endfor %}
+    --   @@@
+    ForS
       !(Maybe Identifier) -- optional loop key variable
       !Identifier -- loop element variable
       !Expr -- iteree
@@ -56,45 +66,61 @@ data Statement
       !Recursivity -- enable recursion?
       !Statement -- loop body
       !(Maybe Statement) -- else branch in case iteree is empty
-  | IfS
+  | -- | @{% if condition %}yes branch{% else %}no branch{% endif %}
+    IfS
       !Expr -- condition
       !Statement -- true branch
       !(Maybe Statement) -- false branch
-  | MacroS
+  | -- | @{% macro name(args) %}body{% endmacro %}
+    MacroS
       !Identifier -- macro name
       ![MacroArg] -- arguments
       !Statement -- body
-  | CallS
+  | -- | @{% call macroName(args) %}body{% endcall %}
+    CallS
       !Identifier -- callee
       ![Expr] -- positional args
       ![(Identifier, Expr)] -- keyword args
       !Statement -- body (@caller()@)
-  | FilterS
+  | -- | @{% filter filterName(args, kwargs) %}body{% endfilter %}
+    FilterS
       !Identifier -- name
       ![Expr] -- positional args
       ![(Identifier, Expr)] -- keyword args
       !Statement -- body
-  | SetS
+  | -- | @{% set name=expr %}@
+    SetS
       !Identifier -- variable name
       !Expr -- value
-  | SetBlockS
+  | -- | @{% set name %}body{% endset %}@
+    SetBlockS
       !Identifier -- variable name
       !Statement -- body
       !(Maybe Expr) -- optional filter
-  | IncludeS Expr !IncludeMissingPolicy !IncludeContextPolicy
-  | ImportS
+  | -- | @{% include includee ignore missing with context %}@
+    IncludeS
+      !Expr
+      !IncludeMissingPolicy
+      !IncludeContextPolicy
+  | -- | @{% import importee as localName item, other_item as other ignore missing with context %}@
+    ImportS
       !Expr -- filename
       !(Maybe Identifier) -- local name
       ![(Identifier, Maybe Identifier)] -- [ (imported name, local name) ]
       !IncludeMissingPolicy !IncludeContextPolicy
-  | ExtendsS Expr
-  | BlockS
+  | -- | @{% block name with scope required %}body{% endblock %} ExtendsS Expr
+    BlockS
       !Identifier -- block name
       !Statement -- body
       !Scoped -- scoped block?
       !Required -- required block?
-  | WithS ![(Identifier, Expr)] Statement
-  | GroupS ![Statement]
+  | -- | {% with defs %}body{% endwith %}
+    WithS
+      ![(Identifier, Expr)]
+      !Statement
+  | -- | Group of statements; not parsed, but needed for combining statements
+    -- sequentially.
+    GroupS ![Statement]
   deriving (Show, Eq)
 
 data IncludeMissingPolicy

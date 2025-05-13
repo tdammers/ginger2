@@ -187,7 +187,8 @@ newtype Filter m = NativeFilter { runFilter :: FilterFunc m }
 data NativeObject m =
   NativeObject
     { nativeObjectGetFieldNames :: m [Scalar]
-    , nativeObjectGetField :: Scalar -> m (Maybe (Value m))
+    , nativeObjectGetField :: Value m -> m (Maybe (Value m))
+    , nativeObjectGetAttribute :: Value m -> m (Maybe (Value m))
     , nativeObjectStringified :: m Text
     , nativeObjectEncoded :: m Encoded
     , nativeObjectAsList :: m (Maybe [Value m])
@@ -203,6 +204,7 @@ defNativeObject =
   NativeObject
     { nativeObjectGetFieldNames = pure []
     , nativeObjectGetField = \_ -> pure Nothing
+    , nativeObjectGetAttribute = \_ -> pure Nothing
     , nativeObjectStringified = pure "<native object>"
     , nativeObjectEncoded = pure (Encoded "[[native object]]")
     , nativeObjectAsList = pure Nothing
@@ -484,35 +486,45 @@ resolveArgs :: Maybe Text
             -> [(Identifier, Maybe (Value m))]
             -> [(Maybe Identifier, Value m)]
             -> Either RuntimeError (Map Identifier (Value m))
-resolveArgs _ [] [] =
-  -- done!
-  Right mempty
-resolveArgs _ [] ys =
-  error "TODO: handle unused args"
-resolveArgs context ((name, Nothing):_) [] =
-  -- missing required argument
-  Left $ ArgumentError
-          context
-          (Just . identifierName $ name)
-          (Just "argument")
-          (Just "end of arguments")
-resolveArgs context ((name, Just value):xs) [] =
-  -- end of arguments, using default
-  Map.insert name value <$> resolveArgs context xs []
-resolveArgs context ((name, _):xs) ((Nothing, val):ys) =
-  -- positional argument
-  Map.insert name val <$> resolveArgs context xs ys
-resolveArgs context xs ((Just name, val):ys) =
-  let matchingArgs = filter ((== name) . fst) xs
-      remainingArgs = filter ((/= name) .fst) xs
-  in case matchingArgs of
-    [_] -> Map.insert name val <$> resolveArgs context remainingArgs ys
-    [] -> error "TODO: handle unused kwargs"
-    xs -> Left $ ArgumentError
-                  context
-                  (Just . identifierName $ name)
-                  (Just "single argument")
-                  (Just "Multiple arguments")
+resolveArgs context specs args =
+  let kwargs0 = Map.fromList [(k, v) | (Just k, v) <- args]
+      varargs0 = [v | (Nothing, v) <- args]
+  in go specs kwargs0 varargs0
+  where
+    go ((argName, defVal):xs) kwargs varargs =
+      case Map.lookup argName kwargs of
+        Nothing ->
+          -- positional argument
+          case varargs of
+            [] ->
+              -- No more arguments passed, look for default value
+              maybe
+                -- No default, argument required
+                (Left $
+                  ArgumentError
+                    context
+                    (Just $ identifierName argName)
+                    (Just "argument")
+                    (Just "end of arguments")
+                )
+                -- Default exists, use it.
+                (\val ->
+                  Map.insert argName val <$> go xs kwargs varargs
+                )
+                defVal
+            (v:varargs') ->
+              -- Argument passed, use it.
+              Map.insert argName v <$> go xs kwargs varargs'
+        Just v ->
+          -- Keyword argument found.
+          Map.insert argName v <$> go xs (Map.delete argName kwargs) varargs
+
+    go [] kwargs varargs =
+        -- Map remaining arguments to @varargs@ and @kwargs@.
+        Right $ Map.fromList
+          [ ("varargs", ListV varargs)
+          , ("kwargs", DictV (Map.mapKeys (toScalar . identifierName) kwargs))
+          ]
 
 leftNaN :: Double -> Either RuntimeError Double
 leftNaN c | isNaN c = Left $ NumericError Nothing (Just "not a number")
@@ -552,6 +564,15 @@ asBoolVal :: Value m -> Either RuntimeError Bool
 asBoolVal (BoolV a) = Right a
 asBoolVal NoneV = Right False
 asBoolVal x = Left $ TagError Nothing (Just "bool") (Just . tagNameOf $ x)
+
+asListVal :: Monad m => Value m -> m (Either RuntimeError [Value m])
+asListVal (ListV a) = pure $ Right a
+asListVal (NativeV n) =
+  maybe
+    (Left $ TagError Nothing (Just "list") (Just "non-list native object"))
+    Right <$>
+    nativeObjectAsList n
+asListVal x = pure . Left $ TagError Nothing (Just "list") (Just . tagNameOf $ x)
 
 asTextVal :: Value m -> Either RuntimeError Text
 asTextVal (StringV a) = Right a

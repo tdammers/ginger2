@@ -373,14 +373,43 @@ evalBinary BinopIn a b = case b of
 evalBinary BinopIndex a b = case a of
   DictV m -> case b of
     ScalarV k -> pure . toValue $ k `Map.lookup` m
-    x -> throwError $ TagError (Just "in") (Just "scalar") (Just . tagNameOf $ x)
+    x -> throwError $ TagError (Just "[]") (Just "scalar") (Just . tagNameOf $ x)
   ListV xs -> case b of
     IntV i -> pure . toValue . listToMaybe . drop (fromInteger i) $ xs
-    x -> throwError $ TagError (Just "in") (Just "int") (Just . tagNameOf $ x)
+    x -> throwError $ TagError (Just "[]") (Just "int") (Just . tagNameOf $ x)
   StringV str -> case b of
     IntV i -> pure . toValue . Text.take 1 . Text.drop (fromInteger i) $ str
-    x -> throwError $ TagError (Just "in") (Just "int") (Just . tagNameOf $ x)
-  x -> throwError $ TagError (Just "in") (Just "list or dict") (Just . tagNameOf $ x)
+    x -> throwError $ TagError (Just "[]") (Just "int") (Just . tagNameOf $ x)
+  NativeV n -> do
+    fieldMay <- native . fmap Right $ nativeObjectGetField n b
+    case fieldMay of
+      Just v -> pure v
+      Nothing -> do
+        attrMay <- native . fmap Right $ nativeObjectGetAttribute n b
+        case attrMay of
+          Just v -> pure v
+          Nothing -> pure NoneV
+  x -> throwError $ TagError (Just "[]") (Just "list or dict") (Just . tagNameOf $ x)
+evalBinary BinopDot a b = case a of
+  DictV m -> case b of
+    ScalarV k -> pure . toValue $ k `Map.lookup` m
+    x -> throwError $ TagError (Just ".") (Just "scalar") (Just . tagNameOf $ x)
+  ListV xs -> case b of
+    IntV i -> pure . toValue . listToMaybe . drop (fromInteger i) $ xs
+    x -> throwError $ TagError (Just ".") (Just "int") (Just . tagNameOf $ x)
+  StringV str -> case b of
+    IntV i -> pure . toValue . Text.take 1 . Text.drop (fromInteger i) $ str
+    x -> throwError $ TagError (Just ".") (Just "int") (Just . tagNameOf $ x)
+  NativeV n -> do
+    attrMay <- native . fmap Right $ nativeObjectGetAttribute n b
+    case attrMay of
+      Just v -> pure v
+      Nothing -> do
+        fieldMay <- native . fmap Right $ nativeObjectGetField n b
+        case fieldMay of
+          Just v -> pure v
+          Nothing -> pure NoneV
+  x -> throwError $ TagError (Just ".") (Just "list or dict") (Just . tagNameOf $ x)
 evalBinary BinopConcat a b = concatValues a b
 
 safeIntPow :: Integer -> Integer -> Either RuntimeError Integer

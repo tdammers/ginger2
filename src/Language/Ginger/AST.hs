@@ -345,8 +345,10 @@ data BinaryOperator
 
     -- List / dict membership
   | BinopIn
-    -- List / dict indexing (@.@ / @[]@)
+    -- List / dict indexing (@[]@)
   | BinopIndex
+    -- Dot member access (@.@)
+  | BinopDot
     -- String concatenation
   | BinopConcat
     -- Test
@@ -402,6 +404,9 @@ pattern InE a b = BinaryE BinopIn a b
 
 pattern IndexE :: Expr -> Expr -> Expr
 pattern IndexE a b = BinaryE BinopIndex a b
+
+pattern DotE :: Expr -> Expr -> Expr
+pattern DotE a b = BinaryE BinopIndex a b
 
 pattern ConcatE :: Expr -> Expr -> Expr
 pattern ConcatE a b = BinaryE BinopConcat a b

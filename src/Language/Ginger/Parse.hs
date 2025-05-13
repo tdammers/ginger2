@@ -381,7 +381,7 @@ memberAccessExpr = do
     dotTail lhs = do
       operator "."
       selector <- StringLitE <$> identifierRaw
-      exprTail (IndexE lhs selector)
+      exprTail (DotE lhs selector)
 
     bracketsTail lhs = do
       selector <- bracketed expr

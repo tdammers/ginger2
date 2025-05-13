@@ -18,9 +18,11 @@ import Language.Ginger.Value
 import Language.Ginger.Interpret.Type
 import Language.Ginger.Interpret.Eval
 
+import Control.Monad.Trans (lift)
+import Control.Monad.Except
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (isJust, fromJust)
+import Data.Maybe (isJust, fromJust, fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Char (isUpper, isLower)
@@ -69,10 +71,10 @@ defEnvVars = Map.fromList
         ]
     )
   , ("abs", ProcedureV . pureNativeFunc $ numericFunc abs abs)
-  -- , ("attr", undefined)
-  -- , ("batch", undefined)
+  , ("attr", toValue (getAttr @m))
+  , ("batch", ProcedureV $ fnBatch)
   , ("capitalize", ProcedureV . pureNativeFunc $ textFunc (pure . Text.toUpper))
-  -- , ("center", undefined)
+  , ("center", ProcedureV $ fnCenter)
   -- , ("dictsort", undefined)
   -- , ("escape", undefined)
   , ("even", ProcedureV . pureNativeFunc $ fmap (BoolV . even) . asIntVal @m)
@@ -325,6 +327,121 @@ gingerBinopTest op =
       eval (BinaryE op expr (VarE "#args")) >>= \case
         TrueV -> pure True
         _ -> pure False
+
+getAttr :: Monad m
+        => Value m
+        -> Value m
+        -> m (Value m)
+getAttr (NativeV n) v =
+  fromMaybe NoneV <$> nativeObjectGetAttribute n v
+getAttr _ _ = pure NoneV
+
+fnEither :: Monad m => Either a b -> ExceptT a m b
+fnEither = either throwError pure
+
+fnMaybeArg :: Monad m => Text -> Text -> Maybe b -> ExceptT RuntimeError m b
+fnMaybeArg context name =
+  maybe
+    (throwError $
+        ArgumentError
+          (Just context)
+          (Just name)
+          (Just "argument")
+          (Just "end of arguments")
+    )
+    pure
+
+fnEitherM :: Monad m => m (Either a b) -> ExceptT a m b
+fnEitherM = (>>= fnEither) . lift
+
+fnTextArg :: Monad m
+          => Text
+          -> Identifier
+          -> Map Identifier (Value m)
+          -> ExceptT RuntimeError m Text
+fnTextArg = fnArg asTextVal
+
+fnIntArg :: Monad m
+          => Text
+          -> Identifier
+          -> Map Identifier (Value m)
+          -> ExceptT RuntimeError m Integer
+fnIntArg = fnArg asIntVal
+
+fnListArg :: Monad m
+          => Text
+          -> Identifier
+          -> Map Identifier (Value m)
+          -> ExceptT RuntimeError m [Value m]
+fnListArg = fnArgM asListVal
+
+fnArg :: Monad m
+      => (Value m -> Either RuntimeError a)
+      -> Text
+      -> Identifier
+      -> Map Identifier (Value m)
+      -> ExceptT RuntimeError m a
+fnArg convert context name argValues = do
+  argV <- fnMaybeArg context (identifierName name) $ Map.lookup name argValues
+  fnEither $ convert argV
+
+fnArgM :: Monad m
+       => (Value m -> m (Either RuntimeError a))
+       -> Text
+       -> Identifier
+       -> Map Identifier (Value m)
+       -> ExceptT RuntimeError m a
+fnArgM convert context name argValues = do
+  argV <- fnMaybeArg context (identifierName name) $ Map.lookup name argValues
+  fnEitherM $ convert argV
+
+
+fnCenter :: Monad m => Procedure m
+fnCenter = NativeProcedure $ \args -> runExceptT $ do
+    argValues <- fnEither $
+                  resolveArgs
+                    (Just "center")
+                    [("value", Nothing), ("width", Just $ IntV 80)]
+                    args
+    value <- fnTextArg "center" "value" argValues
+    width <- fnIntArg "center" "width" argValues
+    let paddingTotal = max 0 $ fromInteger width - Text.length value
+        paddingLeft = paddingTotal `div` 2
+        paddingRight = paddingTotal - paddingLeft
+    pure . StringV $
+      Text.replicate paddingLeft " " <>
+      value <>
+      Text.replicate paddingRight " "
+
+fnBatch :: Monad m => Procedure m
+fnBatch = NativeProcedure $ \args -> runExceptT $ do
+  argValues <- fnEither $
+                resolveArgs
+                  (Just "batch")
+                  [ ("value", Nothing)
+                  , ("linecount", Nothing)
+                  , ("fill_with", Just NoneV)
+                  ]
+                  args
+  value <- fnListArg "batch" "value" argValues
+  linecount <- fnIntArg "batch" "linecount" argValues
+  fillWith <- fnArg Right "batch" "fill_with" argValues
+  let fillWithMay = if fillWith == NoneV then Nothing else Just fillWith
+  pure . ListV . map ListV $ chunksOf fillWithMay (fromInteger linecount) value
+  where
+    chunksOf :: Maybe a -> Int -> [a] -> [[a]]
+    chunksOf _ _ [] = []
+    chunksOf fillMay n xs =
+      case take n xs of
+        xs' | length xs' < n ->
+          let paddingLength = n - length xs'
+              padding = case (fillMay, paddingLength) of
+                          (Just fill, p) | p > 0 ->
+                            replicate paddingLength fill
+                          _ -> []
+          in [xs' ++ padding]
+        xs' -> xs' : chunksOf fillMay n (drop n xs)
+
 
 isUpperVal :: Value m -> Value m
 isUpperVal (StringV txt) = BoolV (Text.all isUpper txt)

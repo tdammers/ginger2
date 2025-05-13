@@ -157,6 +157,55 @@ tests = testGroup "Language.Ginger.Interpret"
             prop_eval (\i -> FilterE FalseE (VarE "default") [(IntLitE i)] []) (const FalseV)
         , testProperty "default (boolean false, boolean mode)" $
             prop_eval (\i -> FilterE FalseE (VarE "default") [(IntLitE i), TrueE] []) IntV
+        , testProperty "center string (width as vararg)" $
+            prop_eval (\((ArbitraryText t), w) ->
+                          FilterE (StringLitE t) (VarE "center") [IntLitE $ fromIntegral w] []
+                      )
+                      (\((ArbitraryText t), w) ->
+                          if Text.length t >= w then
+                            StringV t
+                          else
+                            let p = w - Text.length t
+                                pL = p `div` 2
+                                pR = p - pL
+                            in StringV $ Text.replicate pL " " <> t <> Text.replicate pR " "
+                      )
+        , testProperty "center string (width as kwarg)" $
+            prop_eval (\((ArbitraryText t), w) ->
+                          FilterE (StringLitE t) (VarE "center") [] [("width", IntLitE $ fromIntegral w)]
+                      )
+                      (\((ArbitraryText t), w) ->
+                          if Text.length t >= w then
+                            StringV t
+                          else
+                            let p = w - Text.length t
+                                pL = p `div` 2
+                                pR = p - pL
+                            in StringV $ Text.replicate pL " " <> t <> Text.replicate pR " "
+                      )
+        , testProperty "batch" $
+            prop_eval
+              (\(PositiveInt i, PositiveInt j) -> FilterE (ListE (replicate (i * j) NoneE)) (VarE "batch") [IntLitE $ fromIntegral j] [])
+              (\(PositiveInt i, PositiveInt j) -> ListV (replicate i (ListV (replicate j NoneV))))
+        , testProperty "batch with fill" $
+            prop_eval
+              (\(PositiveInt i, PositiveInt j, PositiveInt x, f) ->
+                  FilterE
+                    (ListE (replicate (i * j + x `mod` j) NoneE))
+                    (VarE "batch")
+                    [IntLitE $ fromIntegral j, IntLitE f]
+                    []
+              )
+              (\(PositiveInt i, PositiveInt j, PositiveInt x, f) ->
+                  ListV (
+                    replicate i (ListV (replicate j NoneV)) ++
+                    if x `mod` j == 0 then
+                      []
+                    else
+                      [ListV (replicate (x `mod` j) NoneV ++ replicate (j - x `mod` j) (IntV f))]
+                  )
+              )
+
         ]
     , testGroup "IsE"
       [ testGroup "defined"
@@ -538,6 +587,7 @@ prop_interpolationStatementOutput expr =
       resultE = runGingerIdentityEither (eval expr)
   in
     isRight resultE ==>
+    either (const True) (not . getAny . traverseValue (Any . isProcedure)) resultE ==>
     resultS === resultE
 
 prop_ifStatementOutput :: Bool -> Statement -> Statement -> Property
@@ -668,6 +718,7 @@ prop_callNoArgs body =
               Left err -> unwords . take 1 . words $ show err
   in
     label cat $
+    either (const True) (not . getAny . traverseValue (Any . isProcedure)) resultDirect ==>
     resultCall === resultDirect
 
 prop_callIdentity :: Expr -> Property
@@ -688,6 +739,7 @@ prop_callIdentity body =
               Left err -> unwords . take 1 . words $ show err
   in
     label cat $
+    either (const True) (not . getAny . traverseValue (Any . isProcedure)) resultDirect ==>
     resultCall === resultDirect
 
 prop_callEcho :: Expr -> Property
@@ -711,6 +763,7 @@ prop_callEcho body =
               Left err -> unwords . take 1 . words $ show err
   in
     label cat $
+    either (const True) (not . getAny . traverseValue (Any . isProcedure)) resultDirect ==>
     resultCall === resultDirect
 
 prop_callMacro :: Statement -> Property
@@ -740,4 +793,5 @@ prop_callMacro body =
               Left err -> unwords . take 1 . words $ show err
   in
     label cat $
+    either (const True) (not . getAny . traverseValue (Any . isProcedure)) resultDirect ==>
     resultCall === resultDirect

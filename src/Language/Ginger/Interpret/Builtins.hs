@@ -7,6 +7,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LambdaCase #-}
 
 module Language.Ginger.Interpret.Builtins
 where
@@ -19,7 +20,10 @@ import Language.Ginger.Interpret.Eval
 
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (isJust)
+import Data.Maybe (isJust, fromJust)
+import Data.Text (Text)
+import qualified Data.Text as Text
+import Data.Char (isUpper, isLower)
 
 defEnv :: Monad m => Env m
 defEnv =
@@ -33,31 +37,45 @@ defEnvVars = Map.fromList
     , dictV
         [ ("defined", TestV $ NativeTest isDefined)
         , ("undefined", TestV $ NativeTest isUndefined)
-        , ("callable", toValue (isCallable @m))
         , ("boolean", toValue (isBool @m))
-        , ("integer", toValue (isInteger @m))
+        , ("callable", toValue (isCallable @m))
+        , ("filter", TestV $ NativeTest isFilter)
         , ("float", toValue (isFloat @m))
-        , ("number", toValue (isNumber @m))
-        , ("string", toValue (isString @m))
-        , ("test", toValue (isTest @m))
-        , ("filter", toValue (isCallable @m))
+        , ("integer", toValue (isInteger @m))
         , ("iterable", toValue (isIterable @m))
         , ("mapping", toValue (isMapping @m))
+        , ("number", toValue (isNumber @m))
         , ("sequence", toValue (isSequence @m))
-        -- , ("upper", toValue (isUpper @m))
+        , ("string", toValue (isString @m))
+        , ("test", TestV $ NativeTest isTest)
+        , ("upper", toValue (isUpperVal @m))
+        , ("eq", TestV $ NativeTest isEqual)
+        , ("escaped", builtinNotImplemented @m "escaped")
+        , ("false", toValue (isBoolean False :: Value m -> Value m))
+        , ("ge", gingerBinopTest BinopGTE)
+        , ("gt", gingerBinopTest BinopGT)
+        , ("in", gingerBinopTest BinopIn)
+        , ("le", gingerBinopTest BinopLTE)
+        , ("lower", toValue (isLowerVal @m))
+        , ("lt", gingerBinopTest BinopLT)
+        , ("sameas", builtinNotImplemented @m "sameas")
+        , ("true", toValue (isBoolean True :: Value m -> Value m))
+        , ("none", toValue (isNone :: Value m -> Value m))
         ]
     )
   , ( "jinja-filters"
-    , dictV []
+    , dictV
+        [ ("default", FilterV $ NativeFilter defaultFilter)
+        ]
     )
-  -- , ("abs", undefined)
+  , ("abs", ProcedureV . pureNativeFunc $ numericFunc abs abs)
   -- , ("attr", undefined)
   -- , ("batch", undefined)
-  -- , ("capitalize", undefined)
+  , ("capitalize", ProcedureV . pureNativeFunc $ textFunc (pure . Text.toUpper))
   -- , ("center", undefined)
-  -- , ("default", undefined)
   -- , ("dictsort", undefined)
   -- , ("escape", undefined)
+  , ("even", ProcedureV . pureNativeFunc $ fmap (BoolV . even) . asIntVal @m)
   -- , ("filesizeformat", undefined)
   -- , ("first", undefined)
   -- , ("float", undefined)
@@ -75,16 +93,17 @@ defEnvVars = Map.fromList
   -- , ("map", undefined)
   -- , ("max", undefined)
   -- , ("min", undefined)
+  , ("odd", ProcedureV . pureNativeFunc $ fmap (BoolV . odd) . asIntVal @m)
   -- , ("pprint", undefined)
   -- , ("random", undefined)
-  -- , ("reject", undefined)
   -- , ("rejectattr", undefined)
+  -- , ("reject", undefined)
   -- , ("replace", undefined)
   -- , ("reverse", undefined)
   -- , ("round", undefined)
   -- , ("safe", undefined)
-  -- , ("select", undefined)
   -- , ("selectattr", undefined)
+  -- , ("select", undefined)
   -- , ("slice", undefined)
   -- , ("sort", undefined)
   -- , ("string", undefined)
@@ -103,13 +122,33 @@ defEnvVars = Map.fromList
   -- , ("xmlattr", undefined)
   ]
 
+isCallable' :: Monad m => Value m -> Bool
+isCallable' (ProcedureV {}) = True
+isCallable' (NativeV n) =
+  isJust (nativeObjectCall n)
+isCallable' (DictV d) =
+  maybe (False) isCallable' (Map.lookup "__call__" d)
+isCallable' _ = False
+
 isCallable :: Monad m => Value m -> Value m
-isCallable (ProcedureV {}) = TrueV
-isCallable (NativeV n) =
-  BoolV $ isJust (nativeObjectCall n)
-isCallable (DictV d) =
-  maybe (FalseV) isCallable (Map.lookup "__call__" d)
-isCallable _ = FalseV
+isCallable = BoolV . isCallable'
+
+isFilter :: Monad m => TestFunc m
+isFilter expr _ ctx env = do
+  result <- runGingerT (evalE expr) ctx env
+  case result of
+    Right (StringV name) -> do
+      exists <-
+        pure . isJust $ Map.lookup (Identifier name) (envVars env)
+      existsExt <-
+        runGingerT
+          (asBool "" =<< eval (InE (StringLitE name) (VarE "jinja-filters")))
+          ctx env
+      pure $ (exists ||) <$> existsExt
+    Right a ->
+      pure . Left $ TagError (Just "filter name") (Just "string") (Just . tagNameOf $ a)
+    Left err ->
+      pure $ Left err
 
 isMapping :: Monad m => Value m -> Value m
 isMapping (NativeV {}) = TrueV
@@ -127,9 +166,26 @@ isSequence (NativeV {}) = TrueV
 isSequence (ListV {}) = TrueV
 isSequence _ = FalseV
 
-isTest :: Monad m => Value m -> Value m
-isTest (TestV {}) = TrueV
-isTest x = isCallable x
+isTest :: Monad m => TestFunc m
+isTest expr _ ctx env = do
+  result <- runGingerT (evalE expr) ctx env
+  case result of
+    Right NoneV -> pure . Right $ True
+    Right BoolV {} -> pure . Right $ True
+    Right (StringV name) -> do
+      let testsVars = case Map.lookup "jinja-tests" (envVars env) of
+            Just (DictV xs) -> xs
+            _ -> mempty
+      let vars = Map.mapKeys (toScalar . identifierName) (envVars env) <> testsVars
+      let existing = Map.lookup (toScalar name) vars
+      case existing of
+        Just a -> pure . Right $ isCallable' a
+        _ -> pure . Right $ False
+        
+    Right a ->
+      pure . Left $ TagError (Just "test name") (Just "string") (Just . tagNameOf $ a)
+    Left err ->
+      pure $ Left err
 
 isEscaped :: Monad m => Value m -> Value m
 isEscaped (EncodedV {}) = TrueV
@@ -155,6 +211,32 @@ isNumber _ = FalseV
 isString :: Monad m => Value m -> Value m
 isString (StringV {}) = TrueV
 isString _ = FalseV
+
+builtinNotImplemented :: Monad m => Text -> Value m
+builtinNotImplemented name = ProcedureV $ NativeProcedure $ \_ ->
+  pure . Left $ NotImplementedError (Just name)
+
+defaultFilter :: Monad m => FilterFunc m
+defaultFilter expr args ctx env = do
+  calleeEither <- runGingerT (evalE expr) ctx env
+  let resolvedArgsEither = resolveArgs
+                            (Just "default")
+                            [("default_value", Just (StringV "")), ("boolean", Just FalseV)]
+                            args
+  case (calleeEither, resolvedArgsEither) of
+    (_, Left err) ->
+      pure $ Left err
+    (Right val, Right rargs) ->
+      let defval = fromJust $ Map.lookup "default_value" rargs
+          boolean = fromJust $ Map.lookup "boolean" rargs
+      in case val of
+        NoneV -> pure . Right $ defval
+        FalseV -> pure . Right $ if boolean == TrueV then defval else FalseV
+        a -> pure . Right $ a
+    (Left NotInScopeError {}, Right rargs) ->
+      pure . Right . fromJust $ Map.lookup "default_value" rargs
+    (Left err, _) ->
+      pure . Left $ err
 
 isDefined :: Monad m => TestFunc m
 isDefined _ (_:_) _ _ = pure $ Left $ ArgumentError (Just "defined") (Just "0") (Just "end of arguments") (Just "argument")
@@ -217,9 +299,53 @@ isUndefined expr args ctx env = do
   defined <- isDefined expr args ctx env
   pure $ not <$> defined
 
+isEqual :: Monad m => TestFunc m
+isEqual expr args ctx env = runGingerT go ctx env
+  where
+    go = do
+      definedLHS <- native $ isDefined expr args ctx env
+      if definedLHS then do
+        val <- eval expr
+        equals <- mapM (valuesEqual val . snd) args
+        pure $ all id equals
+      else
+        pure False
+
+gingerBinopTest :: forall m. Monad m
+                => BinaryOperator
+                -> Value m
+gingerBinopTest op =
+  TestV . NativeTest $ f
+  where
+    f :: TestFunc m
+    f expr args ctx env = runGingerT (go expr args) ctx env
+
+    go expr args = scoped $ do
+      setVar "#args" (ListV $ map snd args)
+      eval (BinaryE op expr (VarE "#args")) >>= \case
+        TrueV -> pure True
+        _ -> pure False
+
+isUpperVal :: Value m -> Value m
+isUpperVal (StringV txt) = BoolV (Text.all isUpper txt)
+isUpperVal (EncodedV (Encoded txt)) = BoolV (Text.all isUpper txt)
+isUpperVal _ = FalseV
+
+isLowerVal :: Value m -> Value m
+isLowerVal (StringV txt) = BoolV (Text.all isLower txt)
+isLowerVal (EncodedV (Encoded txt)) = BoolV (Text.all isLower txt)
+isLowerVal _ = FalseV
+
+isBoolean :: Bool -> Value m -> Value m
+isBoolean b1 (BoolV b2) = BoolV (b1 == b2)
+isBoolean _ _ = FalseV
+
+isNone :: Value m -> Value m
+isNone NoneV = TrueV
+isNone _ = FalseV
+
+
 allEitherBool :: [(Either a Bool)] -> Either a Bool
 allEitherBool [] = Right True
 allEitherBool (Right True : xs) = allEitherBool xs
 allEitherBool (x : _) = x
-
-

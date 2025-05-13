@@ -14,7 +14,7 @@ import qualified Data.ByteString as BS
 import Data.Int (Int8, Int16, Int32, Int64)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (isJust, isNothing, listToMaybe)
+import Data.Maybe (isJust, isNothing)
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as Text
@@ -29,6 +29,7 @@ import Language.Ginger.AST
 import Language.Ginger.Interpret
 import Language.Ginger.RuntimeError
 import Language.Ginger.Value
+import Language.Ginger.TestUtils
 
 tests :: TestTree
 tests = testGroup "Language.Ginger.Interpret"
@@ -137,6 +138,26 @@ tests = testGroup "Language.Ginger.Interpret"
         [ testProperty "existing variable" prop_var
         , testProperty "nonexisting variable" prop_varNeg
         ]
+    , testGroup "FilterE"
+        [ testProperty "even" $
+            prop_eval (\i -> FilterE (IntLitE i) (VarE "even") [] []) (BoolV . even)
+        , testProperty "odd" $
+            prop_eval (\i -> FilterE (IntLitE i) (VarE "odd") [] []) (BoolV . odd)
+        , testProperty "capitalize string" $
+            prop_eval (\(ArbitraryText t) -> FilterE (StringLitE t) (VarE "capitalize") [] [])
+                      (\(ArbitraryText t) -> StringV . Text.toUpper $ t)
+        , testProperty "capitalize int" $
+            prop_eval (\i -> FilterE (IntLitE i) (VarE "capitalize") [] [])
+                      (StringV . Text.show)
+        , testProperty "default (undefined)" $
+            prop_eval (\i -> FilterE (VarE "something_undefined") (VarE "default") [(IntLitE i)] []) IntV
+        , testProperty "default (none)" $
+            prop_eval (\i -> FilterE NoneE (VarE "default") [(IntLitE i)] []) IntV
+        , testProperty "default (boolean false)" $
+            prop_eval (\i -> FilterE FalseE (VarE "default") [(IntLitE i)] []) (const FalseV)
+        , testProperty "default (boolean false, boolean mode)" $
+            prop_eval (\i -> FilterE FalseE (VarE "default") [(IntLitE i), TrueE] []) IntV
+        ]
     , testGroup "IsE"
       [ testGroup "defined"
         [ testProperty "is defined true" prop_isDefinedTrue
@@ -195,6 +216,20 @@ tests = testGroup "Language.Ginger.Interpret"
         , testProperty "list is not false" $ prop_is @[Bool] "false" False
         , testProperty "dict is not false" $ prop_is @(Map Bool Bool) "false" False
         ]
+      , testGroup "filter"
+        [ testProperty "even is filter" $ prop_is "filter" True (StringV "even" :: Value Identity)
+        , testProperty "default is filter" $ prop_is "filter" True (StringV "default" :: Value Identity)
+        , testProperty "number is not filter" $ prop_is "filter" False (StringV "number" :: Value Identity)
+        , testProperty "true is not filter" $ prop_is "filter" False (StringV "true" :: Value Identity)
+        , testProperty "none is not filter" $ prop_is "filter" False (StringV "none" :: Value Identity)
+        ]
+      , testGroup "test"
+        [ testProperty "even is test" $ prop_is "test" True (StringV "even" :: Value Identity)
+        , testProperty "default is not test" $ prop_is "test" False (StringV "default" :: Value Identity)
+        , testProperty "number is test" $ prop_is "test" True (StringV "number" :: Value Identity)
+        , testProperty "true is test" $ prop_is "test" True (StringV "true" :: Value Identity)
+        , testProperty "none is test" $ prop_is "test" True (StringV "none" :: Value Identity)
+        ]
       ]
     ]
   , testGroup "Statement"
@@ -220,17 +255,6 @@ tests = testGroup "Language.Ginger.Interpret"
       ]
     ]
   ]
-
-safeAt :: Int -> [a] -> Maybe a
-safeAt n = listToMaybe . drop n
-
-justNonzero :: (Eq a, Num a) => a -> Maybe a
-justNonzero 0 = Nothing
-justNonzero n = Just n
-
-justPositive :: (Eq a, Ord a, Num a) => a -> Maybe a
-justPositive n | n > 0 = Just n
-justPositive _ = Nothing  
 
 runGingerIdentity :: GingerT Identity a -> a
 runGingerIdentity action =
@@ -481,6 +505,15 @@ prop_is testName expected val =
   in
     result === BoolV expected
 
+prop_eval :: (Arbitrary a, Show a, Show e, Eval Identity e) => (a -> e) -> (a -> Value Identity) -> a -> Property
+prop_eval mkEvaluable mkExpected x =
+  let e = mkEvaluable x
+      expected = mkExpected x
+      result = runGingerIdentity $ eval e
+  in
+    counterexample (show e) $
+    result === expected
+
 --------------------------------------------------------------------------------
 -- Statement properties
 --------------------------------------------------------------------------------
@@ -708,15 +741,3 @@ prop_callMacro body =
   in
     label cat $
     resultCall === resultDirect
-
-newtype ArbitraryText = ArbitraryText Text
-  deriving (Eq, Ord)
-
-instance Show ArbitraryText where
-  show (ArbitraryText t) = show t
-
-instance Arbitrary ArbitraryText where
-  arbitrary = ArbitraryText . Text.pack <$> listOf arbitrary
-
-instance Monad m => ToValue ArbitraryText m where
-  toValue (ArbitraryText t) = toValue t

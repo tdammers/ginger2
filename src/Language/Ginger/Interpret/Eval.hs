@@ -15,6 +15,7 @@ module Language.Ginger.Interpret.Eval
 , evalSs
 , stringify
 , valuesEqual
+, asBool
 )
 where
 
@@ -23,7 +24,7 @@ import Language.Ginger.RuntimeError
 import Language.Ginger.Value
 import Language.Ginger.Interpret.Type
 
-import Control.Monad (foldM, (>=>))
+import Control.Monad (foldM)
 import Control.Monad.Except
   ( MonadError (..)
   , throwError
@@ -63,6 +64,8 @@ stringify (ProcedureV _) =
   pure "[[procedure]]"
 stringify (TestV _) =
   pure "[[test]]"
+stringify (FilterV _) =
+  pure "[[filter]]"
 
 stringifyKV :: Monad m => (Scalar, Value m) -> GingerT m Text
 stringifyKV (k, v) = do
@@ -130,11 +133,11 @@ evalCallArgs posArgsExpr namedArgsExpr = do
 callTest :: Monad m => Value m -> Expr -> [Expr] -> [(Identifier, Expr)] -> GingerT m (Value m)
 callTest testV scrutinee posArgsExpr namedArgsExpr = do
   case testV of
-    TestV test -> do
+    TestV t -> do
       args <- evalCallArgs posArgsExpr namedArgsExpr
       ctx <- ask
       env <- get
-      BoolV <$> native (runTest test scrutinee args ctx env)
+      BoolV <$> native (runTest t scrutinee args ctx env)
 
     ScalarV {} -> do
       BoolV <$> (valuesEqual testV =<< evalE scrutinee)
@@ -144,6 +147,25 @@ callTest testV scrutinee posArgsExpr namedArgsExpr = do
       
     x -> do
       call Nothing x (scrutinee : posArgsExpr) namedArgsExpr
+
+callFilter :: Monad m => Value m -> Expr -> [Expr] -> [(Identifier, Expr)] -> GingerT m (Value m)
+callFilter filterV scrutinee posArgsExpr namedArgsExpr = do
+  case filterV of
+    FilterV f -> do
+      args <- evalCallArgs posArgsExpr namedArgsExpr
+      ctx <- ask
+      env <- get
+      native (runFilter f scrutinee args ctx env)
+
+    ScalarV {} -> do
+      BoolV <$> (valuesEqual filterV =<< evalE scrutinee)
+      `catchError` \err -> case err of
+        NotInScopeError {} -> pure FalseV
+        _ -> throwError err
+      
+    x -> do
+      call Nothing x (scrutinee : posArgsExpr) namedArgsExpr
+
 
 call :: Monad m => Maybe (Value m) -> Value m -> [Expr] -> [(Identifier, Expr)] -> GingerT m (Value m)
 call callerMay callable posArgsExpr namedArgsExpr = do
@@ -199,9 +221,9 @@ evalE (BinaryE op aExpr bExpr) = do
 evalE (CallE callableExpr posArgsExpr namedArgsExpr) = do
   callable <- evalE callableExpr
   call Nothing callable posArgsExpr namedArgsExpr
-evalE (FilterE posArg0Expr callableExpr posArgsExpr namedArgsExpr) = do
-  callable <- scoped $ scopify "jinja-filters" >> evalE callableExpr
-  call Nothing callable (posArg0Expr : posArgsExpr) namedArgsExpr
+evalE (FilterE scrutinee filterE args kwargs) = do
+  f <- scoped $ scopify "jinja-filters" >> evalE filterE
+  callFilter f scrutinee args kwargs
 evalE (TernaryE condExpr yesExpr noExpr) = do
   cond <- evalE condExpr >>= asBool "condition"
   evalE (if cond then yesExpr else noExpr)
@@ -210,8 +232,8 @@ evalE (VarE name) =
 evalE (StatementE statement) = do
   evalS statement
 evalE (IsE scrutinee testE args kwargs) = do
-  test <- scoped $ scopify "jinja-tests" >> evalE testE
-  callTest test scrutinee args kwargs
+  t <- scoped $ scopify "jinja-tests" >> evalE testE
+  callTest t scrutinee args kwargs
 
 evalKV :: Monad m => (Expr, Expr) -> GingerT m (Scalar, Value m)
 evalKV (kExpr, vExpr) = do
@@ -233,11 +255,7 @@ numericBinop :: Monad m
              -> Value m
              -> Value m
              -> GingerT m (Value m)
-numericBinop f g =
-  numericBinopCatch f' g'
-  where
-    f' x y = Right (f x y)
-    g' x y = Right (g x y)
+numericBinop f g a b = native . pure $ numericFunc2 f g a b
 
 numericBinopCatch :: Monad m
                   => (Integer -> Integer -> Either RuntimeError Integer)
@@ -245,50 +263,29 @@ numericBinopCatch :: Monad m
                   -> Value m
                   -> Value m
                   -> GingerT m (Value m)
-numericBinopCatch f _ (IntV a) (IntV b) = IntV <$> eitherCatch (a `f` b)
-numericBinopCatch _ f (FloatV a) (FloatV b) = FloatV <$> (eitherCatch >=> catchNaN) (a `f` b)
-numericBinopCatch _ f (IntV a) (FloatV b) = FloatV <$> (eitherCatch >=> catchNaN) (fromInteger a `f` b)
-numericBinopCatch _ f (FloatV a) (IntV b) = FloatV <$> (eitherCatch >=> catchNaN) (a `f` fromInteger b)
-numericBinopCatch _ _ (FloatV _) b = throwError (TagError Nothing (Just "number") (Just . tagNameOf $ b))
-numericBinopCatch _ _ (IntV _) b = throwError (TagError Nothing (Just "number") (Just . tagNameOf $ b))
-numericBinopCatch _ _ b _ = throwError (TagError Nothing (Just "number") (Just . tagNameOf $ b))
-
-eitherCatch :: Monad m => (Either RuntimeError a) -> GingerT m a
-eitherCatch = either throwError pure
-
-catchNaN :: Monad m => Double -> GingerT m Double
-catchNaN c | isNaN c = throwError $ NumericError Nothing (Just "not a number")
-catchNaN c | isInfinite c = throwError $ NumericError Nothing (Just "infinity")
-catchNaN c = pure c
+numericBinopCatch f g a b = native . pure $ numericFunc2Catch f g a b
 
 intBinop :: Monad m
          => (Integer -> Integer -> Either RuntimeError Integer)
          -> Value m
          -> Value m
          -> GingerT m (Value m)
-intBinop f (IntV a) (IntV b) = IntV <$> eitherCatch (a `f` b)
-intBinop _ (IntV _) b = throwError (TagError Nothing (Just "int") (Just . tagNameOf $ b))
-intBinop _ b _ = throwError (TagError Nothing (Just "int") (Just . tagNameOf $ b))
+intBinop f a b = native . pure $ intFunc2 f a b
 
 floatBinop :: Monad m
          => (Double -> Double -> Either RuntimeError Double)
          -> Value m
          -> Value m
          -> GingerT m (Value m)
-floatBinop f (IntV a) b = floatBinop f (FloatV $ fromIntegral a) b
-floatBinop f (FloatV a) (IntV b) = floatBinop f (FloatV a) (FloatV $ fromIntegral b)
-floatBinop f (FloatV a) (FloatV b) = FloatV <$> eitherCatch (a `f` b)
-floatBinop _ (FloatV _) b = throwError (TagError Nothing (Just "float") (Just . tagNameOf $ b))
-floatBinop _ b _ = throwError (TagError Nothing (Just "float") (Just . tagNameOf $ b))
+floatBinop f a b = native . pure $ floatFunc2 f a b
 
 boolBinop :: Monad m
          => (Bool -> Bool -> Bool)
          -> Value m
          -> Value m
          -> GingerT m (Value m)
-boolBinop f (BoolV a) (BoolV b) = pure . BoolV $ a `f` b
-boolBinop _ (BoolV _) b = throwError (TagError Nothing (Just "bool") (Just . tagNameOf $ b))
-boolBinop _ b _ = throwError (TagError Nothing (Just "bool") (Just . tagNameOf $ b))
+boolBinop f a b = native . pure $ boolFunc2 f a b
+
 
 valuesEqual :: Monad m
             => Value m

@@ -68,6 +68,7 @@ data Value m
   | NativeV !(NativeObject m)
   | ProcedureV !(Procedure m)
   | TestV !(Test m)
+  | FilterV !(Filter m)
 
 traverseValue :: Monoid a => (Value m -> a) -> Value m -> a
 traverseValue p v@(ListV xs) =
@@ -83,6 +84,7 @@ instance Show (Value m) where
   show (NativeV {}) = "<<native>>"
   show (ProcedureV {}) = "<<procedure>>"
   show (TestV {}) = "<<test>>"
+  show (FilterV {}) = "<<filter>>"
 
 instance Eq (Value m) where
   ScalarV a == ScalarV b = a == b
@@ -97,6 +99,7 @@ tagNameOf DictV {} = "dict"
 tagNameOf NativeV {} = "native"
 tagNameOf ProcedureV {} = "procedure"
 tagNameOf TestV {} = "test"
+tagNameOf FilterV {} = "filter"
 
 pattern NoneV :: Value m
 pattern NoneV = ScalarV NoneScalar
@@ -129,15 +132,57 @@ data Procedure m
   = NativeProcedure !([(Maybe Identifier, Value m)] -> m (Either RuntimeError (Value m)))
   | GingerProcedure !(Env m) ![(Identifier, Maybe (Value m))] !Expr
 
-type TestFunc m =
+pureNativeProcedure :: Applicative m
+                    => ([(Maybe Identifier, Value m)] -> Either RuntimeError (Value m))
+                    -> Procedure m
+pureNativeProcedure f =
+  NativeProcedure $ \args -> pure (f args)
+
+pureNativeFunc :: (Applicative m)
+               => (Value m -> Either RuntimeError (Value m))
+               -> Procedure m
+pureNativeFunc f =
+  NativeProcedure $ \case
+    [] ->
+      pure . Left $
+        ArgumentError (Just "<native function>") Nothing (Just "value") (Just "end of arguments")
+    [(_, x)] ->
+      pure $ f x
+    (_:(name, x):_) ->
+      pure . Left $
+        ArgumentError (Just "<native function>") (identifierName <$> name) (Just "end of arguments") (Just . tagNameOf $ x)
+
+pureNativeFunc2 :: (Applicative m)
+               => (Value m -> Value m -> Either RuntimeError (Value m))
+               -> Procedure m
+pureNativeFunc2 f =
+  NativeProcedure $ \case
+    [] ->
+      pure . Left $
+        ArgumentError (Just "<native function>") Nothing (Just "value") (Just "end of arguments")
+    [_] ->
+      pure . Left $
+        ArgumentError (Just "<native function>") Nothing (Just "value") (Just "end of arguments")
+    [(_, x), (_, y)] ->
+      pure $ f x y
+    (_:_:(name, x):_) ->
+      pure . Left $
+        ArgumentError (Just "<native function>") (identifierName <$> name) (Just "end of arguments") (Just . tagNameOf $ x)
+
+type MetaFunc m a =
      Expr
   -> [(Maybe Identifier, Value m)]
   -> Context m
   -> Env m
-  -> m (Either RuntimeError Bool)
+  -> m (Either RuntimeError a)
 
-newtype Test m
-  = NativeTest { runTest :: TestFunc m }
+type TestFunc m = MetaFunc m Bool
+
+type FilterFunc m = MetaFunc m (Value m)
+
+newtype Test m = NativeTest { runTest :: TestFunc m }
+
+newtype Filter m = NativeFilter { runFilter :: FilterFunc m }
 
 data NativeObject m =
   NativeObject
@@ -430,6 +475,175 @@ instance Applicative m => ToValue (Value m -> Value m -> Value m -> Value m -> m
 
 instance Applicative m => ToValue (Value m -> Value m -> Value m -> Value m -> Value m -> m (Value m)) m where
   toValue = ProcedureV . NativeProcedure . toNativeProcedure
+
+--------------------------------------------------------------------------------
+-- Procedure helpers
+--------------------------------------------------------------------------------
+
+resolveArgs :: Maybe Text
+            -> [(Identifier, Maybe (Value m))]
+            -> [(Maybe Identifier, Value m)]
+            -> Either RuntimeError (Map Identifier (Value m))
+resolveArgs _ [] [] =
+  -- done!
+  Right mempty
+resolveArgs _ [] ys =
+  error "TODO: handle unused args"
+resolveArgs context ((name, Nothing):_) [] =
+  -- missing required argument
+  Left $ ArgumentError
+          context
+          (Just . identifierName $ name)
+          (Just "argument")
+          (Just "end of arguments")
+resolveArgs context ((name, Just value):xs) [] =
+  -- end of arguments, using default
+  Map.insert name value <$> resolveArgs context xs []
+resolveArgs context ((name, _):xs) ((Nothing, val):ys) =
+  -- positional argument
+  Map.insert name val <$> resolveArgs context xs ys
+resolveArgs context xs ((Just name, val):ys) =
+  let matchingArgs = filter ((== name) . fst) xs
+      remainingArgs = filter ((/= name) .fst) xs
+  in case matchingArgs of
+    [_] -> Map.insert name val <$> resolveArgs context remainingArgs ys
+    [] -> error "TODO: handle unused kwargs"
+    xs -> Left $ ArgumentError
+                  context
+                  (Just . identifierName $ name)
+                  (Just "single argument")
+                  (Just "Multiple arguments")
+
+leftNaN :: Double -> Either RuntimeError Double
+leftNaN c | isNaN c = Left $ NumericError Nothing (Just "not a number")
+leftNaN c | isInfinite c = Left $ NumericError Nothing (Just "infinity")
+leftNaN c = Right c
+
+numericFunc :: Monad m
+             => (Integer -> Integer)
+             -> (Double -> Double)
+             -> Value m
+             -> Either RuntimeError (Value m)
+numericFunc f g =
+  numericFuncCatch f' g'
+  where
+    f' x = Right (f x)
+    g' x = Right (g x)
+
+numericFuncCatch :: Monad m
+                  => (Integer -> Either RuntimeError Integer)
+                  -> (Double -> Either RuntimeError Double)
+                  -> Value m
+                  -> Either RuntimeError (Value m)
+numericFuncCatch f _ (IntV a) = IntV <$> f a
+numericFuncCatch _ f (FloatV a) = FloatV <$> (leftNaN =<< f a)
+numericFuncCatch _ _ a = Left (TagError Nothing (Just "number") (Just . tagNameOf $ a))
+
+asIntVal :: Value m -> Either RuntimeError Integer
+asIntVal (IntV a) = Right a
+asIntVal x = Left $ TagError Nothing (Just "int") (Just . tagNameOf $ x)
+
+asFloatVal :: Value m -> Either RuntimeError Double
+asFloatVal (FloatV a) = Right a
+asFloatVal (IntV a) = Right (fromInteger a)
+asFloatVal x = Left $ TagError Nothing (Just "float") (Just . tagNameOf $ x)
+
+asBoolVal :: Value m -> Either RuntimeError Bool
+asBoolVal (BoolV a) = Right a
+asBoolVal NoneV = Right False
+asBoolVal x = Left $ TagError Nothing (Just "bool") (Just . tagNameOf $ x)
+
+asTextVal :: Value m -> Either RuntimeError Text
+asTextVal (StringV a) = Right a
+asTextVal (EncodedV (Encoded a)) = Right a
+asTextVal (IntV a) = Right (Text.show a)
+asTextVal (FloatV a) = Right (Text.show a)
+asTextVal NoneV = Right ""
+asTextVal x = Left $ TagError Nothing (Just "string") (Just . tagNameOf $ x)
+
+intFunc :: Monad m
+         => (Integer -> Either RuntimeError Integer)
+         -> Value m
+         -> Either RuntimeError (Value m)
+intFunc f a = IntV <$> (asIntVal a >>= f)
+
+floatFunc :: Monad m
+         => (Double -> Either RuntimeError Double)
+         -> Value m
+         -> Either RuntimeError (Value m)
+floatFunc f a = FloatV <$> (asFloatVal a >>= f)
+
+boolFunc :: Monad m
+         => (Bool -> Bool)
+         -> Value m
+         -> Either RuntimeError (Value m)
+boolFunc f (BoolV a) = pure . BoolV $ f a
+boolFunc _ a = Left (TagError Nothing (Just "bool") (Just . tagNameOf $ a))
+
+textFunc :: Monad m
+         => (Text -> Either RuntimeError Text)
+         -> Value m
+         -> Either RuntimeError (Value m)
+textFunc f (StringV a) = StringV <$> f a
+textFunc f (EncodedV (Encoded a)) = EncodedV . Encoded <$> f a
+textFunc f (IntV a) = StringV <$> f (Text.show a)
+textFunc f (FloatV a) = StringV <$> f (Text.show a)
+textFunc f NoneV = StringV <$> f ""
+textFunc _ a = Left (TagError Nothing (Just "int") (Just . tagNameOf $ a))
+
+numericFunc2 :: Monad m
+             => (Integer -> Integer -> Integer)
+             -> (Double -> Double -> Double)
+             -> Value m
+             -> Value m
+             -> Either RuntimeError (Value m)
+numericFunc2 f g =
+  numericFunc2Catch f' g'
+  where
+    f' x y = Right (f x y)
+    g' x y = Right (g x y)
+
+numericFunc2Catch :: Monad m
+                  => (Integer -> Integer -> Either RuntimeError Integer)
+                  -> (Double -> Double -> Either RuntimeError Double)
+                  -> Value m
+                  -> Value m
+                  -> Either RuntimeError (Value m)
+numericFunc2Catch f _ (IntV a) (IntV b) = IntV <$> (a `f` b)
+numericFunc2Catch _ f (FloatV a) (FloatV b) = FloatV <$> (leftNaN =<< a `f` b)
+numericFunc2Catch _ f (IntV a) (FloatV b) = FloatV <$> (leftNaN =<< fromInteger a `f` b)
+numericFunc2Catch _ f (FloatV a) (IntV b) = FloatV <$> (leftNaN =<< a `f` fromInteger b)
+numericFunc2Catch _ _ (FloatV _) b = Left (TagError Nothing (Just "number") (Just . tagNameOf $ b))
+numericFunc2Catch _ _ (IntV _) b = Left (TagError Nothing (Just "number") (Just . tagNameOf $ b))
+numericFunc2Catch _ _ b _ = Left (TagError Nothing (Just "number") (Just . tagNameOf $ b))
+
+intFunc2 :: Monad m
+         => (Integer -> Integer -> Either RuntimeError Integer)
+         -> Value m
+         -> Value m
+         -> Either RuntimeError (Value m)
+intFunc2 f a b = do
+  x <- asIntVal a
+  y <- asIntVal b
+  IntV <$> f x y
+
+floatFunc2 :: Monad m
+         => (Double -> Double -> Either RuntimeError Double)
+         -> Value m
+         -> Value m
+         -> Either RuntimeError (Value m)
+floatFunc2 f (IntV a) b = floatFunc2 f (FloatV $ fromIntegral a) b
+floatFunc2 f (FloatV a) (IntV b) = floatFunc2 f (FloatV a) (FloatV $ fromIntegral b)
+floatFunc2 f (FloatV a) (FloatV b) = FloatV <$> (a `f` b)
+floatFunc2 _ (FloatV _) b = Left (TagError Nothing (Just "float") (Just . tagNameOf $ b))
+floatFunc2 _ b _ = Left (TagError Nothing (Just "float") (Just . tagNameOf $ b))
+
+boolFunc2 :: Monad m
+         => (Bool -> Bool -> Bool)
+         -> Value m
+         -> Value m
+         -> Either RuntimeError (Value m)
+boolFunc2 f a b = BoolV <$> (f <$> asBoolVal a <*> asBoolVal b)
 
 --------------------------------------------------------------------------------
 -- Dictionary helpers

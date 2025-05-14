@@ -1,4 +1,5 @@
-{-# LANGUAGE DeriveFunctor #-} {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -400,67 +401,12 @@ evalBinary BinopDot a b = do
         Nothing -> throwError $ NotInScopeError (Just $ Text.show a <> "." <> Text.show b)
 evalBinary BinopConcat a b = concatValues a b
 
-getItemRaw :: Monad m
-           => Value m
-           -> Value m
-           -> m (Maybe (Value m))
-getItemRaw a b = case a of
-  DictV m -> case b of
-    ScalarV k -> pure $ toValue <$> k `Map.lookup` m
-    _ -> pure Nothing
-  ListV xs -> case b of
-    IntV i -> pure . fmap toValue . listToMaybe . drop (fromInteger i) $ xs
-    _ -> pure Nothing
-  StringV str -> case b of
-    IntV i -> pure
-              . fmap (toValue . Text.singleton)
-              . listToMaybe
-              . Text.unpack
-              . Text.take 1
-              . Text.drop (fromInteger i)
-              $ str
-    _ -> pure Nothing
-  NativeV n -> nativeObjectGetField n b
-  _ -> pure Nothing
-
 getItem :: Monad m
         => Value m
         -> Value m
         -> GingerT m (Maybe (Value m))
 getItem a b = lift $ getItemRaw a b
 
-
-getAttrRaw :: Monad m
-        => Value m
-        -> Identifier
-        -> m (Either RuntimeError (Maybe (Value m)))
-getAttrRaw (NativeV n) v =
-  Right <$> nativeObjectGetAttribute n v
-getAttrRaw (StringV s) v =
-  case (Map.lookup v builtinStringAttribs) of
-    Nothing -> pure $ Right Nothing
-    Just attrib -> fmap Just <$> attrib s
-getAttrRaw (BoolV x) v =
-  case (Map.lookup v builtinBoolAttribs) of
-    Nothing -> pure $ Right Nothing
-    Just attrib -> fmap Just <$> attrib x
-getAttrRaw (IntV x) v =
-  case (Map.lookup v builtinIntAttribs) of
-    Nothing -> pure $ Right Nothing
-    Just attrib -> fmap Just <$> attrib x
-getAttrRaw (FloatV x) v =
-  case (Map.lookup v builtinFloatAttribs) of
-    Nothing -> pure $ Right Nothing
-    Just attrib -> fmap Just <$> attrib x
-getAttrRaw (ListV xs) v =
-  case (Map.lookup v builtinListAttribs) of
-    Nothing -> pure $ Right Nothing
-    Just attrib -> fmap Just <$> attrib xs
-getAttrRaw (DictV xs) v =
-  case (Map.lookup v builtinDictAttribs) of
-    Nothing -> pure $ Right Nothing
-    Just attrib -> fmap Just <$> attrib xs
-getAttrRaw _ _ = pure $ Right Nothing
 
 getAttr :: Monad m
         => Value m

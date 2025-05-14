@@ -23,9 +23,8 @@ import Language.Ginger.Interpret.Builtins
 import Control.Monad.Except
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (isJust, fromJust, fromMaybe)
+import Data.Maybe (isJust, fromJust)
 import Data.Text (Text)
-import qualified Data.Text as Text
 
 defEnv :: Monad m => Env m
 defEnv =
@@ -70,63 +69,8 @@ defEnvVars = Map.fromList
         [ ("default", FilterV $ NativeFilter defaultFilter)
         ]
     )
-  , ("abs", ProcedureV . pureNativeFunc $ numericFunc abs abs)
-  , ("attr", toValue (\x y -> case y :: Value m of
-                                StringV yStr ->
-                                  fmap (fromMaybe NoneV) <$> getAttrRaw @m x (Identifier yStr)
-                                _ ->
-                                  pure . Right $ NoneV))
-  , ("batch", ProcedureV $ fnBatch)
-  , ("capitalize", ProcedureV . pureNativeFunc $ textFunc (pure . Text.toTitle))
-  , ("center", ProcedureV $ fnCenter)
-  -- , ("dictsort", undefined)
-  -- , ("escape", undefined)
-  , ("even", ProcedureV . pureNativeFunc $ fmap (BoolV . even) . asIntVal @m)
-  -- , ("filesizeformat", undefined)
-  -- , ("first", undefined)
-  -- , ("float", undefined)
-  -- , ("forceescape", undefined)
-  -- , ("format", undefined)
-  -- , ("groupby", undefined)
-  -- , ("indent", undefined)
-  -- , ("int", undefined)
-  -- , ("items", undefined)
-  -- , ("join", undefined)
-  -- , ("last", undefined)
-  -- , ("length", undefined)
-  -- , ("list", undefined)
-  -- , ("lower", undefined)
-  -- , ("map", undefined)
-  -- , ("max", undefined)
-  -- , ("min", undefined)
-  , ("odd", ProcedureV . pureNativeFunc $ fmap (BoolV . odd) . asIntVal @m)
-  -- , ("pprint", undefined)
-  -- , ("random", undefined)
-  -- , ("rejectattr", undefined)
-  -- , ("reject", undefined)
-  -- , ("replace", undefined)
-  -- , ("reverse", undefined)
-  -- , ("round", undefined)
-  -- , ("safe", undefined)
-  -- , ("selectattr", undefined)
-  -- , ("select", undefined)
-  -- , ("slice", undefined)
-  -- , ("sort", undefined)
-  -- , ("string", undefined)
-  -- , ("striptags", undefined)
-  -- , ("sum", undefined)
-  , ("title", ProcedureV . pureNativeFunc $ textFunc (pure . Text.toTitle))
-  -- , ("tojson", undefined)
-  -- , ("trim", undefined)
-  -- , ("truncate", undefined)
-  -- , ("unique", undefined)
-  , ("upper", ProcedureV . pureNativeFunc $ textFunc (pure . Text.toUpper))
-  -- , ("urlencode", undefined)
-  -- , ("urlize", undefined)
-  -- , ("wordcount", undefined)
-  -- , ("wordwrap", undefined)
-  -- , ("xmlattr", undefined)
   ]
+  <> builtinFunctions
 
 isCallable' :: Monad m => Value m -> Bool
 isCallable' (ProcedureV {}) = True

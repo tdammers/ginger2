@@ -18,7 +18,6 @@ import Language.Ginger.AST
 import Language.Ginger.RuntimeError
 import Language.Ginger.Value
 
-import Control.Monad.Trans (lift)
 import Control.Monad.Except
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -27,6 +26,7 @@ import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
 import Data.Char (isUpper, isLower, isAlphaNum, isPrint, isSpace, isAlpha, isDigit, ord)
+import Data.Maybe (fromMaybe, listToMaybe)
 
 type BuiltinAttribs a m = Map Identifier (a -> m (Either RuntimeError (Value m)))
 
@@ -38,7 +38,7 @@ nativeMethod (GingerProcedure env argSpec body) self =
   where
     env' = env { envVars = Map.insert "value" self (envVars env) }
 
-nativePureMethod :: Applicative m
+nativePureMethod :: Monad m
                  => (Value m -> Either RuntimeError (Value m))
                  -> Value m
                  -> Value m
@@ -68,6 +68,33 @@ builtinBoolAttribs = Map.fromList
   [
   ]
 
+textBuiltin :: (Monad m, ToValue a m)
+            => (Text -> a)
+            -> Value m
+textBuiltin f =
+  ProcedureV .
+  pureNativeFunc .
+  textFunc $
+  (Right . f)
+
+intBuiltin :: (Monad m, ToValue a m)
+            => (Integer -> a)
+            -> Value m
+intBuiltin f =
+  ProcedureV .
+  pureNativeFunc .
+  intFunc $
+  (Right . f)
+
+anyBuiltin :: (Monad m, FromValue a m, ToValue b m)
+            => (a -> b)
+            -> Value m
+anyBuiltin f =
+  ProcedureV .
+  nativeFunc $ \x -> runExceptT $
+    toValue . f <$> eitherExceptM (fromValue x)
+
+
 textAttrib :: (Monad m, ToValue a m)
            => (Text -> a)
            -> Text
@@ -88,6 +115,66 @@ textProcAttrib :: Monad m
                -> m (Either RuntimeError (Value m))
 textProcAttrib f =
   pureAttrib $ nativeMethod f . StringV
+
+builtinFunctions :: forall m. Monad m => Map Identifier (Value m)
+builtinFunctions = Map.fromList $
+  [ ("abs", ProcedureV . pureNativeFunc $ numericFunc abs abs)
+  , ("attr", toValue (\x y -> case y :: Value m of
+                                StringV yStr ->
+                                  fmap (fromMaybe NoneV) <$> getAttrRaw @m x (Identifier yStr)
+                                _ ->
+                                  pure . Right $ NoneV))
+  , ("batch", ProcedureV fnBatch)
+  , ("capitalize", ProcedureV . pureNativeFunc $ textFunc (pure . Text.toTitle))
+  , ("center", ProcedureV fnCenter)
+  -- , ("dictsort", undefined)
+  -- , ("escape", undefined)
+  , ("even", ProcedureV . pureNativeFunc $ fmap (BoolV . even) . asIntVal @m)
+  -- , ("filesizeformat", undefined)
+  -- , ("first", undefined)
+  -- , ("float", undefined)
+  -- , ("forceescape", undefined)
+  -- , ("format", undefined)
+  -- , ("groupby", undefined)
+  -- , ("indent", undefined)
+  -- , ("int", undefined)
+  -- , ("items", undefined)
+  , ("join", ProcedureV fnStrJoin)
+  -- , ("last", undefined)
+  -- , ("length", undefined)
+  -- , ("list", undefined)
+  , ("lower", textBuiltin Text.toLower)
+  -- , ("map", undefined)
+  -- , ("max", undefined)
+  -- , ("min", undefined)
+  , ("odd", intBuiltin odd)
+  -- , ("pprint", undefined)
+  -- , ("random", undefined)
+  -- , ("rejectattr", undefined)
+  -- , ("reject", undefined)
+  , ("replace", ProcedureV fnStrReplace)
+  -- , ("reverse", undefined)
+  -- , ("round", undefined)
+  -- , ("safe", undefined)
+  -- , ("selectattr", undefined)
+  -- , ("select", undefined)
+  -- , ("slice", undefined)
+  -- , ("sort", undefined)
+  -- , ("string", undefined)
+  -- , ("striptags", undefined)
+  -- , ("sum", undefined)
+  , ("title", textBuiltin Text.toTitle)
+  -- , ("tojson", undefined)
+  -- , ("trim", undefined)
+  -- , ("truncate", undefined)
+  -- , ("unique", undefined)
+  , ("upper", textBuiltin Text.toUpper)
+  -- , ("urlencode", undefined)
+  -- , ("urlize", undefined)
+  , ("wordcount", textBuiltin (length . Text.words))
+  -- , ("wordwrap", undefined)
+  -- , ("xmlattr", undefined)
+  ]
 
 builtinStringAttribs :: forall m. Monad m => BuiltinAttribs Text m
 builtinStringAttribs = Map.fromList
@@ -152,12 +239,6 @@ builtinNotImplemented :: Monad m => Text -> Value m
 builtinNotImplemented name = ProcedureV $ NativeProcedure $ \_ ->
   pure . Left $ NotImplementedError (Just name)
 
-fnEither :: Monad m => Either a b -> ExceptT a m b
-fnEither = either throwError pure
-
-fnEitherM :: Monad m => m (Either a b) -> ExceptT a m b
-fnEitherM = (>>= fnEither) . lift
-
 fnMaybeArg :: Monad m => Text -> Text -> Maybe b -> ExceptT RuntimeError m b
 fnMaybeArg context name =
   maybe
@@ -177,7 +258,7 @@ fnArg :: (Monad m, FromValue a m)
       -> ExceptT RuntimeError m a
 fnArg context name argValues = do
   argV <- fnMaybeArg context (identifierName name) $ Map.lookup name argValues
-  fnEitherM $ fromValue argV
+  eitherExceptM $ fromValue argV
 
 mkFn1 :: ( Monad m
          , ToValue a m
@@ -190,7 +271,7 @@ mkFn1 :: ( Monad m
       -> Procedure m
 mkFn1 funcName (argname1, default1) f =
   NativeProcedure $ \args -> runExceptT $ do
-    argValues <- fnEither $
+    argValues <- eitherExcept $
       resolveArgs
         (Just funcName)
         [ (argname1, toValue <$> default1)
@@ -216,7 +297,7 @@ mkFn2 funcName
     (argname2, default2)
     f =
   NativeProcedure $ \args -> runExceptT $ do
-    argValues <- fnEither $
+    argValues <- eitherExcept $
       resolveArgs
         (Just funcName)
         [ (argname1, toValue <$> default1)
@@ -248,7 +329,7 @@ mkFn3 funcName
     (argname3, default3)
     f =
   NativeProcedure $ \args -> runExceptT $ do
-    argValues <- fnEither $
+    argValues <- eitherExcept $
       resolveArgs
         (Just funcName)
         [ (argname1, toValue <$> default1)
@@ -286,7 +367,7 @@ mkFn4 funcName
     (argname4, default4)
     f =
   NativeProcedure $ \args -> runExceptT $ do
-    argValues <- fnEither $
+    argValues <- eitherExcept $
       resolveArgs
         (Just funcName)
         [ (argname1, toValue <$> default1)
@@ -505,3 +586,63 @@ allEitherBool :: [(Either a Bool)] -> Either a Bool
 allEitherBool [] = Right True
 allEitherBool (Right True : xs) = allEitherBool xs
 allEitherBool (x : _) = x
+
+--------------------------------------------------------------------------------
+-- Attribute and item helpers
+--------------------------------------------------------------------------------
+
+getAttrRaw :: Monad m
+        => Value m
+        -> Identifier
+        -> m (Either RuntimeError (Maybe (Value m)))
+getAttrRaw (NativeV n) v =
+  Right <$> nativeObjectGetAttribute n v
+getAttrRaw (StringV s) v =
+  case (Map.lookup v builtinStringAttribs) of
+    Nothing -> pure $ Right Nothing
+    Just attrib -> fmap Just <$> attrib s
+getAttrRaw (BoolV x) v =
+  case (Map.lookup v builtinBoolAttribs) of
+    Nothing -> pure $ Right Nothing
+    Just attrib -> fmap Just <$> attrib x
+getAttrRaw (IntV x) v =
+  case (Map.lookup v builtinIntAttribs) of
+    Nothing -> pure $ Right Nothing
+    Just attrib -> fmap Just <$> attrib x
+getAttrRaw (FloatV x) v =
+  case (Map.lookup v builtinFloatAttribs) of
+    Nothing -> pure $ Right Nothing
+    Just attrib -> fmap Just <$> attrib x
+getAttrRaw (ListV xs) v =
+  case (Map.lookup v builtinListAttribs) of
+    Nothing -> pure $ Right Nothing
+    Just attrib -> fmap Just <$> attrib xs
+getAttrRaw (DictV xs) v =
+  case (Map.lookup v builtinDictAttribs) of
+    Nothing -> pure $ Right Nothing
+    Just attrib -> fmap Just <$> attrib xs
+getAttrRaw _ _ = pure $ Right Nothing
+
+getItemRaw :: Monad m
+           => Value m
+           -> Value m
+           -> m (Maybe (Value m))
+getItemRaw a b = case a of
+  DictV m -> case b of
+    ScalarV k -> pure $ toValue <$> k `Map.lookup` m
+    _ -> pure Nothing
+  ListV xs -> case b of
+    IntV i -> pure . fmap toValue . listToMaybe . drop (fromInteger i) $ xs
+    _ -> pure Nothing
+  StringV str -> case b of
+    IntV i -> pure
+              . fmap (toValue . Text.singleton)
+              . listToMaybe
+              . Text.unpack
+              . Text.take 1
+              . Text.drop (fromInteger i)
+              $ str
+    _ -> pure Nothing
+  NativeV n -> nativeObjectGetField n b
+  _ -> pure Nothing
+

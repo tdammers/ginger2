@@ -23,9 +23,8 @@ import Data.Int
 import GHC.Float (float2Double)
 import Test.Tasty.QuickCheck (Arbitrary (..))
 import qualified Test.Tasty.QuickCheck as QC
-import Control.Monad.Except (runExceptT, throwError)
+import Control.Monad.Except (runExceptT, throwError, ExceptT)
 import Control.Monad.Trans (lift)
-import Control.Monad ((<=<))
 
 import Language.Ginger.AST
 import Language.Ginger.RuntimeError
@@ -141,6 +140,20 @@ pureNativeProcedure :: Applicative m
                     -> Procedure m
 pureNativeProcedure f =
   NativeProcedure $ \args -> pure (f args)
+
+nativeFunc :: (Monad m)
+           => (Value m -> m (Either RuntimeError (Value m)))
+           -> Procedure m
+nativeFunc f =
+  NativeProcedure $ \case
+    [] ->
+      pure . Left $
+        ArgumentError (Just "<native function>") Nothing (Just "value") (Just "end of arguments")
+    [(_, x)] ->
+      f x
+    (_:(name, x):_) ->
+      pure . Left $
+        ArgumentError (Just "<native function>") (identifierName <$> name) (Just "end of arguments") (Just . tagNameOf $ x)
 
 pureNativeFunc :: (Applicative m)
                => (Value m -> Either RuntimeError (Value m))
@@ -336,8 +349,8 @@ instance (Applicative m, FromValue a m) => FromValue (Maybe a) m where
 
 instance (Monad m, FromValue a m) => FromValue [a] m where
   fromValue x = runExceptT $ do
-    items :: [Value m] <- either throwError pure =<< lift (asListVal x)
-    mapM (either throwError pure <=< (lift . fromValue)) items
+    items :: [Value m] <- eitherExceptM (asListVal x)
+    mapM (eitherExceptM . fromValue) items
 
 --------------------------------------------------------------------------------
 -- ToValue
@@ -553,6 +566,12 @@ instance Applicative m => ToValue (Value m -> Value m -> Value m -> Value m -> V
 --------------------------------------------------------------------------------
 -- Procedure helpers
 --------------------------------------------------------------------------------
+
+eitherExcept :: Monad m => Either e a -> ExceptT e m a
+eitherExcept = either throwError pure
+
+eitherExceptM :: Monad m => m (Either e a) -> ExceptT e m a
+eitherExceptM = (>>= eitherExcept) . lift
 
 resolveArgs :: Maybe Text
             -> [(Identifier, Maybe (Value m))]

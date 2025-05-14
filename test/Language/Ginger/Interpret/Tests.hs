@@ -152,6 +152,52 @@ tests = testGroup "Language.Ginger.Interpret"
         , testProperty "upper int" $
             prop_eval (\i -> FilterE (IntLitE i) (VarE "upper") [] [])
                       (StringV . Text.show)
+        , testProperty "int from string" $
+            prop_eval (\i -> FilterE (StringLitE $ Text.show i) (VarE "int") [] [])
+                      IntV
+        , testProperty "int from int" $
+            prop_eval (\i -> FilterE (IntLitE i) (VarE "int") [] [])
+                      IntV
+        , testProperty "int from float" $
+            prop_eval (\i -> FilterE (FloatLitE $ fromIntegral i + 0.25) (VarE "int") [] [])
+                      IntV
+        , testProperty "float from string" $
+            prop_eval (\i -> FilterE (StringLitE $ Text.show i) (VarE "float") [] [])
+                      FloatV
+        , testProperty "float from float" $
+            prop_eval (\i -> FilterE (IntLitE i) (VarE "float") [] [])
+                      (FloatV . fromIntegral)
+        , testProperty "float from int" $
+            prop_eval (\i -> FilterE (FloatLitE i) (VarE "float") [] [])
+                      FloatV
+        , testProperty "join" $
+            prop_eval
+              (\(ArbitraryText t, ArbitraryText u) ->
+                  FilterE (ListE [StringLitE t, StringLitE u]) (VarE "join") [] []
+              )
+              (\(ArbitraryText t, ArbitraryText u) ->
+                StringV (t <> u)
+              )
+        , testProperty "join ints" $
+            prop_eval
+              (\(i, j) ->
+                  FilterE (ListE [IntLitE i, IntLitE j]) (VarE "join") [] []
+              )
+              (\(i, j) ->
+                StringV (Text.show i <> Text.show j)
+              )
+        , testProperty "join with sep" $
+            prop_eval
+              (\(ArbitraryText t, ArbitraryText u, ArbitraryText v, ArbitraryText s) ->
+                  FilterE
+                    (ListE [StringLitE t, StringLitE u, StringLitE v])
+                    (VarE "join")
+                    [StringLitE s]
+                    []
+              )
+              (\(ArbitraryText t, ArbitraryText u, ArbitraryText v, ArbitraryText s) ->
+                StringV (t <> s <> u <> s <> v)
+              )
         , testProperty "default (undefined)" $
             prop_eval (\i -> FilterE (VarE "something_undefined") (VarE "default") [(IntLitE i)] []) IntV
         , testProperty "default (none)" $
@@ -212,7 +258,11 @@ tests = testGroup "Language.Ginger.Interpret"
         ]
     , testGroup "DotE"
       [ testGroup "StringV"
-        [ testProperty "upper string" $
+        [ testProperty "string length" $
+            prop_attr "length"
+              (\(ArbitraryText t) -> StringLitE t)
+              (\(ArbitraryText t) -> Text.length t)
+        , testProperty "upper string" $
             prop_string_method "upper" (const []) Text.toUpper
         , testProperty "lower string" $
             prop_string_method "lower" (const []) Text.toLower
@@ -797,6 +847,16 @@ prop_eval mkEvaluable mkExpected x =
   in
     counterexample (show e) $
     result === expected
+
+prop_attr :: (Arbitrary a, Show a, ToValue b Identity)
+            => Identifier
+            -> (a -> Expr)
+            -> (a -> b)
+            -> a
+            -> Property
+prop_attr methodName mkSelf mkExpected =
+  prop_eval (\t' -> DotE (mkSelf t') (StringLitE $ identifierName methodName))
+            (toValue . mkExpected)
 
 prop_method :: (Arbitrary a, Show a)
             => Identifier

@@ -26,7 +26,8 @@ import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
 import Data.Char (isUpper, isLower, isAlphaNum, isPrint, isSpace, isAlpha, isDigit, ord)
-import Data.Maybe (fromMaybe, listToMaybe)
+import Data.Maybe (fromMaybe, listToMaybe, catMaybes)
+import Text.Read (readMaybe)
 
 type BuiltinAttribs a m = Map Identifier (a -> m (Either RuntimeError (Value m)))
 
@@ -86,6 +87,15 @@ intBuiltin f =
   intFunc $
   (Right . f)
 
+numericBuiltin :: (Monad m)
+            => (Integer -> Integer)
+            -> (Double -> Double)
+            -> Value m
+numericBuiltin f g =
+  ProcedureV .
+  pureNativeFunc $
+  numericFunc f g
+
 anyBuiltin :: (Monad m, FromValue a m, ToValue b m)
             => (a -> b)
             -> Value m
@@ -94,6 +104,12 @@ anyBuiltin f =
   nativeFunc $ \x -> runExceptT $
     toValue . f <$> eitherExceptM (fromValue x)
 
+
+textProp :: (Monad m, ToValue a m)
+         => (Text -> a)
+         -> Text
+         -> m (Either RuntimeError (Value m))
+textProp f t = pure . Right . toValue $ f t
 
 textAttrib :: (Monad m, ToValue a m)
            => (Text -> a)
@@ -118,28 +134,28 @@ textProcAttrib f =
 
 builtinFunctions :: forall m. Monad m => Map Identifier (Value m)
 builtinFunctions = Map.fromList $
-  [ ("abs", ProcedureV . pureNativeFunc $ numericFunc abs abs)
+  [ ("abs", numericBuiltin abs abs)
   , ("attr", toValue (\x y -> case y :: Value m of
                                 StringV yStr ->
                                   fmap (fromMaybe NoneV) <$> getAttrRaw @m x (Identifier yStr)
                                 _ ->
                                   pure . Right $ NoneV))
   , ("batch", ProcedureV fnBatch)
-  , ("capitalize", ProcedureV . pureNativeFunc $ textFunc (pure . Text.toTitle))
+  , ("capitalize", textBuiltin Text.toTitle)
   , ("center", ProcedureV fnCenter)
   -- , ("dictsort", undefined)
   -- , ("escape", undefined)
-  , ("even", ProcedureV . pureNativeFunc $ fmap (BoolV . even) . asIntVal @m)
+  , ("even", intBuiltin even)
   -- , ("filesizeformat", undefined)
   -- , ("first", undefined)
-  -- , ("float", undefined)
+  , ("float", ProcedureV fnToFloat)
   -- , ("forceescape", undefined)
   -- , ("format", undefined)
   -- , ("groupby", undefined)
   -- , ("indent", undefined)
-  -- , ("int", undefined)
+  , ("int", ProcedureV fnToInt)
   -- , ("items", undefined)
-  , ("join", ProcedureV fnStrJoin)
+  , ("join", ProcedureV fnJoin)
   -- , ("last", undefined)
   -- , ("length", undefined)
   -- , ("list", undefined)
@@ -178,7 +194,8 @@ builtinFunctions = Map.fromList $
 
 builtinStringAttribs :: forall m. Monad m => BuiltinAttribs Text m
 builtinStringAttribs = Map.fromList
-  [ ("capitalize", textAttrib Text.toTitle)
+  [ ("length", textProp Text.length)
+  , ("capitalize", textAttrib Text.toTitle)
   , ("casefold", textAttrib Text.toCaseFold)
   , ("center", textProcAttrib fnCenter)
   , ("count", textProcAttrib fnStrCount)
@@ -382,6 +399,55 @@ mkFn4 funcName
     arg4 <- fnArg funcName argname4 argValues
     toValue <$> f arg1 arg2 arg3 arg4
 
+fnToFloat :: forall m. Monad m => Procedure m
+fnToFloat = mkFn1 "float"
+              ("value", Nothing :: Maybe (Value m))
+  $ \case
+      IntV i -> pure $ fromIntegral i
+      FloatV f -> pure f
+      NoneV -> pure 0
+      StringV s ->
+        maybe
+          (throwError $
+            ArgumentError
+              (Just "float")
+              (Just "value")
+              (Just "float-like string")
+              (Just s))
+          pure $
+          readMaybe (Text.unpack s)
+      x -> 
+          throwError $
+            ArgumentError
+              (Just "float")
+              (Just "value")
+              (Just "numeric value")
+              (Just . tagNameOf $ x)
+
+fnToInt :: forall m. Monad m => Procedure m
+fnToInt = mkFn1 "int"
+              ("value", Nothing :: Maybe (Value m))
+  $ \case
+      IntV i -> pure i
+      FloatV f -> pure $ round f
+      NoneV -> pure 0
+      StringV s ->
+        maybe
+          (throwError $
+            ArgumentError
+              (Just "int")
+              (Just "value")
+              (Just "int-like string")
+              (Just s))
+          pure $
+          readMaybe (Text.unpack s)
+      x -> 
+          throwError $
+            ArgumentError
+              (Just "float")
+              (Just "value")
+              (Just "numeric value")
+              (Just . tagNameOf $ x)
 
 fnStrReplace :: Monad m => Procedure m
 fnStrReplace = mkFn4 "replace"
@@ -438,6 +504,17 @@ fnStrRStrip = mkFn2 "rstrip"
       let chars = Text.unpack charsText
       pure $ Text.dropWhileEnd (`elem` chars) value
 
+
+fnJoin :: forall m. Monad m => Procedure m
+fnJoin = mkFn3 "join"
+                ("iterable", Nothing :: Maybe [Value m])
+                ("d", Just "" :: Maybe Text)
+                ("attr", Just Nothing :: Maybe (Maybe Text))
+                $ \iterable d attrMay -> do
+  iterable' <- case attrMay of
+    Nothing -> pure iterable
+    Just attr -> catMaybes <$> mapM (eitherExceptM . \x -> getAttrRaw x (Identifier attr)) iterable
+  Text.intercalate d <$> mapM (eitherExcept . asTextVal) iterable'
 
 fnStrJoin :: Monad m => Procedure m
 fnStrJoin = mkFn2 "join"

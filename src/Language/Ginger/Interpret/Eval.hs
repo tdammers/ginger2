@@ -239,7 +239,9 @@ evalE (VarE name) =
 evalE (StatementE statement) = do
   evalS statement
 evalE (IsE scrutinee testE args kwargs) = do
-  t <- scoped $ scopify "jinja-tests" >> evalE testE
+  t <- scoped $ do
+    scopify "jinja-tests"
+    evalE testE
   callTest t scrutinee args kwargs
 
 evalKV :: Monad m => (Expr, Expr) -> GingerT m (Scalar, Value m)

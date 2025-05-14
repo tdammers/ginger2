@@ -207,6 +207,13 @@ tests = testGroup "Language.Ginger.Interpret"
               )
 
         ]
+    , testGroup "DotE"
+      [ testGroup "StringV"
+        [ testProperty "capitalize string" $
+            prop_eval (\(ArbitraryText t) -> CallE (DotE (StringLitE t) (StringLitE "capitalize")) [] [])
+                      (\(ArbitraryText t) -> StringV . Text.toUpper $ t)
+        ]
+      ]
     , testGroup "IsE"
       [ testGroup "defined"
         [ testProperty "is defined true" prop_isDefinedTrue

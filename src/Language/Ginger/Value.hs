@@ -188,7 +188,7 @@ data NativeObject m =
   NativeObject
     { nativeObjectGetFieldNames :: m [Scalar]
     , nativeObjectGetField :: Value m -> m (Maybe (Value m))
-    , nativeObjectGetAttribute :: Value m -> m (Maybe (Value m))
+    , nativeObjectGetAttribute :: Identifier -> m (Maybe (Value m))
     , nativeObjectStringified :: m Text
     , nativeObjectEncoded :: m Encoded
     , nativeObjectAsList :: m (Maybe [Value m])
@@ -436,6 +436,13 @@ instance Applicative m => ToNativeProcedure m (m (Value m)) where
     pure . Left $
       ArgumentError (Just "<native function>") Nothing (Just "end of arguments") (Just "value")
 
+instance Applicative m => ToNativeProcedure m (m (Either RuntimeError (Value m))) where
+  toNativeProcedure action [] =
+    action
+  toNativeProcedure _ _ =
+    pure . Left $
+      ArgumentError (Just "<native function>") Nothing (Just "end of arguments") (Just "value")
+
 instance (Applicative m, ToNativeProcedure m a) => ToNativeProcedure m (Value m -> a) where
   toNativeProcedure _ [] =
     pure . Left $
@@ -476,6 +483,22 @@ instance Applicative m => ToValue (Value m -> Value m -> Value m -> Value m -> m
   toValue = ProcedureV . NativeProcedure . toNativeProcedure
 
 instance Applicative m => ToValue (Value m -> Value m -> Value m -> Value m -> Value m -> m (Value m)) m where
+  toValue = ProcedureV . NativeProcedure . toNativeProcedure
+
+
+instance Applicative m => ToValue (Value m -> m (Either RuntimeError (Value m))) m where
+  toValue = ProcedureV . NativeProcedure . toNativeProcedure
+
+instance Applicative m => ToValue (Value m -> Value m -> m (Either RuntimeError (Value m))) m where
+  toValue = ProcedureV . NativeProcedure . toNativeProcedure
+
+instance Applicative m => ToValue (Value m -> Value m -> Value m -> m (Either RuntimeError (Value m))) m where
+  toValue = ProcedureV . NativeProcedure . toNativeProcedure
+
+instance Applicative m => ToValue (Value m -> Value m -> Value m -> Value m -> m (Either RuntimeError (Value m))) m where
+  toValue = ProcedureV . NativeProcedure . toNativeProcedure
+
+instance Applicative m => ToValue (Value m -> Value m -> Value m -> Value m -> Value m -> m (Either RuntimeError (Value m))) m where
   toValue = ProcedureV . NativeProcedure . toNativeProcedure
 
 --------------------------------------------------------------------------------

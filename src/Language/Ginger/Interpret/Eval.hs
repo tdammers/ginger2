@@ -16,6 +16,10 @@ module Language.Ginger.Interpret.Eval
 , stringify
 , valuesEqual
 , asBool
+, getAttr
+, getAttrRaw
+, getItem
+, getItemRaw
 )
 where
 
@@ -23,6 +27,7 @@ import Language.Ginger.AST
 import Language.Ginger.RuntimeError
 import Language.Ginger.Value
 import Language.Ginger.Interpret.Type
+import Language.Ginger.Interpret.Builtins
 
 import Control.Monad (foldM)
 import Control.Monad.Except
@@ -31,6 +36,7 @@ import Control.Monad.Except
   )
 import Control.Monad.Reader (ask , asks)
 import Control.Monad.State (MonadState (..), get)
+import Control.Monad.Trans (lift)
 import qualified Data.ByteString.Base64 as Base64
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -370,47 +376,97 @@ evalBinary BinopIn a b = case b of
     else
       evalBinary BinopIn a (ListV xs)
   x -> throwError $ TagError (Just "in") (Just "list or dict") (Just . tagNameOf $ x)
-evalBinary BinopIndex a b = case a of
-  DictV m -> case b of
-    ScalarV k -> pure . toValue $ k `Map.lookup` m
-    x -> throwError $ TagError (Just "[]") (Just "scalar") (Just . tagNameOf $ x)
-  ListV xs -> case b of
-    IntV i -> pure . toValue . listToMaybe . drop (fromInteger i) $ xs
-    x -> throwError $ TagError (Just "[]") (Just "int") (Just . tagNameOf $ x)
-  StringV str -> case b of
-    IntV i -> pure . toValue . Text.take 1 . Text.drop (fromInteger i) $ str
-    x -> throwError $ TagError (Just "[]") (Just "int") (Just . tagNameOf $ x)
-  NativeV n -> do
-    fieldMay <- native . fmap Right $ nativeObjectGetField n b
-    case fieldMay of
-      Just v -> pure v
-      Nothing -> do
-        attrMay <- native . fmap Right $ nativeObjectGetAttribute n b
-        case attrMay of
-          Just v -> pure v
-          Nothing -> pure NoneV
-  x -> throwError $ TagError (Just "[]") (Just "list or dict") (Just . tagNameOf $ x)
-evalBinary BinopDot a b = case a of
-  DictV m -> case b of
-    ScalarV k -> pure . toValue $ k `Map.lookup` m
-    x -> throwError $ TagError (Just ".") (Just "scalar") (Just . tagNameOf $ x)
-  ListV xs -> case b of
-    IntV i -> pure . toValue . listToMaybe . drop (fromInteger i) $ xs
-    x -> throwError $ TagError (Just ".") (Just "int") (Just . tagNameOf $ x)
-  StringV str -> case b of
-    IntV i -> pure . toValue . Text.take 1 . Text.drop (fromInteger i) $ str
-    x -> throwError $ TagError (Just ".") (Just "int") (Just . tagNameOf $ x)
-  NativeV n -> do
-    attrMay <- native . fmap Right $ nativeObjectGetAttribute n b
-    case attrMay of
-      Just v -> pure v
-      Nothing -> do
-        fieldMay <- native . fmap Right $ nativeObjectGetField n b
-        case fieldMay of
-          Just v -> pure v
-          Nothing -> pure NoneV
-  x -> throwError $ TagError (Just ".") (Just "list or dict") (Just . tagNameOf $ x)
+evalBinary BinopIndex a b = do
+  itemMay <- getItem a b
+  case itemMay of
+    Just item -> pure item
+    Nothing -> do
+      attrMay <- case b of
+        StringV s -> getAttr a (Identifier s)
+        _ -> pure Nothing
+      case attrMay of
+        Just attr -> pure attr
+        Nothing -> pure NoneV
+evalBinary BinopDot a b = do
+  attrMay <- case b of
+    StringV s -> getAttr a (Identifier s)
+    _ -> pure Nothing
+  case attrMay of
+    Just attr -> pure attr
+    Nothing -> do
+      itemMay <- getItem a b
+      case itemMay of
+        Just item -> pure item
+        Nothing -> pure NoneV
 evalBinary BinopConcat a b = concatValues a b
+
+getItemRaw :: Monad m
+           => Value m
+           -> Value m
+           -> m (Maybe (Value m))
+getItemRaw a b = case a of
+  DictV m -> case b of
+    ScalarV k -> pure $ toValue <$> k `Map.lookup` m
+    _ -> pure Nothing
+  ListV xs -> case b of
+    IntV i -> pure . fmap toValue . listToMaybe . drop (fromInteger i) $ xs
+    _ -> pure Nothing
+  StringV str -> case b of
+    IntV i -> pure
+              . fmap (toValue . Text.singleton)
+              . listToMaybe
+              . Text.unpack
+              . Text.take 1
+              . Text.drop (fromInteger i)
+              $ str
+    _ -> pure Nothing
+  NativeV n -> nativeObjectGetField n b
+  _ -> pure Nothing
+
+getItem :: Monad m
+        => Value m
+        -> Value m
+        -> GingerT m (Maybe (Value m))
+getItem a b = lift $ getItemRaw a b
+
+
+getAttrRaw :: Monad m
+        => Value m
+        -> Identifier
+        -> m (Either RuntimeError (Maybe (Value m)))
+getAttrRaw (NativeV n) v =
+  Right <$> nativeObjectGetAttribute n v
+getAttrRaw (StringV s) v =
+  case (Map.lookup v builtinStringAttribs) of
+    Nothing -> pure $ Right Nothing
+    Just attrib -> fmap Just <$> attrib s
+getAttrRaw (BoolV x) v =
+  case (Map.lookup v builtinBoolAttribs) of
+    Nothing -> pure $ Right Nothing
+    Just attrib -> fmap Just <$> attrib x
+getAttrRaw (IntV x) v =
+  case (Map.lookup v builtinIntAttribs) of
+    Nothing -> pure $ Right Nothing
+    Just attrib -> fmap Just <$> attrib x
+getAttrRaw (FloatV x) v =
+  case (Map.lookup v builtinFloatAttribs) of
+    Nothing -> pure $ Right Nothing
+    Just attrib -> fmap Just <$> attrib x
+getAttrRaw (ListV xs) v =
+  case (Map.lookup v builtinListAttribs) of
+    Nothing -> pure $ Right Nothing
+    Just attrib -> fmap Just <$> attrib xs
+getAttrRaw (DictV xs) v =
+  case (Map.lookup v builtinDictAttribs) of
+    Nothing -> pure $ Right Nothing
+    Just attrib -> fmap Just <$> attrib xs
+getAttrRaw _ _ = pure $ Right Nothing
+
+getAttr :: Monad m
+        => Value m
+        -> Identifier
+        -> GingerT m (Maybe (Value m))
+getAttr a b = native $ getAttrRaw a b
 
 safeIntPow :: Integer -> Integer -> Either RuntimeError Integer
 safeIntPow _ b | b < 0 = Left (NumericError (Just "**") (Just "negative exponent"))

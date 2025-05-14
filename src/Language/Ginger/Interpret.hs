@@ -27,5 +27,5 @@ module Language.Ginger.Interpret
 where
 
 import Language.Ginger.Interpret.Type
-import Language.Ginger.Interpret.Builtins
+import Language.Ginger.Interpret.DefEnv
 import Language.Ginger.Interpret.Eval

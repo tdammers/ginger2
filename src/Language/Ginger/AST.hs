@@ -406,7 +406,7 @@ pattern IndexE :: Expr -> Expr -> Expr
 pattern IndexE a b = BinaryE BinopIndex a b
 
 pattern DotE :: Expr -> Expr -> Expr
-pattern DotE a b = BinaryE BinopIndex a b
+pattern DotE a b = BinaryE BinopDot a b
 
 pattern ConcatE :: Expr -> Expr -> Expr
 pattern ConcatE a b = BinaryE BinopConcat a b

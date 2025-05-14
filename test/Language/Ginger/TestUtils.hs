@@ -6,6 +6,8 @@ where
 
 import Data.Text (Text)
 import qualified Data.Text as Text
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import Test.Tasty.QuickCheck
 import Data.Maybe (listToMaybe)
 
@@ -22,6 +24,30 @@ instance Arbitrary ArbitraryText where
 
 instance Monad m => ToValue ArbitraryText m where
   toValue (ArbitraryText t) = toValue t
+
+newtype NonEmptyText = NonEmptyText Text
+  deriving (Eq, Ord)
+
+instance Show NonEmptyText where
+  show (NonEmptyText t) = show t
+
+instance Arbitrary NonEmptyText where
+  arbitrary = NonEmptyText . Text.pack <$> listOf1 arbitrary
+
+instance Monad m => ToValue NonEmptyText m where
+  toValue (NonEmptyText t) = toValue t
+
+newtype ArbitraryByteString = ArbitraryByteString ByteString
+  deriving (Eq, Ord)
+
+instance Show ArbitraryByteString where
+  show (ArbitraryByteString t) = show t
+
+instance Arbitrary ArbitraryByteString where
+  arbitrary = ArbitraryByteString . BS.pack <$> listOf arbitrary
+
+instance Monad m => ToValue ArbitraryByteString m where
+  toValue (ArbitraryByteString t) = toValue t
 
 newtype PositiveInt i = PositiveInt i
   deriving (Eq, Ord)

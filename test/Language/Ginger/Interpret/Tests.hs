@@ -9,27 +9,30 @@ module Language.Ginger.Interpret.Tests
 where
 
 import Control.Monad.Identity
+import Control.Monad.State (get)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import Data.Char (isControl, isSpace, isAlpha, isAlphaNum, chr)
+import Data.Either (isRight)
 import Data.Int (Int8, Int16, Int32, Int64)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust, isNothing)
+import Data.Monoid (Any (..))
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as Text
+import qualified Data.Text.Encoding as Text
 import Data.Word (Word8, Word16, Word32, Word64)
 import Test.Tasty
-import Test.Tasty.QuickCheck
-import Data.Monoid (Any (..))
-import Data.Either (isRight)
-import Control.Monad.State (get)
+import Test.Tasty.QuickCheck hiding ((.&.))
+import Data.Bits ((.&.))
 
 import Language.Ginger.AST
 import Language.Ginger.Interpret
 import Language.Ginger.RuntimeError
-import Language.Ginger.Value
 import Language.Ginger.TestUtils
+import Language.Ginger.Value
 
 tests :: TestTree
 tests = testGroup "Language.Ginger.Interpret"
@@ -143,11 +146,11 @@ tests = testGroup "Language.Ginger.Interpret"
             prop_eval (\i -> FilterE (IntLitE i) (VarE "even") [] []) (BoolV . even)
         , testProperty "odd" $
             prop_eval (\i -> FilterE (IntLitE i) (VarE "odd") [] []) (BoolV . odd)
-        , testProperty "capitalize string" $
-            prop_eval (\(ArbitraryText t) -> FilterE (StringLitE t) (VarE "capitalize") [] [])
+        , testProperty "upper string" $
+            prop_eval (\(ArbitraryText t) -> FilterE (StringLitE t) (VarE "upper") [] [])
                       (\(ArbitraryText t) -> StringV . Text.toUpper $ t)
-        , testProperty "capitalize int" $
-            prop_eval (\i -> FilterE (IntLitE i) (VarE "capitalize") [] [])
+        , testProperty "upper int" $
+            prop_eval (\i -> FilterE (IntLitE i) (VarE "upper") [] [])
                       (StringV . Text.show)
         , testProperty "default (undefined)" $
             prop_eval (\i -> FilterE (VarE "something_undefined") (VarE "default") [(IntLitE i)] []) IntV
@@ -209,9 +212,234 @@ tests = testGroup "Language.Ginger.Interpret"
         ]
     , testGroup "DotE"
       [ testGroup "StringV"
-        [ testProperty "capitalize string" $
-            prop_eval (\(ArbitraryText t) -> CallE (DotE (StringLitE t) (StringLitE "capitalize")) [] [])
-                      (\(ArbitraryText t) -> StringV . Text.toUpper $ t)
+        [ testProperty "upper string" $
+            prop_string_method "upper" (const []) Text.toUpper
+        , testProperty "lower string" $
+            prop_string_method "lower" (const []) Text.toLower
+        , testProperty "capitalize string" $
+            prop_string_method "capitalize" (const []) Text.toTitle
+        , testProperty "title string" $
+            prop_string_method "title" (const []) Text.toTitle
+        , testProperty "casefold string" $
+            prop_string_method "casefold" (const []) Text.toCaseFold
+        , testProperty "string isalpha" $
+            prop_method "isalpha"
+              (\(ArbitraryText t) -> StringLitE (Text.filter isAlpha t))
+              (const [])
+              (\(ArbitraryText t) -> if Text.null (Text.filter isAlpha t) then TrueV else TrueV)
+        , testProperty "string isalnum" $
+            prop_method "isalnum"
+              (\(ArbitraryText t) -> StringLitE (Text.filter isAlphaNum t))
+              (const [])
+              (\(ArbitraryText t) -> if Text.null (Text.filter isAlphaNum t) then TrueV else TrueV)
+        , testProperty "string isascii" $
+            prop_method "isascii"
+              (\(ArbitraryByteString chars) ->
+                  StringLitE . Text.pack . map (chr . fromIntegral . (.&. 0x7F)) $ BS.unpack chars
+              )
+              (const [])
+              (const TrueV)
+        , testProperty "string isascii" $
+            prop_method "isascii"
+              (\(ArbitraryByteString chars) ->
+                  StringLitE . Text.pack . (++ [chr 128]) . map (chr . fromIntegral . (.&. 0x7F)) $ BS.unpack chars
+              )
+              (const [])
+              (const FalseV)
+        , testProperty "count string" $
+            prop_method "count"
+              (\(NonEmptyText t, NonEmptyText f, PositiveInt p) ->
+                  StringLitE (Text.intercalate f . replicate (fromIntegral p) $ t)
+              )
+              (\(NonEmptyText t, NonEmptyText _, PositiveInt _) ->
+                [ StringLitE t ]
+              )
+              (\(NonEmptyText t, NonEmptyText f, PositiveInt p) ->
+                -- The second part accounts for cases where the needle (t) is a
+                -- substring of the filler (f).
+                IntV $
+                  p + (fromIntegral (Text.count t f) * (p - 1))
+              )
+        , testProperty "center string" $
+            prop_method "center"
+              (\(ArbitraryText t, _) -> StringLitE t)
+              (\(ArbitraryText t, PositiveInt p) -> [IntLitE (p + p + fromIntegral (Text.length t))])
+              (\(ArbitraryText t, PositiveInt p) ->
+                  let padding = Text.replicate (fromInteger p) " "
+                  in StringV $ padding <> t <> padding
+              )
+        , testProperty "center string with fillchar" $
+            prop_method "center"
+              (\(ArbitraryText t, _, _) -> StringLitE t)
+              (\(ArbitraryText t, PositiveInt p, c) ->
+                  [ IntLitE (p + p + fromIntegral (Text.length t))
+                  , StringLitE (Text.singleton c)
+                  ])
+              (\(ArbitraryText t, PositiveInt p, c) ->
+                  let padding = Text.replicate (fromInteger p) (Text.singleton c)
+                  in StringV $ padding <> t <> padding
+              )
+        , testProperty "encode string (UTF-8)" $
+            prop_method "encode"
+              (\(ArbitraryText t) -> StringLitE t)
+              (const [])
+              (\(ArbitraryText t) -> BytesV . Text.encodeUtf8 $ t)
+        , testProperty "encode string (UTF-16LE)" $
+            prop_method "encode"
+              (\(ArbitraryText t) -> StringLitE t)
+              (const [StringLitE "utf-16-LE"])
+              (\(ArbitraryText t) -> BytesV . Text.encodeUtf16LE $ t)
+        , testProperty "encode string (UTF-16BE)" $
+            prop_method "encode"
+              (\(ArbitraryText t) -> StringLitE t)
+              (const [StringLitE "utf-16-BE"])
+              (\(ArbitraryText t) -> BytesV . Text.encodeUtf16BE $ t)
+        , testProperty "encode string (UTF-32LE)" $
+            prop_method "encode"
+              (\(ArbitraryText t) -> StringLitE t)
+              (const [StringLitE "utf-32-LE"])
+              (\(ArbitraryText t) -> BytesV . Text.encodeUtf32LE $ t)
+        , testProperty "encode string (UTF-32BE)" $
+            prop_method "encode"
+              (\(ArbitraryText t) -> StringLitE t)
+              (const [StringLitE "utf-32-BE"])
+              (\(ArbitraryText t) -> BytesV . Text.encodeUtf32BE $ t)
+        , testProperty "encode string (ASCII)" $
+            prop_method "encode"
+              (\(ArbitraryByteString b) -> StringLitE (Text.decodeUtf8 $ BS.filter (< 128) b))
+              (const [StringLitE "ASCII"])
+              (\(ArbitraryByteString b) -> BytesV (BS.filter (< 128) b))
+        , testProperty "string startswith" $
+            prop_method "startswith"
+              (\(NonEmptyText needle, NonEmptyText p) -> StringLitE (needle <> p))
+              (\(NonEmptyText needle, _) -> [StringLitE needle])
+              (\_ -> TrueV)
+        , testProperty "string startswith ranged" $
+            prop_method "startswith"
+              (\(NonEmptyText needle, NonEmptyText p, NonEmptyText b, NonEmptyText a) ->
+                StringLitE (b <> needle <> p <> a))
+              (\(NonEmptyText needle, NonEmptyText p, NonEmptyText b, _) ->
+                [ StringLitE needle
+                , IntLitE . fromIntegral $ Text.length b
+                , IntLitE . fromIntegral $ Text.length b + Text.length needle + Text.length p
+                ]
+              )
+              (\_ -> TrueV)
+        , testProperty "string endswith" $
+            prop_method "endswith"
+              (\(NonEmptyText needle, NonEmptyText p) -> StringLitE (p <> needle))
+              (\(NonEmptyText needle, _) -> [StringLitE needle])
+              (\_ -> TrueV)
+        , testProperty "string split (no sep)" $
+            prop_method "split"
+              (\(NonEmptyText _sep, NonEmptyText item) ->
+                StringLitE item
+              )
+              (\(NonEmptyText sep, NonEmptyText _item) ->
+                [StringLitE sep]
+              )
+              (\(NonEmptyText sep, NonEmptyText item) ->
+                if sep `Text.isInfixOf` item then
+                  ListV (map StringV $ Text.splitOn sep item)
+                else
+                  ListV [StringV item]
+              )
+        , testProperty "string split" $
+            prop_method "split"
+              (\(NonEmptyText sep, NonEmptyText item, PositiveInt i) ->
+                StringLitE (Text.intercalate sep $ replicate (i + 1) item)
+              )
+              (\(NonEmptyText sep, NonEmptyText _item, PositiveInt _i) ->
+                [StringLitE sep]
+              )
+              (\(NonEmptyText sep, NonEmptyText item, PositiveInt i) ->
+                if sep `Text.isInfixOf` item then
+                  ListV $ concat $ replicate (i + 1) (map StringV $ Text.splitOn sep item)
+                else
+                  ListV $ replicate (i + 1) (StringV item)
+              )
+        , testProperty "string splitlines" $
+            prop_method "splitlines"
+              (\(NonEmptyText item, PositiveInt i) ->
+                StringLitE (Text.unlines $ replicate i (Text.filter (not . isControl) item))
+              )
+              (const [])
+              (\(NonEmptyText item, PositiveInt i) ->
+                ListV $ replicate i (StringV (Text.filter (not . isControl) item))
+              )
+        , testProperty "string join" $
+            prop_method "join"
+              (\(NonEmptyText sep, NonEmptyText _item, PositiveInt _i) ->
+                StringLitE sep
+              )
+              (\(NonEmptyText _sep, NonEmptyText item, PositiveInt i) ->
+                [ListE $ replicate i (StringLitE item)]
+              )
+              (\(NonEmptyText sep, NonEmptyText item, PositiveInt i) ->
+                StringV $ Text.intercalate sep $ replicate i item
+              )
+            
+        , testProperty "string replace" $
+            prop_method "replace"
+              (\() ->
+                StringLitE "Hello, world!"
+              )
+              (const [StringLitE "world", StringLitE "Tobias"])
+              (\() ->
+                StringV "Hello, Tobias!"
+              )
+        , testProperty "string replace limited 1" $
+            prop_method "replace"
+              (\() ->
+                StringLitE "Hello, world! How are you!"
+              )
+              (const [StringLitE "!", StringLitE "?", IntLitE 1])
+              (\() ->
+                StringV "Hello, world? How are you!"
+              )
+        , testProperty "string replace limited 2" $
+            prop_method "replace"
+              (\() ->
+                StringLitE "Hello, world! How are you!"
+              )
+              (const [StringLitE "!", StringLitE "?", IntLitE 3])
+              (\() ->
+                StringV "Hello, world? How are you?"
+              )
+
+        , testProperty "string strip" $
+            prop_method "strip"
+              (\(NonEmptyText item, PositiveInt i, PositiveInt j) ->
+                StringLitE (Text.replicate i " " <> item <> Text.replicate j " ")
+              )
+              (const [])
+              (\(NonEmptyText item, _, _) ->
+                StringV (Text.strip item)
+              )
+        , testProperty "string lstrip" $
+            prop_method "lstrip"
+              (\(NonEmptyText item, PositiveInt i, PositiveInt j) ->
+                StringLitE (Text.replicate i " " <> item <> Text.replicate j " ")
+              )
+              (const [])
+              (\(NonEmptyText item, _, PositiveInt j) ->
+                if Text.all isSpace item then
+                  StringV ""
+                else
+                  StringV (Text.stripStart item <> Text.replicate j " ")
+              )
+        , testProperty "string rstrip" $
+            prop_method "rstrip"
+              (\(NonEmptyText item, PositiveInt i, PositiveInt j) ->
+                StringLitE (Text.replicate i " " <> item <> Text.replicate j " ")
+              )
+              (const [])
+              (\(NonEmptyText item, PositiveInt i, _) ->
+                if Text.all isSpace item then
+                  StringV ""
+                else
+                  StringV (Text.replicate i " " <> Text.stripEnd item)
+              )
         ]
       ]
     , testGroup "IsE"
@@ -569,6 +797,30 @@ prop_eval mkEvaluable mkExpected x =
   in
     counterexample (show e) $
     result === expected
+
+prop_method :: (Arbitrary a, Show a)
+            => Identifier
+            -> (a -> Expr)
+            -> (a -> [Expr])
+            -> (a -> Value Identity)
+            -> a
+            -> Property
+prop_method methodName mkSelf mkArgs mkExpected t =
+  counterexample (show $ mkArgs t) $
+  prop_eval (\t' -> CallE (DotE (mkSelf t) (StringLitE $ identifierName methodName)) (mkArgs t') [])
+            mkExpected
+            t
+
+prop_string_method :: Identifier
+                   -> (Text -> [Expr])
+                   -> (Text -> Text)
+                   -> ArbitraryText
+                   -> Property
+prop_string_method methodName mkArgs mkExpected =
+  prop_method methodName
+    (\(ArbitraryText t) -> StringLitE t)
+    (\(ArbitraryText t) -> mkArgs t)
+    (\(ArbitraryText t) -> StringV . mkExpected $ t)
 
 --------------------------------------------------------------------------------
 -- Statement properties

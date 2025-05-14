@@ -397,7 +397,7 @@ evalBinary BinopDot a b = do
       itemMay <- getItem a b
       case itemMay of
         Just item -> pure item
-        Nothing -> pure NoneV
+        Nothing -> throwError $ NotInScopeError (Just $ Text.show a <> "." <> Text.show b)
 evalBinary BinopConcat a b = concatValues a b
 
 getItemRaw :: Monad m

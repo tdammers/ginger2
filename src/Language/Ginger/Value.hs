@@ -4,6 +4,7 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Language.Ginger.Value
 where
@@ -22,6 +23,9 @@ import Data.Int
 import GHC.Float (float2Double)
 import Test.Tasty.QuickCheck (Arbitrary (..))
 import qualified Test.Tasty.QuickCheck as QC
+import Control.Monad.Except (runExceptT, throwError)
+import Control.Monad.Trans (lift)
+import Control.Monad ((<=<))
 
 import Language.Ginger.AST
 import Language.Ginger.RuntimeError
@@ -290,6 +294,51 @@ instance (ToScalar a, ToScalar b) => ToScalar (Either a b) where
   toScalar (Left x) = toScalar x
   toScalar (Right x) = toScalar x
 
+class FnArgValue a where
+  fromArgValue :: Value m -> Either RuntimeError a
+
+--------------------------------------------------------------------------------
+-- FromValue
+--------------------------------------------------------------------------------
+
+class FromValue a m where
+  fromValue :: Value m -> m (Either RuntimeError a)
+
+--------------------------------------------------------------------------------
+-- FromValue instances
+--------------------------------------------------------------------------------
+
+instance Applicative m => FromValue (Value m) m where
+  fromValue = pure . Right
+
+instance Applicative m => FromValue Text m where
+  fromValue = pure . asTextVal
+
+instance Applicative m => FromValue Integer m where
+  fromValue = pure . asIntVal
+
+instance Applicative m => FromValue Int m where
+  fromValue = fmap (fmap fromInteger) . pure . asIntVal
+
+instance Applicative m => FromValue Double m where
+  fromValue = pure . asFloatVal
+
+instance Applicative m => FromValue Bool m where
+  fromValue = pure . asBoolVal
+
+instance Applicative m => FromValue () m where
+  fromValue NoneV = pure $ Right ()
+  fromValue x = pure . Left $ TagError Nothing (Just "fromValue") (Just . tagNameOf $ x)
+
+instance (Applicative m, FromValue a m) => FromValue (Maybe a) m where
+  fromValue NoneV = pure $ Right Nothing
+  fromValue x = fmap (fmap Just) $ fromValue x
+
+instance (Monad m, FromValue a m) => FromValue [a] m where
+  fromValue x = runExceptT $ do
+    items :: [Value m] <- either throwError pure =<< lift (asListVal x)
+    mapM (either throwError pure <=< (lift . fromValue)) items
+
 --------------------------------------------------------------------------------
 -- ToValue
 --------------------------------------------------------------------------------
@@ -301,7 +350,7 @@ instance ToValue (Value m) m where
   toValue = id
 
 --------------------------------------------------------------------------------
--- Scalar instances
+-- ToValue Scalar instances
 --------------------------------------------------------------------------------
 
 instance ToValue () a where
@@ -574,6 +623,10 @@ numericFuncCatch f _ (IntV a) = IntV <$> f a
 numericFuncCatch _ f (FloatV a) = FloatV <$> (leftNaN =<< f a)
 numericFuncCatch _ _ a = Left (TagError Nothing (Just "number") (Just . tagNameOf $ a))
 
+asOptionalVal :: (Value m -> Either RuntimeError a) -> Value m -> Either RuntimeError (Maybe a)
+asOptionalVal _ NoneV = Right Nothing
+asOptionalVal asVal x = Just <$> asVal x
+
 asIntVal :: Value m -> Either RuntimeError Integer
 asIntVal (IntV a) = Right a
 asIntVal x = Left $ TagError Nothing (Just "int") (Just . tagNameOf $ x)
@@ -605,34 +658,34 @@ asTextVal (FloatV a) = Right (Text.show a)
 asTextVal NoneV = Right ""
 asTextVal x = Left $ TagError Nothing (Just "string") (Just . tagNameOf $ x)
 
-intFunc :: Monad m
-         => (Integer -> Either RuntimeError Integer)
+intFunc :: (Monad m, ToValue a m)
+         => (Integer -> Either RuntimeError a)
          -> Value m
          -> Either RuntimeError (Value m)
-intFunc f a = IntV <$> (asIntVal a >>= f)
+intFunc f a = toValue <$> (asIntVal a >>= f)
 
-floatFunc :: Monad m
-         => (Double -> Either RuntimeError Double)
+floatFunc :: (Monad m, ToValue a m)
+         => (Double -> Either RuntimeError a)
          -> Value m
          -> Either RuntimeError (Value m)
-floatFunc f a = FloatV <$> (asFloatVal a >>= f)
+floatFunc f a = toValue <$> (asFloatVal a >>= f)
 
-boolFunc :: Monad m
-         => (Bool -> Bool)
+boolFunc :: (Monad m, ToValue a m)
+         => (Bool -> a)
          -> Value m
          -> Either RuntimeError (Value m)
-boolFunc f (BoolV a) = pure . BoolV $ f a
+boolFunc f (BoolV a) = pure . toValue $ f a
 boolFunc _ a = Left (TagError Nothing (Just "bool") (Just . tagNameOf $ a))
 
-textFunc :: Monad m
-         => (Text -> Either RuntimeError Text)
+textFunc :: (Monad m, ToValue a m)
+         => (Text -> Either RuntimeError a)
          -> Value m
          -> Either RuntimeError (Value m)
-textFunc f (StringV a) = StringV <$> f a
-textFunc f (EncodedV (Encoded a)) = EncodedV . Encoded <$> f a
-textFunc f (IntV a) = StringV <$> f (Text.show a)
-textFunc f (FloatV a) = StringV <$> f (Text.show a)
-textFunc f NoneV = StringV <$> f ""
+textFunc f (StringV a) = toValue <$> f a
+textFunc f (EncodedV (Encoded a)) = toValue <$> f a
+textFunc f (IntV a) = toValue <$> f (Text.show a)
+textFunc f (FloatV a) = toValue <$> f (Text.show a)
+textFunc f NoneV = toValue <$> f ""
 textFunc _ a = Left (TagError Nothing (Just "int") (Just . tagNameOf $ a))
 
 numericFunc2 :: Monad m

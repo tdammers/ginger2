@@ -8,6 +8,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 
 module Language.Ginger.Interpret.Builtins
@@ -21,19 +22,36 @@ import Control.Monad.Trans (lift)
 import Control.Monad.Except
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import qualified Data.ByteString as BS
 import Data.Text (Text)
 import qualified Data.Text as Text
-import Data.Char (isUpper, isLower)
+import qualified Data.Text.Encoding as Text
+import Data.Char (isUpper, isLower, isAlphaNum, isPrint, isSpace, isAlpha, isDigit, ord)
 
 type BuiltinAttribs a m = Map Identifier (a -> m (Either RuntimeError (Value m)))
 
-nativeMethod :: Procedure m -> Value m -> Procedure m
+nativeMethod :: Procedure m -> Value m -> Value m
 nativeMethod (NativeProcedure f) self =
-  NativeProcedure $ \args -> f ((Just "value", self) : args)
+  ProcedureV . NativeProcedure $ \args -> f ((Just "value", self) : args)
 nativeMethod (GingerProcedure env argSpec body) self =
-  GingerProcedure env' (drop 1 argSpec) body
+  ProcedureV $ GingerProcedure env' (drop 1 argSpec) body
   where
     env' = env { envVars = Map.insert "value" self (envVars env) }
+
+nativePureMethod :: Applicative m
+                 => (Value m -> Either RuntimeError (Value m))
+                 -> Value m
+                 -> Value m
+nativePureMethod = nativeMethod . pureNativeFunc
+
+toNativeMethod :: ToNativeProcedure m a
+               => a
+               -> Value m
+               -> Value m
+toNativeMethod f = nativeMethod (NativeProcedure $ toNativeProcedure f)
+
+pureAttrib :: Applicative m => (s -> a) -> s -> m (Either RuntimeError a)
+pureAttrib f x = pure . Right $ f x
 
 builtinIntAttribs :: forall m. Monad m => BuiltinAttribs Integer m
 builtinIntAttribs = Map.fromList
@@ -50,14 +68,74 @@ builtinBoolAttribs = Map.fromList
   [
   ]
 
-builtinStringAttribs :: Monad m => BuiltinAttribs Text m
+textAttrib :: (Monad m, ToValue a m)
+           => (Text -> a)
+           -> Text
+           -> m (Either RuntimeError (Value m))
+textAttrib f =
+  pureAttrib $ nativePureMethod (textFunc (pure . f)) . StringV
+
+textNProcAttrib :: (Monad m, ToNativeProcedure m a)
+                => (Value m -> a)
+                -> Text
+                -> m (Either RuntimeError (Value m))
+textNProcAttrib f =
+  pureAttrib $ toNativeMethod f . StringV
+
+textProcAttrib :: Monad m
+               => Procedure m
+               -> Text
+               -> m (Either RuntimeError (Value m))
+textProcAttrib f =
+  pureAttrib $ nativeMethod f . StringV
+
+builtinStringAttribs :: forall m. Monad m => BuiltinAttribs Text m
 builtinStringAttribs = Map.fromList
-  [ ("center",
-        \s -> pure . Right $
-          ProcedureV $ nativeMethod fnCenter (StringV s))
-  , ("capitalize",
-        \s -> pure . Right $
-          ProcedureV $ nativeMethod (pureNativeFunc $ textFunc (pure . Text.toUpper)) (StringV s))
+  [ ("capitalize", textAttrib Text.toTitle)
+  , ("casefold", textAttrib Text.toCaseFold)
+  , ("center", textProcAttrib fnCenter)
+  , ("count", textProcAttrib fnStrCount)
+  , ("encode", textProcAttrib fnStrEncode)
+  , ("endswith", textProcAttrib fnStrEndswith)
+  -- , ("expandtabs", ?)
+  -- , ("find", ?)
+  -- , ("format", ?)
+  -- , ("format_map", ?)
+  -- , ("index", ?)
+  , ("isalnum", textAttrib (Text.all isAlphaNum))
+  , ("isalpha", textAttrib (Text.all isAlpha))
+  , ("isascii", textAttrib (Text.all ((< 128) . ord)))
+  -- , ("isdecimal", ?)
+  , ("isdigit", textAttrib (Text.all isDigit))
+  -- , ("isidentifier", ?)
+  , ("islower", textNProcAttrib isLowerVal)
+  -- , ("isnumeric", ?)
+  , ("isprintable", textAttrib (Text.all isPrint))
+  , ("isspace", textAttrib (Text.all isSpace))
+  , ("isupper", textNProcAttrib isUpperVal)
+  , ("join", textProcAttrib fnStrJoin)
+  -- , ("ljust", ?)
+  , ("lower", textAttrib Text.toLower)
+  , ("lstrip", textProcAttrib fnStrLStrip)
+  -- , ("maketrans", ?)
+  -- , ("partition", ?)
+  -- , ("removeprefix", ?)
+  -- , ("removesuffix", ?)
+  , ("replace", textProcAttrib fnStrReplace)
+  -- , ("rfind", ?)
+  -- , ("rindex", ?)
+  -- , ("rjust", ?)
+  -- , ("rpartition", ?)
+  , ("rstrip", textProcAttrib fnStrRStrip)
+  , ("split", textProcAttrib fnStrSplit)
+  , ("splitlines", textAttrib Text.lines)
+  , ("startswith", textProcAttrib fnStrStartswith)
+  , ("strip", textProcAttrib fnStrStrip)
+  -- , ("swapcase", ?)
+  , ("title", textAttrib Text.toTitle)
+  -- , ("translate", ?)
+  , ("upper", textAttrib Text.toUpper)
+  -- , ("zfill", ?)
   ]
 
 builtinListAttribs :: Monad m => BuiltinAttribs [Value m] m
@@ -77,6 +155,9 @@ builtinNotImplemented name = ProcedureV $ NativeProcedure $ \_ ->
 fnEither :: Monad m => Either a b -> ExceptT a m b
 fnEither = either throwError pure
 
+fnEitherM :: Monad m => m (Either a b) -> ExceptT a m b
+fnEitherM = (>>= fnEither) . lift
+
 fnMaybeArg :: Monad m => Text -> Text -> Maybe b -> ExceptT RuntimeError m b
 fnMaybeArg context name =
   maybe
@@ -89,85 +170,305 @@ fnMaybeArg context name =
     )
     pure
 
-fnEitherM :: Monad m => m (Either a b) -> ExceptT a m b
-fnEitherM = (>>= fnEither) . lift
-
-fnTextArg :: Monad m
-          => Text
-          -> Identifier
-          -> Map Identifier (Value m)
-          -> ExceptT RuntimeError m Text
-fnTextArg = fnArg asTextVal
-
-fnIntArg :: Monad m
-          => Text
-          -> Identifier
-          -> Map Identifier (Value m)
-          -> ExceptT RuntimeError m Integer
-fnIntArg = fnArg asIntVal
-
-fnListArg :: Monad m
-          => Text
-          -> Identifier
-          -> Map Identifier (Value m)
-          -> ExceptT RuntimeError m [Value m]
-fnListArg = fnArgM asListVal
-
-fnArg :: Monad m
-      => (Value m -> Either RuntimeError a)
-      -> Text
+fnArg :: (Monad m, FromValue a m)
+      => Text
       -> Identifier
       -> Map Identifier (Value m)
       -> ExceptT RuntimeError m a
-fnArg convert context name argValues = do
+fnArg context name argValues = do
   argV <- fnMaybeArg context (identifierName name) $ Map.lookup name argValues
-  fnEither $ convert argV
+  fnEitherM $ fromValue argV
 
-fnArgM :: Monad m
-       => (Value m -> m (Either RuntimeError a))
-       -> Text
-       -> Identifier
-       -> Map Identifier (Value m)
-       -> ExceptT RuntimeError m a
-fnArgM convert context name argValues = do
-  argV <- fnMaybeArg context (identifierName name) $ Map.lookup name argValues
-  fnEitherM $ convert argV
+mkFn1 :: ( Monad m
+         , ToValue a m
+         , FromValue a m
+         , ToValue r m
+         )
+      => Text
+      -> (Identifier, Maybe a)
+      -> (a -> ExceptT RuntimeError m r)
+      -> Procedure m
+mkFn1 funcName (argname1, default1) f =
+  NativeProcedure $ \args -> runExceptT $ do
+    argValues <- fnEither $
+      resolveArgs
+        (Just funcName)
+        [ (argname1, toValue <$> default1)
+        ]
+        args
+    arg1 <- fnArg funcName argname1 argValues
+    toValue <$> f arg1
 
+mkFn2 :: ( Monad m
+         , ToValue a1 m
+         , FromValue a1 m
+         , ToValue a2 m
+         , FromValue a2 m
+         , ToValue r m
+         )
+      => Text
+      -> (Identifier, Maybe a1)
+      -> (Identifier, Maybe a2)
+      -> (a1 -> a2 -> ExceptT RuntimeError m r)
+      -> Procedure m
+mkFn2 funcName
+    (argname1, default1)
+    (argname2, default2)
+    f =
+  NativeProcedure $ \args -> runExceptT $ do
+    argValues <- fnEither $
+      resolveArgs
+        (Just funcName)
+        [ (argname1, toValue <$> default1)
+        , (argname2, toValue <$> default2)
+        ]
+        args
+    arg1 <- fnArg funcName argname1 argValues
+    arg2 <- fnArg funcName argname2 argValues
+    toValue <$> f arg1 arg2
+
+mkFn3 :: ( Monad m
+         , ToValue a1 m
+         , FromValue a1 m
+         , ToValue a2 m
+         , FromValue a2 m
+         , ToValue a3 m
+         , FromValue a3 m
+         , ToValue r m
+         )
+      => Text
+      -> (Identifier, Maybe a1)
+      -> (Identifier, Maybe a2)
+      -> (Identifier, Maybe a3)
+      -> (a1 -> a2 -> a3 -> ExceptT RuntimeError m r)
+      -> Procedure m
+mkFn3 funcName
+    (argname1, default1)
+    (argname2, default2)
+    (argname3, default3)
+    f =
+  NativeProcedure $ \args -> runExceptT $ do
+    argValues <- fnEither $
+      resolveArgs
+        (Just funcName)
+        [ (argname1, toValue <$> default1)
+        , (argname2, toValue <$> default2)
+        , (argname3, toValue <$> default3)
+        ]
+        args
+    arg1 <- fnArg funcName argname1 argValues
+    arg2 <- fnArg funcName argname2 argValues
+    arg3 <- fnArg funcName argname3 argValues
+    toValue <$> f arg1 arg2 arg3
+
+mkFn4 :: ( Monad m
+         , ToValue a1 m
+         , FromValue a1 m
+         , ToValue a2 m
+         , FromValue a2 m
+         , ToValue a3 m
+         , FromValue a3 m
+         , ToValue a4 m
+         , FromValue a4 m
+         , ToValue r m
+         )
+      => Text
+      -> (Identifier, Maybe a1)
+      -> (Identifier, Maybe a2)
+      -> (Identifier, Maybe a3)
+      -> (Identifier, Maybe a4)
+      -> (a1 -> a2 -> a3 -> a4 -> ExceptT RuntimeError m r)
+      -> Procedure m
+mkFn4 funcName
+    (argname1, default1)
+    (argname2, default2)
+    (argname3, default3)
+    (argname4, default4)
+    f =
+  NativeProcedure $ \args -> runExceptT $ do
+    argValues <- fnEither $
+      resolveArgs
+        (Just funcName)
+        [ (argname1, toValue <$> default1)
+        , (argname2, toValue <$> default2)
+        , (argname3, toValue <$> default3)
+        , (argname4, toValue <$> default4)
+        ]
+        args
+    arg1 <- fnArg funcName argname1 argValues
+    arg2 <- fnArg funcName argname2 argValues
+    arg3 <- fnArg funcName argname3 argValues
+    arg4 <- fnArg funcName argname4 argValues
+    toValue <$> f arg1 arg2 arg3 arg4
+
+
+fnStrReplace :: Monad m => Procedure m
+fnStrReplace = mkFn4 "replace"
+                ("value", Nothing)
+                ("old", Nothing)
+                ("new", Nothing)
+                ("count", Just (Nothing :: Maybe Int))
+                $ \value old new countMay -> do
+  let parts = Text.splitOn old value
+  case countMay of
+    Nothing -> pure $ Text.intercalate new parts
+    Just 0 -> pure value
+    Just count | count < length parts ->
+      pure $
+        Text.intercalate new (take count parts) <>
+        new <>
+        Text.intercalate old (drop count parts)
+    Just _ -> pure $ Text.intercalate new parts
+
+
+fnStrStrip :: Monad m => Procedure m
+fnStrStrip = mkFn2 "strip"
+                ("value", Nothing)
+                ("chars", Just Nothing)
+                $ \value charsMay -> do
+  case charsMay of
+    Nothing -> pure $ Text.strip value
+    Just charsText -> do
+      let chars = Text.unpack charsText
+      pure $
+        Text.dropWhile (`elem` chars) .
+        Text.dropWhileEnd (`elem` chars) $
+        value
+
+fnStrLStrip :: Monad m => Procedure m
+fnStrLStrip = mkFn2 "lstrip"
+                ("value", Nothing)
+                ("chars", Just Nothing)
+                $ \value charsMay -> do
+  case charsMay of
+    Nothing -> pure $ Text.stripStart value
+    Just charsText -> do
+      let chars = Text.unpack charsText
+      pure $ Text.dropWhile (`elem` chars) value
+
+fnStrRStrip :: Monad m => Procedure m
+fnStrRStrip = mkFn2 "rstrip"
+                ("value", Nothing)
+                ("chars", Just Nothing)
+                $ \value charsMay -> do
+  case charsMay of
+    Nothing -> pure $ Text.stripEnd value
+    Just charsText -> do
+      let chars = Text.unpack charsText
+      pure $ Text.dropWhileEnd (`elem` chars) value
+
+
+fnStrJoin :: Monad m => Procedure m
+fnStrJoin = mkFn2 "join"
+                ("value", Nothing)
+                ("iterable", Just [])
+                $ \value iterable -> do
+  pure $ Text.intercalate value iterable
+
+fnStrSplit :: Monad m => Procedure m
+fnStrSplit = mkFn3 "split"
+                ("value", Nothing)
+                ("sep", Just Nothing)
+                ("maxsplit", Just Nothing)
+                $ \value sepMay maxsplitMay -> do
+  items <- case sepMay of
+    Nothing -> pure . Text.words . Text.strip $ value
+    Just "" -> throwError $
+                  ArgumentError
+                    (Just "split")
+                    (Just "sep")
+                    (Just "non-empty string")
+                    (Just "empty string")
+    Just sep -> pure $ Text.splitOn sep value
+  case maxsplitMay of
+    Nothing ->
+      pure items
+    Just maxsplit ->
+      pure $ take maxsplit items ++ [Text.unwords $ drop maxsplit items]
+
+fnStrStartswith :: Monad m => Procedure m
+fnStrStartswith = mkFn4 "startswith"
+                  ("value", Nothing)
+                  ("prefix", Nothing)
+                  ("start", Just 0)
+                  ("end", Just Nothing)
+                  $ \value prefix start endMay -> do
+    let value' = case endMay of
+          Nothing -> Text.drop start value
+          Just end -> Text.drop start . Text.take end $ value
+    pure $ prefix `Text.isPrefixOf` value'
+
+fnStrEndswith :: Monad m => Procedure m
+fnStrEndswith = mkFn4 "endswith"
+                  ("value", Nothing)
+                  ("suffix", Nothing)
+                  ("start", Just 0)
+                  ("end", Just Nothing)
+                  $ \value suffix start endMay -> do
+    let value' = case endMay of
+          Nothing -> Text.drop start value
+          Just end -> Text.drop start . Text.take end $ value
+    pure $ suffix `Text.isSuffixOf` value'
+
+fnStrEncode :: Monad m => Procedure m
+fnStrEncode = mkFn3 "encode"
+                ("value", Nothing)
+                ("encoding", Just "utf-8")
+                ("errors", Just ("strict" :: Text))
+                $ \value encoding _errors -> do
+  func <- case Text.filter isAlphaNum . Text.toCaseFold $ encoding of
+    "ascii" -> pure encodeASCII
+    "utf8" -> pure Text.encodeUtf8
+    "utf16le" -> pure Text.encodeUtf16LE
+    "utf16be" -> pure Text.encodeUtf16BE
+    "utf32le" -> pure Text.encodeUtf32LE
+    "utf32be" -> pure Text.encodeUtf32BE
+    _ -> throwError $ ArgumentError (Just "encode") (Just "encoding") (Just "valid encoding") (Just encoding)
+  pure $ func value
+  where
+    encodeASCII =
+      BS.pack .
+      map fromIntegral .
+      filter (<= 127) .
+      map ord .
+      Text.unpack
+
+fnStrCount :: Monad m => Procedure m
+fnStrCount = mkFn4 "count"
+              ("value", Nothing)
+              ("sub", Nothing)
+              ("start", Just 0)
+              ("end", Just Nothing)
+              $ \value sub start endMay -> do
+    let value' = case endMay of
+          Nothing -> Text.drop start value
+          Just end -> Text.drop start . Text.take end $ value
+    pure $ Text.count sub value'
 
 fnCenter :: Monad m => Procedure m
-fnCenter = NativeProcedure $ \args -> runExceptT $ do
-    argValues <- fnEither $
-                  resolveArgs
-                    (Just "center")
-                    [("value", Nothing), ("width", Just $ IntV 80)]
-                    args
-    value <- fnTextArg "center" "value" argValues
-    width <- fnIntArg "center" "width" argValues
+fnCenter = mkFn3 "center"
+            ("value", Nothing)
+            ("width", Just 80)
+            ("fillchar", Just " ")
+            $ \value width fillchar' -> do
+    let fillchar = Text.take 1 . (<> " ") $ fillchar'
     let paddingTotal = max 0 $ fromInteger width - Text.length value
         paddingLeft = paddingTotal `div` 2
         paddingRight = paddingTotal - paddingLeft
-    pure . StringV $
-      Text.replicate paddingLeft " " <>
+    pure $
+      Text.replicate paddingLeft fillchar <>
       value <>
-      Text.replicate paddingRight " "
+      Text.replicate paddingRight fillchar
 
-fnBatch :: Monad m => Procedure m
-fnBatch = NativeProcedure $ \args -> runExceptT $ do
-  argValues <- fnEither $
-                resolveArgs
-                  (Just "batch")
-                  [ ("value", Nothing)
-                  , ("linecount", Nothing)
-                  , ("fill_with", Just NoneV)
-                  ]
-                  args
-  value <- fnListArg "batch" "value" argValues
-  linecount <- fnIntArg "batch" "linecount" argValues
-  fillWith <- fnArg Right "batch" "fill_with" argValues
-  let fillWithMay = if fillWith == NoneV then Nothing else Just fillWith
-  pure . ListV . map ListV $ chunksOf fillWithMay (fromInteger linecount) value
+fnBatch :: forall m. Monad m => Procedure m
+fnBatch = mkFn3 "batch"
+            ("value", Nothing)
+            ("linecount", Nothing)
+            ("fill_with", Just Nothing)
+            $ \value linecount fillWithMay -> do
+  pure $ chunksOf fillWithMay linecount value
   where
-    chunksOf :: Maybe a -> Int -> [a] -> [[a]]
+    chunksOf :: Maybe (Value m) -> Int -> [Value m] -> [[Value m]]
     chunksOf _ _ [] = []
     chunksOf fillMay n xs =
       case take n xs of

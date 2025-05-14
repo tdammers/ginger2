@@ -170,6 +170,28 @@ tests = testGroup "Language.Ginger.Interpret"
         , testProperty "float from int" $
             prop_eval (\i -> FilterE (FloatLitE i) (VarE "float") [] [])
                       FloatV
+        , testProperty "length (string)" $
+            prop_eval
+              (\(ArbitraryText t) ->
+                  FilterE (StringLitE t) (VarE "length") [] []
+              )
+              (\(ArbitraryText t) -> toValue (Text.length t))
+        , testProperty "length (list)" $
+            prop_eval
+              (\(PositiveInt i) ->
+                  FilterE (ListE $ replicate i NoneE) (VarE "length") [] []
+              )
+              (\(PositiveInt i) -> toValue i)
+        , testProperty "length (dict)" $
+            prop_eval
+              (\(PositiveInt (i :: Integer)) ->
+                  FilterE
+                    (DictE
+                      [(StringLitE $ "item" <> Text.show n, NoneE) | n <- [1..i]])
+                    (VarE "length")
+                    [] []
+              )
+              (\(PositiveInt i) -> toValue i)
         , testProperty "join" $
             prop_eval
               (\(ArbitraryText t, ArbitraryText u) ->

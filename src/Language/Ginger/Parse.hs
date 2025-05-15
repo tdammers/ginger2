@@ -81,12 +81,12 @@ defPOptions = POptions
 -- Running Parsers
 --------------------------------------------------------------------------------
 
-parseGinger :: P a -> Text -> Either String a
+parseGinger :: P a -> FilePath -> Text -> Either String a
 parseGinger = parseGingerWith defPOptions
 
-parseGingerWith :: POptions -> P a -> Text -> Either String a
-parseGingerWith options p input =
-  mapLeft errorBundlePretty $ runReader (runParserT p "<input>" input) options
+parseGingerWith :: POptions -> P a -> FilePath -> Text -> Either String a
+parseGingerWith options p filename input =
+  mapLeft errorBundlePretty $ runReader (runParserT p filename input) options
 
 parseGingerFile :: P a -> FilePath -> IO (Either String a)
 parseGingerFile = parseGingerFileWith defPOptions
@@ -493,8 +493,11 @@ closeFlow = closeWithOverride "%}"
 -- Statement parsers
 --------------------------------------------------------------------------------
 
-template :: P Statement
-template = statement <* eof
+template :: P Template
+template = do
+  -- TODO: parse {% extends %}
+  body <- statement
+  pure $ Template (TemplateBody body) [] []
 
 statement :: P Statement
 statement =
@@ -719,4 +722,4 @@ blockStatement = do
          <*> (option Optional $ Required <$ keyword "required")
   body <- statement
   void $ flow "endblock" (optional $ keyword (identifierName name))
-  pure $ BlockS name body scopedness requiredness
+  pure $ BlockS name (Block body scopedness requiredness)

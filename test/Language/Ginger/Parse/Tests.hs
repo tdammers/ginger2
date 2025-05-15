@@ -410,11 +410,11 @@ tests = testGroup "Language.Ginger.Parse"
       [ testCase "block" $
           test_parser statement
             "{% block foo %}Hello{% endblock %}"
-            (BlockS "foo" (ImmediateS . Encoded $ "Hello") NotScoped Optional)
+            (BlockS "foo" $ Block (ImmediateS . Encoded $ "Hello") NotScoped Optional)
       , testCase "block (repeat block name)" $
           test_parser statement
             "{% block foo %}Hello{% endblock foo %}"
-            (BlockS "foo" (ImmediateS . Encoded $ "Hello") NotScoped Optional)
+            (BlockS "foo" $ Block (ImmediateS . Encoded $ "Hello") NotScoped Optional)
       , testCase "block (repeat wrong block name)" $
           test_parserEx statement
             "{% block foo %}Hello{% endblock bar %}"
@@ -498,4 +498,4 @@ test_parserEx :: (Eq a, Show a) => P a -> Text -> (Either String a) -> Assertion
 test_parserEx p input expected = do
   assertEqual "" expected actual
   where
-    actual = parseGinger (p <* eof) input
+    actual = parseGinger (p <* eof) "<input>" input

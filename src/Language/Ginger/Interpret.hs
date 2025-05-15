@@ -10,6 +10,7 @@
 
 module Language.Ginger.Interpret
 ( Eval (..)
+, EvalState (..)
 , evalE
 , evalS
 , evalSs

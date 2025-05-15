@@ -30,6 +30,7 @@ defEnv :: Monad m => Env m
 defEnv =
   emptyEnv
     { envVars = defEnvVars
+    , envRoot = defEnv
     }
 
 defEnvVars :: forall m. Monad m => Map Identifier (Value m)

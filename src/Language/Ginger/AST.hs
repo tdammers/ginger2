@@ -44,6 +44,27 @@ newtype Encoded =
 instance Arbitrary Encoded where
   arbitrary = Encoded . Text.pack <$> QC.listOf arbitrary
 
+data TemplateMain
+  = TemplateBody !Statement
+  | TemplateParent !Text
+  deriving (Show, Eq)
+
+data Template =
+  Template
+    { templateMain :: !TemplateMain
+    , templateExports :: ![(Identifier, Expr)]
+    , templateBlocks :: ![(Identifier, Block)]
+    }
+    deriving (Show, Eq)
+
+data Block =
+  Block
+    { blockBody :: !Statement
+    , blockScoped :: !Scoped
+    , blockRequired :: !Required
+    }
+    deriving (Show, Eq)
+
 data Statement
   = -- | Bare text written in the template, outside of any curly braces
     ImmediateS !Encoded
@@ -114,9 +135,7 @@ data Statement
   | -- | @{% block name with scope required %}body{% endblock %}@
     BlockS
       !Identifier -- block name
-      !Statement -- body
-      !Scoped -- scoped block?
-      !Required -- required block?
+      !Block
   | -- | @{% with defs %}body{% endwith %}@
     WithS
       ![(Identifier, Expr)]

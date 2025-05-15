@@ -59,7 +59,7 @@ builtinFunctions = Map.fromList $
   -- , ("groupby", undefined)
   -- , ("indent", undefined)
   , ("int", ProcedureV fnToInt)
-  -- , ("items", undefined)
+  , ("items", ProcedureV fnItems)
   , ("join", ProcedureV fnJoin)
   -- , ("last", undefined)
   , ("length", ProcedureV fnLength)
@@ -75,7 +75,7 @@ builtinFunctions = Map.fromList $
   -- , ("reject", undefined)
   , ("replace", ProcedureV fnStrReplace)
   -- , ("reverse", undefined)
-  -- , ("round", undefined)
+  , ("round", ProcedureV fnRound)
   -- , ("safe", undefined)
   -- , ("selectattr", undefined)
   -- , ("select", undefined)
@@ -213,56 +213,56 @@ fnLength = mkFn1 "length"
               (Just . tagNameOf $ x)
 
 fnToFloat :: forall m. Monad m => Procedure m
-fnToFloat = mkFn1 "float"
+fnToFloat = mkFn2 "float"
               ("value", Nothing :: Maybe (Value m))
-  $ \case
+              ("default", Just 0)
+  $ \value def ->
+  case value of
       IntV i -> pure $ fromIntegral i
       BoolV b -> pure $ fromIntegral $ fromEnum b
       FloatV f -> pure f
       NoneV -> pure 0
       StringV s ->
-        maybe
-          (throwError $
-            ArgumentError
-              (Just "float")
-              (Just "value")
-              (Just "float-like string")
-              (Just s))
-          pure $
-          readMaybe (Text.unpack s)
-      x -> 
-          throwError $
-            ArgumentError
-              (Just "float")
-              (Just "value")
-              (Just "numeric value")
-              (Just . tagNameOf $ x)
+          pure . fromMaybe def $ readMaybe (Text.unpack s)
+      _ -> pure def
 
 fnToInt :: forall m. Monad m => Procedure m
-fnToInt = mkFn1 "int"
+fnToInt = mkFn3 "int"
               ("value", Nothing :: Maybe (Value m))
-  $ \case
+              ("default", Just 0)
+              ("base", Just 10 :: Maybe Integer)
+  $ \value def _base ->
+  case value of
       IntV i -> pure i
       BoolV b -> pure $ fromIntegral $ fromEnum b
       FloatV f -> pure $ round f
       NoneV -> pure 0
       StringV s ->
-        maybe
-          (throwError $
-            ArgumentError
-              (Just "int")
-              (Just "value")
-              (Just "int-like string")
-              (Just s))
-          pure $
-          readMaybe (Text.unpack s)
-      x -> 
-          throwError $
-            ArgumentError
-              (Just "float")
-              (Just "value")
-              (Just "numeric value")
-              (Just . tagNameOf $ x)
+        pure . fromMaybe def $ readMaybe (Text.unpack s)
+      _ -> pure def
+
+fnItems :: forall m. Monad m => Procedure m
+fnItems = mkFn1 "items"
+            ("value", Nothing)
+  $ \value ->
+      pure (Map.toAscList value :: [(Scalar, Value m)])
+
+fnRound :: forall m. Monad m => Procedure m
+fnRound = mkFn3 "round"
+              ("value", Nothing :: Maybe Double)
+              ("precision", Just 0 :: Maybe Integer)
+              ("method", Just "common")
+              $ \value precision method -> do
+  (r :: Double -> Integer) <- case method of
+    "common" -> pure (floor . (+ 0.5))
+    "ceil" -> pure ceiling
+    "floor" -> pure floor
+    x -> throwError $ ArgumentError (Just "round") (Just "method") (Just "one of 'common', 'floor', 'ceil'") (Just x)
+  if precision == 0 then
+    pure $ fromIntegral $ r value
+  else do
+    let factor :: Double = 10 ** (fromIntegral precision)
+    pure $ fromIntegral (r (value * factor) :: Integer) / factor
 
 fnStrReplace :: Monad m => Procedure m
 fnStrReplace = mkFn4 "replace"
@@ -538,7 +538,9 @@ getItemRaw a b = case a of
               . Text.drop (fromInteger i)
               $ str
     _ -> pure Nothing
-  NativeV n -> nativeObjectGetField n b
+  NativeV n -> case b of
+    ScalarV k -> nativeObjectGetField n k
+    _ -> pure Nothing
   _ -> pure Nothing
 
 --------------------------------------------------------------------------------

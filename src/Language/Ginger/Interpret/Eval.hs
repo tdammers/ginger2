@@ -11,6 +11,7 @@
 
 module Language.Ginger.Interpret.Eval
 ( Eval (..)
+, EvalState (..)
 , evalE
 , evalS
 , evalSs
@@ -21,22 +22,25 @@ module Language.Ginger.Interpret.Eval
 , getAttrRaw
 , getItem
 , getItemRaw
+, loadTemplate
 )
 where
 
 import Language.Ginger.AST
 import Language.Ginger.RuntimeError
 import Language.Ginger.Value
+import Language.Ginger.Parse (parseGinger)
+import qualified Language.Ginger.Parse as Parse
 import Language.Ginger.Interpret.Type
 import Language.Ginger.Interpret.Builtins
 
-import Control.Monad (foldM)
+import Control.Monad (foldM, forM)
 import Control.Monad.Except
   ( MonadError (..)
   , throwError
   )
 import Control.Monad.Reader (ask , asks)
-import Control.Monad.State (MonadState (..), get)
+import Control.Monad.State (gets)
 import Control.Monad.Trans (lift)
 import qualified Data.ByteString.Base64 as Base64
 import Data.Map.Strict (Map)
@@ -46,6 +50,33 @@ import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Text.Encoding (decodeUtf8)
+
+loadTemplate :: Monad m => Text -> GingerT m (LoadedTemplate m)
+loadTemplate name = do
+  sMay <- loadTemplateMaybe name
+  case sMay of
+    Nothing -> throwError $ TemplateFileNotFoundError name
+    Just s -> pure s
+
+loadTemplateMaybe :: Monad m => Text -> GingerT m (Maybe (LoadedTemplate m))
+loadTemplateMaybe name = do
+  loader <- asks contextLoadTemplateFile
+  srcMay <- lift (loader name)
+  case srcMay of
+    Nothing -> pure Nothing
+    Just src -> do
+      let result = parseGinger Parse.template (Text.unpack name) src
+      case result of
+        Left err ->
+          throwError $ TemplateParseError (Just name) (Just $ Text.pack err)
+        Right t -> do
+          exports <- fmap Map.fromList $ forM (templateExports t) $ \(key, expr) -> do
+            val <- evalE expr
+            pure (key, val)
+          body <- case templateMain t of
+            TemplateBody s -> pure $ LoadedTemplateBody s
+            TemplateParent p -> LoadedTemplateParent <$> loadTemplate p
+          pure . Just $ LoadedTemplate exports body
 
 stringify :: Monad m => Value m -> GingerT m Text
 stringify NoneV = pure ""
@@ -143,7 +174,7 @@ callTest testV scrutinee posArgsExpr namedArgsExpr = do
     TestV t -> do
       args <- evalCallArgs posArgsExpr namedArgsExpr
       ctx <- ask
-      env <- get
+      env <- gets evalEnv
       BoolV <$> native (runTest t scrutinee args ctx env)
 
     ScalarV {} -> do
@@ -161,7 +192,7 @@ callFilter filterV scrutinee posArgsExpr namedArgsExpr = do
     FilterV f -> do
       args <- evalCallArgs posArgsExpr namedArgsExpr
       ctx <- ask
-      env <- get
+      env <- gets evalEnv
       native (runFilter f scrutinee args ctx env)
 
     ScalarV {} -> do
@@ -461,6 +492,9 @@ concatValues a b = case (a, b) of
     yStr <- stringify y
     pure . StringV $ xStr <> yStr
 
+evalT :: LoadedTemplate m -> GingerT m (Value m)
+evalT _t = undefined
+
 evalS :: Monad m => Statement -> GingerT m (Value m)
 evalS (ImmediateS enc) = pure (EncodedV enc)
 evalS (InterpolationS expr) = evalE expr
@@ -472,7 +506,7 @@ evalS (IfS condE yesS noSMay) = do
   cond <- evalE condE >>= asBool "condition"
   if cond then evalS yesS else maybe (pure NoneV) evalS noSMay
 evalS (MacroS name argsSig body) = do
-  env <- get
+  env <- gets evalEnv
   argsSig' <- mapM (\(argname, defEMay) -> do
                   defMay <- maybe (pure Nothing) (fmap Just . evalE) defEMay
                   pure (argname, defMay)
@@ -506,11 +540,23 @@ evalS (SetBlockS name bodyS filterEMaybe) = do
                 evalE (CallE callee [StatementE bodyS] mempty)
   setVar name body
   pure NoneV
-evalS (IncludeS _nameE _missingPolicy _contextPolicy) = do
-  throwError $ NotImplementedError (Just "include")
+evalS (IncludeS nameE missingPolicy contextPolicy) = do
+  name <- eval nameE >>= (eitherExcept . asTextVal)
+  templateMay <- case missingPolicy of
+    RequireMissing -> Just <$> loadTemplate name
+    IgnoreMissing -> loadTemplateMaybe name
+  case templateMay of
+    Nothing ->
+      pure NoneV
+    Just template -> do
+      let scopeModifier =
+            case contextPolicy of
+              WithContext -> id
+              WithoutContext -> withoutContext
+      scopeModifier $ evalT template
 evalS (ExtendsS _nameE) = do
   throwError $ NotImplementedError (Just "extends")
-evalS (BlockS _name _bodyS _scopedness _requiredness) = do
+evalS (BlockS _name _block) = do
   throwError $ NotImplementedError (Just "block")
 evalS (ImportS _srcE _nameMay _identifiers _scopedness _requiredness) = do
   throwError $ NotImplementedError (Just "import")
@@ -575,7 +621,7 @@ evalLoop loopKeyMay loopName iteree loopCondMay recursivity bodyS elseSMay recur
         -- Bind key and value
         maybe (pure ()) (\loopKey -> setVar loopKey k) loopKeyMay
         setVar loopName v
-        env <- get
+        env <- gets evalEnv
         ctx <- ask
         setVar "loop" $
           dictV

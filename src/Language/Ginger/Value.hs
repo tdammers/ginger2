@@ -5,53 +5,61 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 
 module Language.Ginger.Value
 where
 
-import Data.String (IsString (..))
+import Control.Monad.Except (runExceptT, throwError, MonadError)
+import Control.Monad.Trans (MonadTrans, lift)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
+import Data.Int
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
+import Data.Maybe (fromMaybe)
+import Data.String (IsString (..))
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Lazy as LText
-import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
 import Data.Word
-import Data.Int
 import GHC.Float (float2Double)
 import Test.Tasty.QuickCheck (Arbitrary (..))
 import qualified Test.Tasty.QuickCheck as QC
-import Control.Monad.Except (runExceptT, throwError, ExceptT)
-import Control.Monad.Trans (lift)
 
 import Language.Ginger.AST
 import Language.Ginger.RuntimeError
 
-newtype Env m =
+data Env m =
   Env
-    { envVars :: Map Identifier (Value m)
+    { envVars :: !(Map Identifier (Value m))
+    , envRoot :: Env m
     }
 
 emptyEnv :: Env m
-emptyEnv = Env mempty
+emptyEnv = Env mempty emptyEnv
 
 instance Semigroup (Env m) where
-  a <> b = Env { envVars = envVars a <> envVars b }
+  a <> b = Env
+            { envVars = envVars a <> envVars b
+            , envRoot = envRoot b
+            }
 
 instance Monoid (Env m) where
-  mempty = Env mempty
+  mempty = emptyEnv
 
 data Context m =
   Context
     { contextEncode :: Text -> m Encoded
+    , contextLoadTemplateFile :: Text -> m (Maybe Text)
     }
 
 defContext :: Applicative m => Context m
 defContext =
   Context
     { contextEncode = pure . Encoded
+    , contextLoadTemplateFile = const $ pure Nothing
     }
 
 data Scalar
@@ -82,8 +90,8 @@ traverseValue p v = p v
 
 instance Show (Value m) where
   show (ScalarV s) = show s
-  show (ListV xs) = show xs
-  show (DictV m) = show m
+  show (ListV xs) = "ListV " ++ show xs
+  show (DictV m) = "DictV " ++ show (Map.toAscList m)
   show (NativeV {}) = "<<native>>"
   show (ProcedureV {}) = "<<procedure>>"
   show (TestV {}) = "<<test>>"
@@ -204,14 +212,33 @@ newtype Filter m = NativeFilter { runFilter :: FilterFunc m }
 data NativeObject m =
   NativeObject
     { nativeObjectGetFieldNames :: m [Scalar]
-    , nativeObjectGetField :: Value m -> m (Maybe (Value m))
+    , nativeObjectGetField :: Scalar -> m (Maybe (Value m))
     , nativeObjectGetAttribute :: Identifier -> m (Maybe (Value m))
     , nativeObjectStringified :: m Text
     , nativeObjectEncoded :: m Encoded
     , nativeObjectAsList :: m (Maybe [Value m])
-    , nativeObjectCall :: Maybe (NativeObject m -> [(Maybe Identifier, Value m)] -> m (Either RuntimeError (Value m)))
-    , nativeObjectEq :: NativeObject m -> NativeObject m -> m (Either RuntimeError Bool)
+    , nativeObjectCall :: Maybe
+                            (NativeObject m
+                              -> [(Maybe Identifier, Value m)]
+                              -> m (Either RuntimeError (Value m))
+                            )
+    , nativeObjectEq :: NativeObject m
+                     -> NativeObject m
+                     -> m (Either RuntimeError Bool)
     }
+
+nativeObjectAsDict :: Monad m
+                   => NativeObject m
+                   -> m (Maybe (Map Scalar (Value m)))
+nativeObjectAsDict o = do
+  fieldNames <- nativeObjectGetFieldNames o
+  case fieldNames of
+    [] -> pure Nothing
+    keys -> do
+      pairs <- mapM makePair keys
+      pure . Just $ Map.fromList pairs
+  where
+    makePair k = (k,) . fromMaybe NoneV <$> nativeObjectGetField o k
 
 (-->) :: obj -> (obj -> obj -> a) -> a
 obj --> field = field obj obj
@@ -237,6 +264,9 @@ instance IsString (Value m) where
 
 class ToScalar a where
   toScalar :: a -> Scalar
+
+instance ToScalar Scalar where
+  toScalar = id
 
 instance ToScalar () where
   toScalar () = NoneScalar
@@ -324,6 +354,9 @@ class FromValue a m where
 instance Applicative m => FromValue (Value m) m where
   fromValue = pure . Right
 
+instance Applicative m => FromValue Scalar m where
+  fromValue = pure . asScalarVal
+
 instance Applicative m => FromValue Text m where
   fromValue = pure . asTextVal
 
@@ -352,6 +385,11 @@ instance (Monad m, FromValue a m) => FromValue [a] m where
     items :: [Value m] <- eitherExceptM (asListVal x)
     mapM (eitherExceptM . fromValue) items
 
+instance (Monad m, FromValue a m) => FromValue (Map Scalar a) m where
+  fromValue x = runExceptT $ do
+    items :: Map Scalar (Value m) <- eitherExceptM (asDictVal x)
+    Map.fromList <$> mapM (\(k, v) -> (k,) <$> eitherExceptM (fromValue v)) (Map.toList items)
+
 --------------------------------------------------------------------------------
 -- ToValue
 --------------------------------------------------------------------------------
@@ -365,6 +403,9 @@ instance ToValue (Value m) m where
 --------------------------------------------------------------------------------
 -- ToValue Scalar instances
 --------------------------------------------------------------------------------
+
+instance ToValue Scalar a where
+  toValue = ScalarV
 
 instance ToValue () a where
   toValue = ScalarV . toScalar
@@ -567,10 +608,12 @@ instance Applicative m => ToValue (Value m -> Value m -> Value m -> Value m -> V
 -- Procedure helpers
 --------------------------------------------------------------------------------
 
-eitherExcept :: Monad m => Either e a -> ExceptT e m a
+eitherExcept :: (Monad m, MonadError e (t m))
+             => Either e a -> t m a
 eitherExcept = either throwError pure
 
-eitherExceptM :: Monad m => m (Either e a) -> ExceptT e m a
+eitherExceptM :: (Monad m, MonadError e (t m), MonadTrans t)
+              => m (Either e a) -> t m a
 eitherExceptM = (>>= eitherExcept) . lift
 
 resolveArgs :: Maybe Text
@@ -669,6 +712,15 @@ asListVal (NativeV n) =
     nativeObjectAsList n
 asListVal x = pure . Left $ TagError Nothing (Just "list") (Just . tagNameOf $ x)
 
+asDictVal :: Monad m => Value m -> m (Either RuntimeError (Map Scalar (Value m)))
+asDictVal (DictV a) = pure $ Right a
+asDictVal (NativeV n) =
+  maybe
+    (Left $ TagError Nothing (Just "dict") (Just "non-dict native object"))
+    Right <$>
+    nativeObjectAsDict n
+asDictVal x = pure . Left $ TagError Nothing (Just "dict") (Just . tagNameOf $ x)
+
 asTextVal :: Value m -> Either RuntimeError Text
 asTextVal (StringV a) = Right a
 asTextVal (EncodedV (Encoded a)) = Right a
@@ -676,6 +728,10 @@ asTextVal (IntV a) = Right (Text.show a)
 asTextVal (FloatV a) = Right (Text.show a)
 asTextVal NoneV = Right ""
 asTextVal x = Left $ TagError Nothing (Just "string") (Just . tagNameOf $ x)
+
+asScalarVal :: Value m -> Either RuntimeError Scalar
+asScalarVal (ScalarV a) = Right a
+asScalarVal x = Left $ TagError Nothing (Just "scalar") (Just . tagNameOf $ x)
 
 intFunc :: (Monad m, ToValue a m)
          => (Integer -> Either RuntimeError a)

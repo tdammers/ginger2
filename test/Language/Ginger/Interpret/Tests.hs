@@ -9,7 +9,7 @@ module Language.Ginger.Interpret.Tests
 where
 
 import Control.Monad.Identity
-import Control.Monad.State (get)
+import Control.Monad.State (gets)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Char (isControl, isSpace, isAlpha, isAlphaNum, chr)
@@ -254,6 +254,41 @@ tests = testGroup "Language.Ginger.Interpret"
                                 pR = p - pL
                             in StringV $ Text.replicate pL " " <> t <> Text.replicate pR " "
                       )
+        , testProperty "round" $
+            prop_eval
+              (\(PositiveInt i) ->
+                  FilterE
+                    (FloatLitE $ fromIntegral i / 10)
+                    (VarE "round")
+                    []
+                    [("precision", IntLitE 0), ("method", StringLitE "floor")]
+              )
+              (\(PositiveInt i) ->
+                  FloatV . fromIntegral $ (i `div` 10 :: Integer)
+              )
+        , testProperty "round (precision 2, floor)" $
+            prop_eval
+              (\(PositiveInt i) ->
+                  FilterE
+                    (FloatLitE $ fromIntegral i / 1000)
+                    (VarE "round")
+                    []
+                    [("precision", IntLitE 2), ("method", StringLitE "floor")]
+              )
+              (\(PositiveInt i) ->
+                  FloatV $ fromIntegral (i `div` 10 :: Integer) / 100
+              )
+
+        , testProperty "items" $
+            prop_eval
+              (\pairs ->
+                  FilterE
+                    (DictE [ (StringLitE k, StringLitE v) | (ArbitraryText k, ArbitraryText v) <- pairs ])
+                    (VarE "items")
+                    [] []
+              )
+              (\pairs -> ListV [ ListV [StringV k, StringV v] | (ArbitraryText k, ArbitraryText v) <- Map.toAscList . Map.fromList $ pairs ])
+
         , testProperty "batch" $
             prop_eval
               (\(PositiveInt i, PositiveInt j) -> FilterE (ListE (replicate (i * j) NoneE)) (VarE "batch") [IntLitE $ fromIntegral j] [])
@@ -1094,7 +1129,7 @@ prop_callEcho body =
       resultDirect = runGingerIdentityEither $
                       eval body'
       resultCall = runGingerIdentityEither $ do
-                      env <- get
+                      env <- gets evalEnv
                       setVar "f" $
                         ProcedureV $
                           GingerProcedure env [] $ CallE (VarE "caller") [] []

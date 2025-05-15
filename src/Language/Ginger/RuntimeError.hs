@@ -23,6 +23,11 @@ data RuntimeError
   | NumericError
       (Maybe Text) -- ^ Identifier / object / context
       (Maybe Text) -- ^ Error description
+  | TemplateFileNotFoundError
+      Text -- ^ Template name
+  | TemplateParseError
+      (Maybe Text) -- ^ Template name
+      (Maybe Text) -- ^ Error message
   | FatalError
       Text
   deriving (Show, Eq)

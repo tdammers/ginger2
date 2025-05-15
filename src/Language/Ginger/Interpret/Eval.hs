@@ -492,8 +492,22 @@ concatValues a b = case (a, b) of
     yStr <- stringify y
     pure . StringV $ xStr <> yStr
 
-evalT :: LoadedTemplate m -> GingerT m (Value m)
-evalT _t = undefined
+evalT :: Monad m => LoadedTemplate m -> GingerT m (Value m)
+evalT t = do
+  let body = getEffectiveBody t
+  loadVars t
+  evalS body
+  where
+    getEffectiveBody t' =
+      case loadedTemplateMain t' of
+        LoadedTemplateBody s -> s
+        LoadedTemplateParent p -> getEffectiveBody p
+    loadVars t' = do
+      case loadedTemplateMain t' of
+          LoadedTemplateBody _ -> pure ()
+          LoadedTemplateParent p -> loadVars p
+      setVars $ loadedTemplateExports t'
+      
 
 evalS :: Monad m => Statement -> GingerT m (Value m)
 evalS (ImmediateS enc) = pure (EncodedV enc)

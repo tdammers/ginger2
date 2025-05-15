@@ -7,26 +7,32 @@ module Language.Ginger.Parse.Tests
 where
 
 import Data.Text (Text)
+import qualified Data.Text as Text
+import qualified Data.Text.Lazy as LText
+import qualified Data.Text.Lazy.Builder as Builder
 import Test.Tasty
 import Test.Tasty.HUnit
+import Test.Tasty.QuickCheck
 import Text.Megaparsec (eof)
 
 import Language.Ginger.AST
 import Language.Ginger.Parse
+import Language.Ginger.Render
 
 tests :: TestTree
 tests = testGroup "Language.Ginger.Parse"
   [ testGroup "Expr"
-    [ testGroup "Simple"
+    [ testProperty "roundTrip" (prop_parserRoundTrip expr)
+    , testGroup "Simple"
       [ testGroup "StringLitE"
         [ testCase "simple (double-quoted)" $
             test_parser expr "\"Hello\"" (StringLitE "Hello")
         , testCase "simple (single-quoted)" $
             test_parser expr "'Hello'" (StringLitE "Hello")
         , testCase "with escapes (double-quoted)" $
-            test_parser expr "\"Hello\\\n\\\"world\\\"\"" (StringLitE "Hello\n\"world\"")
+            test_parser expr "\"Hello\\n\\\"world\\\"\"" (StringLitE "Hello\n\"world\"")
         , testCase "with escapes (single-quoted)" $
-            test_parser expr "'Hello\\\n\\'world\\''" (StringLitE "Hello\n'world'")
+            test_parser expr "'Hello\\n\\'world\\''" (StringLitE "Hello\n'world'")
         ]
       , testGroup "IntLitE"
         [ testCase "IntLitE positive" $
@@ -242,7 +248,8 @@ tests = testGroup "Language.Ginger.Parse"
             )
       ]
   , testGroup "Statement"
-    [ testGroup "ImmediateS"
+    [ testProperty "roundTrip" (prop_parserRoundTrip statement)
+    , testGroup "ImmediateS"
       [ testCase "plain immediate" $
           test_parser statement
             "Hello, world!"
@@ -496,6 +503,18 @@ test_parser p input expected =
 
 test_parserEx :: (Eq a, Show a) => P a -> Text -> (Either String a) -> Assertion
 test_parserEx p input expected = do
-  assertEqual "" expected actual
+  assertBool
+    ("expected:\n" ++ either id show expected ++ "\n" ++
+     "actual:\n" ++ either id show actual)
+    (expected == actual)
   where
     actual = parseGinger (p <* eof) "<input>" input
+
+prop_parserRoundTrip :: (Eq a, Show a, Arbitrary a, RenderSyntax a) => P a -> a -> Property
+prop_parserRoundTrip p v =
+  let src = LText.toStrict . Builder.toLazyText $ renderSyntax v
+      expected = Right v
+      actual = parseGinger (p <* eof) "<input>" src
+  in
+    counterexample (Text.unpack src) $
+    expected === actual

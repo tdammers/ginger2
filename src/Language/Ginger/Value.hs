@@ -49,10 +49,12 @@ instance Semigroup (Env m) where
 instance Monoid (Env m) where
   mempty = emptyEnv
 
+type TemplateLoader m = Text -> m (Maybe Text)
+
 data Context m =
   Context
     { contextEncode :: Text -> m Encoded
-    , contextLoadTemplateFile :: Text -> m (Maybe Text)
+    , contextLoadTemplateFile :: TemplateLoader m
     }
 
 defContext :: Applicative m => Context m

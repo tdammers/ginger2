@@ -27,6 +27,7 @@ library
                    , Language.Ginger.Interpret.Type
                    , Language.Ginger.Interpret.Eval
                    , Language.Ginger.Parse
+                   , Language.Ginger.Render
                    , Language.Ginger.RuntimeError
     -- other-modules:
     -- other-extensions:

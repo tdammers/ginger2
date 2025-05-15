@@ -22,6 +22,8 @@ import Data.Monoid (Any (..))
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as Text
+import qualified Data.Text.Lazy as LText
+import qualified Data.Text.Lazy.Builder as Builder
 import qualified Data.Text.Encoding as Text
 import Data.Word (Word8, Word16, Word32, Word64)
 import Test.Tasty
@@ -33,6 +35,7 @@ import Language.Ginger.Interpret
 import Language.Ginger.RuntimeError
 import Language.Ginger.TestUtils
 import Language.Ginger.Value
+import Language.Ginger.Render
 
 tests :: TestTree
 tests = testGroup "Language.Ginger.Interpret"
@@ -644,16 +647,12 @@ tests = testGroup "Language.Ginger.Interpret"
     , testGroup "FilterS"
       [
       ]
+    , testGroup "IncludeS"
+      [ testProperty "just an include" prop_include
+      , testProperty "include into" prop_includeInto
+      ]
     ]
   ]
-
-runGingerIdentity :: GingerT Identity a -> a
-runGingerIdentity action =
-  either (error . show) id $ runGingerIdentityEither action
-
-runGingerIdentityEither :: GingerT Identity a -> Either RuntimeError a
-runGingerIdentityEither action =
-  runIdentity (runGingerT action defContext defEnv)
 
 prop_noBottoms :: (Eval Identity a, Arbitrary a) => a -> Bool
 prop_noBottoms e =
@@ -774,7 +773,7 @@ prop_intDivByZero i =
                   eval (BinaryE BinopIntDiv (IntLitE i) (IntLitE 0))
   in
     i /= 0 ==>
-    result === Left (NumericError (Just "//") (Just "division by zero"))
+    result === leftPRE (NumericError (Just "//") (Just "division by zero"))
 
 prop_divByZero :: Double -> Property
 prop_divByZero d =
@@ -783,14 +782,14 @@ prop_divByZero d =
                   eval (BinaryE BinopDiv (FloatLitE d) (FloatLitE 0))
   in
     d /= 0 ==>
-    result === Left (NumericError (Just "/") (Just "division by zero"))
+    result === leftPRE (NumericError (Just "/") (Just "division by zero"))
 
 prop_divToNaN :: Property
 prop_divToNaN =
   let result = runGingerIdentityEither $ do
                   eval (BinaryE BinopDiv (FloatLitE 0) (FloatLitE 0))
   in
-    result === Left (NumericError (Just "/") (Just "not a number"))
+    result === leftPRE (NumericError (Just "/") (Just "not a number"))
 
 prop_literal :: ToValue a Identity => (a -> Expr) -> a -> Property
 prop_literal = prop_literalWith id
@@ -823,7 +822,7 @@ prop_varNeg name1 val1 name2 =
       resultG = runGingerIdentityEither (setVar name1 (toValue val1) >> eval expr)
   in
     name1 /= name2 ==>
-    resultG === Left (NotInScopeError (Just $ identifierName name2))
+    resultG === leftPRE (NotInScopeError (Just $ identifierName name2))
 
 prop_nativeNullary :: Identifier -> Integer -> Property
 prop_nativeNullary varName constVal =
@@ -1171,3 +1170,31 @@ prop_callMacro body =
     label cat $
     either (const True) (not . getAny . traverseValue (Any . isProcedure)) resultDirect ==>
     resultCall === resultDirect
+
+prop_include :: ArbitraryText -> Statement -> Property
+prop_include (ArbitraryText name) body =
+  let bodySrc = LText.toStrict . Builder.toLazyText $ renderSyntax body
+      resultDirect = runGingerIdentityEither $
+                      eval body
+      loader = mockLoader [(name, bodySrc)]
+      resultInclude = runGingerIdentityEitherWithLoader loader $
+                        eval (IncludeS (StringLitE name) RequireMissing WithContext)
+  in
+    counterexample ("SOURCE:\n" ++ Text.unpack bodySrc) $
+    resultInclude === resultDirect
+
+prop_includeInto :: ArbitraryText -> Statement -> Statement -> Property
+prop_includeInto (ArbitraryText name) body parent =
+  let bodySrc = LText.toStrict . Builder.toLazyText $ renderSyntax body
+      resultDirect = runGingerIdentityEither $
+                      eval (GroupS [ body, parent ])
+      loader = mockLoader [(name, bodySrc)]
+      resultInclude = runGingerIdentityEitherWithLoader loader $
+                        eval (
+                          GroupS
+                            [ IncludeS (StringLitE name) RequireMissing WithContext
+                            , parent
+                            ])
+  in
+    counterexample ("SOURCE:\n" ++ Text.unpack bodySrc) $
+    resultInclude === resultDirect

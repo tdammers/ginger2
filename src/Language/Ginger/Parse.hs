@@ -9,13 +9,15 @@ module Language.Ginger.Parse
 , template
 , parseGinger
 , parseGingerFile
+, mapLeft
 )
 where
 
-import Control.Monad (void, when)
+import Control.Monad (void, when, replicateM)
 import Control.Monad.Reader (Reader, runReader, ask, asks)
-import Data.Char (isAlphaNum, isAlpha, isDigit, isSpace)
+import Data.Char (isAlphaNum, isAlpha, isDigit, isSpace, chr)
 import Data.List.NonEmpty (NonEmpty (..))
+import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
@@ -149,39 +151,61 @@ identifier = Identifier <$> identifierRaw
 stringLit :: P Text
 stringLit =
   choice
-    [ char q *> (Text.pack <$> many (stringLitChar q)) <* char q <* space
+    [ char q *> (Text.pack . catMaybes <$> many (stringLitChar q)) <* char q <* space
     | q <- ['"', '\'']
     ]
 
-stringLitChar :: Char -> P Char
-stringLitChar q = escapedStringLitChar <|> plainStringLitChar q
+stringLitChar :: Char -> P (Maybe Char)
+stringLitChar q =
+  escapedStringLitChar <|> (Just <$> plainStringLitChar q)
 
-escapedStringLitChar :: P Char
+escapedStringLitChar :: P (Maybe Char)
 escapedStringLitChar = do
   void $ char '\\'
   c <- satisfy (const True)
   case c of
-    'n' -> pure '\n'
-    'r' -> pure '\r'
-    't' -> pure '\t'
-    'v' -> pure '\v'
-    'b' -> pure '\b'
-    _ -> pure c
+    '0' -> pure . Just $ '\0'
+    'a' -> pure . Just $ '\a'
+    'b' -> pure . Just $ '\b'
+    'f' -> pure . Just $ '\f'
+    'n' -> pure . Just $ '\n'
+    'r' -> pure . Just $ '\r'
+    't' -> pure . Just $ '\t'
+    'v' -> pure . Just $ '\v'
+    '"' -> pure . Just $ '"'
+    '\'' -> pure . Just $ '\''
+    '\\' -> pure . Just $ '\\'
+    '&' -> pure Nothing
+    'x' -> hexEscape 2
+    'u' -> hexEscape 4
+    'U' -> hexEscape 8
+    t -> unexpected (Tokens $ t :| [])
+  where
+    hexEscape n = do
+      ns <- replicateM n hexChar
+      pure . Just . chr $ read ("0x" ++ ns)
+
+hexChar :: P Char
+hexChar = satisfy isHexChar
+
+isHexChar :: Char -> Bool
+isHexChar x =
+  isDigit x ||
+  (x >= 'a' && x <= 'z') || 
+  (x >= 'A' && x <= 'Z')
 
 plainStringLitChar :: Char -> P Char
 plainStringLitChar q = satisfy (`notElem` ['\\', q])
 
 intLit :: P Integer
 intLit = do
-  read <$> intDigits
+  read <$> (intDigits <* space)
 
 intDigits :: P String
 intDigits = do
   sign <- option "" $ "-" <$ char '-'
-  x <- satisfy (\c -> isDigit c && c /= '0')
-  xs <- many digit
-  space
-  pure (sign ++ (x : xs))
+  str <- some digit
+  pure (sign ++ str)
 
 floatLit :: P Double
 floatLit = do
@@ -199,6 +223,7 @@ floatLit = do
   e <- option "" $ do
     void $ char 'E' <|> char 'e'
     ('e' :) <$> intDigits
+  space
   pure . read $ m ++ e
 
 
@@ -251,7 +276,7 @@ argsSig = parenthesized $ argSig `sepBy` comma
 argSig :: P (Identifier, Maybe Expr)
 argSig =
   (,) <$> identifier
-      <*> optional (operator "=" *> expr)
+      <*> optional (chunk "=" *> space *> expr)
   
 
 --------------------------------------------------------------------------------
@@ -379,7 +404,7 @@ memberAccessExpr = do
               <|> pure lhs
 
     dotTail lhs = do
-      operator "."
+      chunk "." *> space
       selector <- StringLitE <$> identifierRaw
       exprTail (DotE lhs selector)
 
@@ -392,7 +417,7 @@ memberAccessExpr = do
       exprTail (CallE lhs posArgs kwArgs)
 
     filterTail lhs = do
-      operator "|"
+      chunk "|" *> space
       callable <- simpleExpr
       (posArgs, kwArgs) <- option ([], []) $ callArgs
       exprTail (FilterE lhs callable posArgs kwArgs)
@@ -415,7 +440,7 @@ simpleExpr = choice
   , DictE <$> dict
   , FloatLitE <$> try floatLit
   , IntLitE <$> try intLit
-  , operator "-" *> (NegateE <$> (parenthesized expr <|> (VarE <$> identifier)))
+  , chunk "-" *> space *> (NegateE <$> (parenthesized expr <|> (VarE <$> identifier)))
   , BoolE True <$ (keyword "true" <|> keyword "True")
   , BoolE False <$ (keyword "false" <|> keyword "False")
   , NoneE <$ (keyword "none" <|> keyword "None")
@@ -637,7 +662,7 @@ filterStatement = do
     makeFilter (filteree, (args, kwargs)) body = FilterS filteree args kwargs body
 
 setPair :: P (Identifier, Expr)
-setPair = (,) <$> identifier <* operator "=" <*> expr
+setPair = (,) <$> identifier <* chunk "=" <* space <*> expr
 
 setStatement :: P Statement
 setStatement = try $ do
@@ -647,7 +672,7 @@ setBlockStatement :: P Statement
 setBlockStatement = do
   withFlow "set" setBlockHeader setBlockBody makeSetBlock
   where
-    setBlockHeader = (,) <$> identifier <*> optional (keyword "|" *> expr)
+    setBlockHeader = (,) <$> identifier <*> optional (chunk "|" *> space *> expr)
     setBlockBody = statement
     makeSetBlock (name, filterMay) body =
       SetBlockS name body filterMay

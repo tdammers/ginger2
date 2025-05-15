@@ -4,13 +4,17 @@
 module Language.Ginger.TestUtils
 where
 
-import Data.Text (Text)
-import qualified Data.Text as Text
+import Control.Monad.Identity
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
-import Test.Tasty.QuickCheck
 import Data.Maybe (listToMaybe)
+import Data.Text (Text)
+import qualified Data.Text as Text
+import qualified Data.Map.Strict as Map
+import Test.Tasty.QuickCheck
 
+import Language.Ginger.Interpret
+import Language.Ginger.RuntimeError
 import Language.Ginger.Value
 
 newtype ArbitraryText = ArbitraryText Text
@@ -74,4 +78,44 @@ justNonzero n = Just n
 justPositive :: (Eq a, Ord a, Num a) => a -> Maybe a
 justPositive n | n > 0 = Just n
 justPositive _ = Nothing  
+
+leftPRE :: RuntimeError -> Either PrettyRuntimeError a
+leftPRE = Left . PrettyRuntimeError
+
+mapLeft :: (a -> b) -> Either a c -> Either b c
+mapLeft f (Left x) = Left (f x)
+mapLeft _ (Right x) = Right x
+
+newtype PrettyRuntimeError = PrettyRuntimeError RuntimeError
+  deriving (Eq)
+
+instance Show PrettyRuntimeError where
+  show (PrettyRuntimeError (TemplateParseError _ (Just err))) = Text.unpack err
+  show (PrettyRuntimeError e) = show e
+
+runGingerIdentity :: GingerT Identity a -> a
+runGingerIdentity action =
+  either (error . show) id $ runGingerIdentityEither action
+
+runGingerIdentityEither :: GingerT Identity a -> Either PrettyRuntimeError a
+runGingerIdentityEither action =
+  mapLeft PrettyRuntimeError $ runIdentity (runGingerT action defContext defEnv)
+
+runGingerIdentityWithLoader :: TemplateLoader Identity
+                                  -> GingerT Identity a
+                                  -> a
+runGingerIdentityWithLoader loader action =
+  either (error . show) id $ runGingerIdentityEitherWithLoader loader action
+
+runGingerIdentityEitherWithLoader :: TemplateLoader Identity
+                                  -> GingerT Identity a
+                                  -> Either PrettyRuntimeError a
+runGingerIdentityEitherWithLoader loader action =
+  mapLeft PrettyRuntimeError $ runIdentity (runGingerT action defContext { contextLoadTemplateFile = loader } defEnv)
+
+mockLoader :: [(Text, Text)] -> TemplateLoader Identity
+mockLoader entries name =
+  pure $ Map.lookup name tpls
+  where
+    tpls = Map.fromList entries
 

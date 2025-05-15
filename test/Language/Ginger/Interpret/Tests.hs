@@ -650,6 +650,11 @@ tests = testGroup "Language.Ginger.Interpret"
     , testGroup "IncludeS"
       [ testProperty "just an include" prop_include
       , testProperty "include into" prop_includeInto
+      , testProperty "include macro" prop_includeMacro
+      , testProperty "include macro without context" prop_includeMacroWithoutContext
+      , testProperty "include set" prop_includeSet
+      , testProperty "include without context" prop_includeWithoutContext
+      , testProperty "include with context" prop_includeWithContext
       ]
     ]
   ]
@@ -1198,3 +1203,93 @@ prop_includeInto (ArbitraryText name) body parent =
   in
     counterexample ("SOURCE:\n" ++ Text.unpack bodySrc) $
     resultInclude === resultDirect
+
+prop_includeMacro :: ArbitraryText -> Identifier -> Statement -> Property
+prop_includeMacro (ArbitraryText name) macroName body =
+  let bodySrc = LText.toStrict . Builder.toLazyText $ renderSyntax $
+                  MacroS macroName [] body
+      resultDirect = runGingerIdentityEither $
+                      eval body
+      loader = mockLoader [(name, bodySrc)]
+      resultInclude = runGingerIdentityEitherWithLoader loader $
+                        eval (
+                          GroupS
+                            [ IncludeS (StringLitE name) RequireMissing WithContext
+                            , CallS macroName [] [] (InterpolationS NoneE)
+                            ]
+                        )
+  in
+    counterexample ("SOURCE:\n" ++ Text.unpack bodySrc) $
+    resultInclude === resultDirect
+
+prop_includeMacroWithoutContext :: ArbitraryText -> Identifier -> Statement -> Property
+prop_includeMacroWithoutContext (ArbitraryText name) macroName body =
+  let bodySrc = LText.toStrict . Builder.toLazyText $ renderSyntax $
+                  MacroS macroName [] body
+      resultDirect = runGingerIdentityEither $
+                      eval body
+      loader = mockLoader [(name, bodySrc)]
+      resultInclude = runGingerIdentityEitherWithLoader loader $
+                        eval (
+                          GroupS
+                            [ IncludeS (StringLitE name) RequireMissing WithoutContext
+                            , CallS macroName [] [] (InterpolationS NoneE)
+                            ]
+                        )
+  in
+    counterexample ("SOURCE:\n" ++ Text.unpack bodySrc) $
+    name /= identifierName macroName ==>
+    resultInclude === resultDirect
+
+prop_includeSet :: ArbitraryText -> Identifier -> ArbitraryText -> Property
+prop_includeSet (ArbitraryText name) varName (ArbitraryText varValue) =
+  let bodySrc = LText.toStrict . Builder.toLazyText $ renderSyntax $
+                  SetS varName (StringLitE varValue)
+      resultDirect = runGingerIdentityEither $
+                      eval (StringLitE varValue)
+      loader = mockLoader [(name, bodySrc)]
+      resultInclude = runGingerIdentityEitherWithLoader loader $
+                        eval (
+                          GroupS
+                            [ IncludeS (StringLitE name) RequireMissing WithContext
+                            , InterpolationS (VarE varName)
+                            ]
+                        )
+  in
+    counterexample ("SOURCE:\n" ++ Text.unpack bodySrc) $
+    resultInclude === resultDirect
+
+prop_includeWithContext :: ArbitraryText -> Identifier -> ArbitraryText -> Property
+prop_includeWithContext (ArbitraryText name) varName (ArbitraryText varValue) =
+  let bodySrc = LText.toStrict . Builder.toLazyText $ renderSyntax $
+                  InterpolationS (VarE varName)
+      resultDirect = runGingerIdentityEither $
+                      eval (StringLitE varValue)
+      loader = mockLoader [(name, bodySrc)]
+      resultInclude = runGingerIdentityEitherWithLoader loader $
+                        eval (
+                          GroupS
+                            [ SetS varName (StringLitE varValue)
+                            , IncludeS (StringLitE name) RequireMissing WithContext
+                            ]
+                        )
+  in
+    counterexample ("SOURCE:\n" ++ Text.unpack bodySrc) $
+    resultInclude === resultDirect
+
+prop_includeWithoutContext :: ArbitraryText -> Identifier -> ArbitraryText -> Property
+prop_includeWithoutContext (ArbitraryText name) varName (ArbitraryText varValue) =
+  let bodySrc = LText.toStrict . Builder.toLazyText $ renderSyntax $
+                  InterpolationS (VarE varName)
+      loader = mockLoader [(name, bodySrc)]
+      resultInclude = runGingerIdentityEitherWithLoader loader $
+                        eval (
+                          GroupS
+                            [ SetS varName (StringLitE varValue)
+                            , IncludeS (StringLitE name) RequireMissing WithoutContext
+                            ]
+                        )
+      expected = Left . PrettyRuntimeError $ NotInScopeError (Just $ identifierName varName)
+  in
+    counterexample ("SOURCE:\n" ++ Text.unpack bodySrc) $
+    resultInclude === expected

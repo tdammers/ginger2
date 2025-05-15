@@ -40,7 +40,7 @@ import Control.Monad.Except
   , throwError
   )
 import Control.Monad.Reader (ask , asks)
-import Control.Monad.State (gets)
+import Control.Monad.State (gets, get, modify)
 import Control.Monad.Trans (lift)
 import qualified Data.ByteString.Base64 as Base64
 import Data.Map.Strict (Map)
@@ -567,7 +567,13 @@ evalS (IncludeS nameE missingPolicy contextPolicy) = do
             case contextPolicy of
               WithContext -> id
               WithoutContext -> withoutContext
-      scopeModifier $ evalT template
+      (result, env') <- scopeModifier $ do
+        result <- evalT template
+        env' <- get
+        pure $ (result, env')
+      modify (env' <>)
+      return result
+
 evalS (ExtendsS _nameE) = do
   throwError $ NotImplementedError (Just "extends")
 evalS (BlockS _name _block) = do

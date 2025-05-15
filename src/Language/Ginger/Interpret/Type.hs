@@ -51,6 +51,13 @@ data EvalState m =
     , evalLoadedTemplates :: !(Map Text (CachedTemplate m))
     }
 
+instance Semigroup (EvalState m) where
+  a <> b =
+    EvalState
+      { evalEnv = evalEnv a <> evalEnv b
+      , evalLoadedTemplates = evalLoadedTemplates a <> evalLoadedTemplates b
+      }
+
 data CachedTemplate m
   = CachedTemplate !(LoadedTemplate m)
   | MissingTemplate

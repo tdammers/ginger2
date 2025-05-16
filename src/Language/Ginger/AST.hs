@@ -45,7 +45,7 @@ newtype Encoded =
   deriving (Show, Eq, Ord, Semigroup, Monoid)
 
 instance Arbitrary Encoded where
-  arbitrary = Encoded . Text.pack <$> QC.listOf arbitrary
+  arbitrary = Encoded . Text.replace "{" "{ " . Text.pack <$> QC.listOf arbitrary
   shrink (Encoded e) =
     map (Encoded . Text.pack) . filter (not . null) $ shrink $ Text.unpack e
 

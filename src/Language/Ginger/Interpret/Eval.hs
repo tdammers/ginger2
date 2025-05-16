@@ -567,12 +567,7 @@ evalS (IncludeS nameE missingPolicy contextPolicy) = do
             case contextPolicy of
               WithContext -> id
               WithoutContext -> withoutContext
-      (result, env') <- scopeModifier $ do
-        result <- evalT template
-        env' <- get
-        pure $ (result, env')
-      modify (env' <>)
-      return result
+      scopeModifier $ evalT template
 
 evalS (ExtendsS _nameE) = do
   throwError $ NotImplementedError (Just "extends")

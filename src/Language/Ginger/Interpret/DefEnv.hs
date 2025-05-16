@@ -29,12 +29,18 @@ import Data.Text (Text)
 defEnv :: Monad m => Env m
 defEnv =
   emptyEnv
-    { envVars = defEnvVars
+    { envVars = mempty
     , envRoot = defEnv
     }
 
-defEnvVars :: forall m. Monad m => Map Identifier (Value m)
-defEnvVars = Map.fromList
+defContext :: Monad m => Context m
+defContext =
+  emptyContext
+    { contextVars = defVars
+    }
+
+defVars :: forall m. Monad m => Map Identifier (Value m)
+defVars = Map.fromList
   [ ( "jinja-tests"
     , dictV
         [ ("defined", TestV $ NativeTest isDefined)
@@ -89,8 +95,9 @@ isFilter expr _ ctx env = do
   result <- runGingerT (evalE expr) ctx env
   case result of
     Right (StringV name) -> do
-      exists <-
-        pure . isJust $ Map.lookup (Identifier name) (envVars env)
+      let exists =
+            isJust (Map.lookup (Identifier name) (envVars env)) ||
+            isJust (Map.lookup (Identifier name) (contextVars ctx))
       existsExt <-
         runGingerT
           (asBool "" =<< eval (InE (StringLitE name) (VarE "jinja-filters")))
@@ -124,10 +131,13 @@ isTest expr _ ctx env = do
     Right NoneV -> pure . Right $ True
     Right BoolV {} -> pure . Right $ True
     Right (StringV name) -> do
-      let testsVars = case Map.lookup "jinja-tests" (envVars env) of
+      let testsVars = case Map.lookup "jinja-tests" (contextVars ctx) of
             Just (DictV xs) -> xs
             _ -> mempty
-      let vars = Map.mapKeys (toScalar . identifierName) (envVars env) <> testsVars
+      let vars =
+            Map.mapKeys (toScalar . identifierName) (contextVars ctx) <>
+            Map.mapKeys (toScalar . identifierName) (envVars env) <>
+            testsVars
       let existing = Map.lookup (toScalar name) vars
       case existing of
         Just a -> pure . Right $ isCallable' a
@@ -187,8 +197,10 @@ defaultFilter expr args ctx env = do
 
 isDefined :: Monad m => TestFunc m
 isDefined _ (_:_) _ _ = pure $ Left $ ArgumentError (Just "defined") (Just "0") (Just "end of arguments") (Just "argument")
-isDefined (VarE name) [] _ env =
-  pure . Right $ name `Map.member` (envVars env)
+isDefined (VarE name) [] ctx env =
+  pure . Right $
+    name `Map.member` (envVars env) ||
+    name `Map.member` (contextVars ctx)
 isDefined NoneE [] _ _ = pure . Right $ True
 isDefined BoolE {} [] _ _ = pure . Right $ True
 isDefined StringLitE {} [] _ _ = pure . Right $ True

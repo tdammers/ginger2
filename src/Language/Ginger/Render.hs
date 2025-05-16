@@ -139,8 +139,18 @@ instance RenderSyntax BinaryOperator where
 renderFlow :: Builder -> Builder
 renderFlow inner = "{% " <> inner <> " %}\n"
 
+-- | Most 'Encoded's can actually be converted as-is, but if there are any
+-- curly braces, we need to handle them specially.
+renderEncoded :: Encoded -> Builder
+renderEncoded (Encoded txt) =
+  Builder.fromText .
+  Text.replace "{{" "{{'{{'}}" $
+  Text.replace "{%" "{{'{%'}}" $
+  Text.replace "{#" "{{'{#'}}" $
+  txt
+
 instance RenderSyntax Statement where
-  renderSyntax (ImmediateS (Encoded str)) = Builder.fromText str
+  renderSyntax (ImmediateS e) = renderEncoded e
   renderSyntax (InterpolationS e) = "{{ " <> renderSyntax e <> " }}"
   renderSyntax (CommentS msg) = "{# " <> Builder.fromText msg <> " #}"
   renderSyntax (ForS kMay v iteree condMay recursivity body elseBranchMay) =

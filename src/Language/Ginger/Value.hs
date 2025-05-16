@@ -55,13 +55,15 @@ data Context m =
   Context
     { contextEncode :: Text -> m Encoded
     , contextLoadTemplateFile :: TemplateLoader m
+    , contextVars :: !(Map Identifier (Value m))
     }
 
-defContext :: Applicative m => Context m
-defContext =
+emptyContext :: Applicative m => Context m
+emptyContext =
   Context
     { contextEncode = pure . Encoded
     , contextLoadTemplateFile = const $ pure Nothing
+    , contextVars = mempty
     }
 
 data Scalar

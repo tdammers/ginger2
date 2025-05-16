@@ -27,6 +27,7 @@ import Control.Monad.Reader
   ( ReaderT
   , MonadReader
   , runReaderT
+  , asks
   )
 import Control.Monad.State
   ( StateT (..)
@@ -95,7 +96,13 @@ lookupVar name =
 lookupVarMaybe :: Monad m
                => Identifier
                -> GingerT m (Maybe (Value m))
-lookupVarMaybe name = gets (Map.lookup name . envVars . evalEnv)
+lookupVarMaybe name = do
+  valEnv <- gets (Map.lookup name . envVars . evalEnv)
+  case valEnv of
+    Nothing ->
+      asks (Map.lookup name . contextVars)
+    Just val ->
+      pure $ Just val
 
 modifyEnv :: Monad m
           => (Env m -> Env m)
@@ -123,14 +130,17 @@ scoped action = do
   modifyEnv $ const (evalEnv s)
   return retval
 
+-- | Run a 'GingerT' action in a fresh environment; however, any globals set
+-- by the invoked action will be ported back to the calling environment.
 withoutContext :: Monad m
                => GingerT m a
                -> GingerT m a
 withoutContext action = do
-  s <- get
+  e <- gets evalEnv
   modifyEnv envRoot
   retval <- action
-  modifyEnv $ const (evalEnv s)
+  e' <- gets evalEnv
+  modifyEnv $ const (e' <> e)
   return retval
 
 withEnv :: Monad m

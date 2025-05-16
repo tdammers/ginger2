@@ -17,6 +17,7 @@ module Language.Ginger.Interpret
 , GingerT (..)
 , runGingerT
 , defEnv
+, defContext
 , setVar
 , lookupVar
 , lookupVarMaybe

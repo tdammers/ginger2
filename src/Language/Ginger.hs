@@ -7,6 +7,7 @@ module Language.Ginger
 , defContext
 , Env (..)
 , emptyEnv
+, defEnv
 , Eval (..)
 , evalE
 , evalS

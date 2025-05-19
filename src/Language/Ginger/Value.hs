@@ -341,6 +341,9 @@ instance (ToScalar a, ToScalar b) => ToScalar (Either a b) where
   toScalar (Left x) = toScalar x
   toScalar (Right x) = toScalar x
 
+instance ToScalar Identifier where
+  toScalar = toScalar . identifierName
+
 class FnArgValue a where
   fromArgValue :: Value m -> Either RuntimeError a
 

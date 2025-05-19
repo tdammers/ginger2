@@ -373,39 +373,39 @@ tests = testGroup "Language.Ginger.Parse"
       [ testCase "plain import" $
           test_parser statement
             "{% import 'foo.html' %}"
-            (ImportS (StringLitE "foo.html") Nothing [] RequireMissing WithoutContext)
+            (ImportS (StringLitE "foo.html") Nothing Nothing RequireMissing WithoutContext)
       , testCase "qualified import" $
           test_parser statement
             "{% import 'foo.html' as foo %}"
-            (ImportS (StringLitE "foo.html") (Just "foo") [] RequireMissing WithoutContext)
+            (ImportS (StringLitE "foo.html") (Just "foo") Nothing RequireMissing WithoutContext)
       , testCase "from import" $
           test_parser statement
             "{% from 'foo.html' import bar %}"
-            (ImportS (StringLitE "foo.html") Nothing [("bar", Nothing)] RequireMissing WithoutContext)
+            (ImportS (StringLitE "foo.html") Nothing (Just [("bar", Nothing)]) RequireMissing WithoutContext)
       , testCase "from import qualified" $
           test_parser statement
             "{% from 'foo.html' as foo import bar %}"
-            (ImportS (StringLitE "foo.html") (Just "foo") [("bar", Nothing)] RequireMissing WithoutContext)
+            (ImportS (StringLitE "foo.html") (Just "foo") (Just [("bar", Nothing)]) RequireMissing WithoutContext)
       , testCase "from import as" $
           test_parser statement
             "{% from 'foo.html' import bar as baz %}"
-            (ImportS (StringLitE "foo.html") Nothing [("bar", Just "baz")] RequireMissing WithoutContext)
+            (ImportS (StringLitE "foo.html") Nothing (Just [("bar", Just "baz")]) RequireMissing WithoutContext)
       , testCase "from import qualified as" $
           test_parser statement
             "{% from 'foo.html' as foo import bar as baz %}"
-            (ImportS (StringLitE "foo.html") (Just "foo") [("bar", Just "baz")] RequireMissing WithoutContext)
+            (ImportS (StringLitE "foo.html") (Just "foo") (Just [("bar", Just "baz")]) RequireMissing WithoutContext)
       , testCase "from import qualified as ignore missing" $
           test_parser statement
             "{% from 'foo.html' as foo import bar as baz ignore missing %}"
-            (ImportS (StringLitE "foo.html") (Just "foo") [("bar", Just "baz")] IgnoreMissing WithoutContext)
+            (ImportS (StringLitE "foo.html") (Just "foo") (Just [("bar", Just "baz")]) IgnoreMissing WithoutContext)
       , testCase "from import qualified as with context" $
           test_parser statement
             "{% from 'foo.html' as foo import bar as baz with context %}"
-            (ImportS (StringLitE "foo.html") (Just "foo") [("bar", Just "baz")] RequireMissing WithContext)
+            (ImportS (StringLitE "foo.html") (Just "foo") (Just [("bar", Just "baz")]) RequireMissing WithContext)
       , testCase "from import qualified as ignore missing with context" $
           test_parser statement
             "{% from 'foo.html' as foo import bar as baz ignore missing with context %}"
-            (ImportS (StringLitE "foo.html") (Just "foo") [("bar", Just "baz")] IgnoreMissing WithContext)
+            (ImportS (StringLitE "foo.html") (Just "foo") (Just [("bar", Just "baz")]) IgnoreMissing WithContext)
       ]
     , testGroup "ExtendsS"
       [ testCase "extends" $

@@ -222,11 +222,21 @@ instance RenderSyntax Statement where
       " " <>
       renderSyntax contextPolicy
     )
-  renderSyntax (ImportS importee aliasMay imports missingPolicy contextPolicy) =
+  renderSyntax (ImportS importee aliasMay Nothing missingPolicy contextPolicy) =
     renderFlow (
       "import " <>
       renderSyntax importee <>
       maybe "" (\alias -> " as " <> renderSyntax alias) aliasMay <>
+      renderSyntax missingPolicy <>
+      " " <>
+      renderSyntax contextPolicy
+    )
+  renderSyntax (ImportS importee aliasMay (Just imports) missingPolicy contextPolicy) =
+    renderFlow (
+      "from " <>
+      renderSyntax importee <>
+      maybe " " (\alias -> " as " <> renderSyntax alias) aliasMay <>
+      "import " <>
       renderImports imports <>
       " " <>
       renderSyntax missingPolicy <>

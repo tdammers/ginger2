@@ -699,7 +699,7 @@ wildcardImportStatement =
     ImportS
       <$> expr
       <*> optional (keyword "as" *> identifier)
-      <*> pure []
+      <*> pure Nothing
       <*> option RequireMissing (IgnoreMissing <$ keyword "ignore" <* keyword "missing")
       <*> option WithoutContext (choice
             [ WithContext <$ keyword "with" <* keyword "context"
@@ -714,7 +714,7 @@ explicitImportStatement =
       <$> expr
       <*> optional (keyword "as" *> identifier)
       <*  keyword "import"
-      <*> (do
+      <*> (Just <$> do
             notFollowedBy (choice $ map keyword ["ignore", "with", "without"])
             importPair `sepBy` comma
           )

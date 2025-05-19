@@ -119,7 +119,7 @@ setVar name val = modifyEnv (\e -> e { envVars = Map.insert name val $ envVars e
 setVars :: Monad m
         => Map Identifier (Value m)
         -> GingerT m ()
-setVars vars = modifyEnv (\e -> e { envVars = vars <> envVars e})
+setVars vars = modifyEnv (\e -> e { envVars = envVars e <> vars})
 
 scoped :: Monad m
        => GingerT m a

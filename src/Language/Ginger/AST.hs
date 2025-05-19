@@ -13,6 +13,7 @@ import qualified Test.Tasty.QuickCheck as QC
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Maybe (maybeToList)
+import Data.List (intercalate)
 
 import Debug.Trace
 
@@ -132,7 +133,7 @@ data Statement
     ImportS
       !Expr -- filename
       !(Maybe Identifier) -- local name
-      ![(Identifier, Maybe Identifier)] -- [ (imported name, local name) ]
+      !(Maybe [(Identifier, Maybe Identifier)]) -- [ (imported name, local name) ]
       !IncludeMissingPolicy !IncludeContextPolicy
   | -- | @{% extends expr %}@
     ExtendsS
@@ -160,12 +161,20 @@ data IncludeContextPolicy
   | WithoutContext
   deriving (Show, Eq, Ord, Enum, Bounded)
 
+escapeComment :: Statement -> Statement
+escapeComment (CommentS txt) =
+  case Text.splitOn "#}" txt of
+    [] -> GroupS []
+    [x] -> CommentS x
+    xs -> GroupS . intercalate [CommentS "#", CommentS "}"] . map ((:[]) . CommentS) $ xs
+escapeComment x = x
+
 instance Arbitrary Statement where
   arbitrary = arbitraryStatement mempty
   shrink (GroupS xs) = map GroupS $ shrink xs
   shrink (ImmediateS txt) = map ImmediateS $ shrink txt
   shrink (InterpolationS e) = map InterpolationS $ shrink e
-  shrink (CommentS txt) = map (CommentS . Text.pack) $ shrink $ Text.unpack txt
+  shrink (CommentS txt) = map (escapeComment . CommentS . Text.pack) $ shrink $ Text.unpack txt
   shrink (ForS keyMay val iteree condMay recur body elseBranchMay) =
     (ForS <$> pure keyMay <*> pure val <*> pure iteree <*> pure condMay <*> pure recur <*> pure body <*> shrink elseBranchMay) ++
     (ForS <$> pure keyMay <*> pure val <*> pure iteree <*> pure condMay <*> pure recur <*> shrink body <*> pure elseBranchMay) ++
@@ -242,7 +251,7 @@ arbitraryStatement defined = do
       QC.oneof
         [ ImmediateS <$> arbitrary
         , InterpolationS <$> arbitraryExpr defined
-        , CommentS . Text.strip . Text.pack <$> arbitrary
+        , escapeComment . CommentS . Text.strip . Text.pack <$> arbitrary
         , do
             let fuel' = fuel `div` 6
             keyNameMaybe <- arbitrary

@@ -34,18 +34,18 @@ import qualified Language.Ginger.Parse as Parse
 import Language.Ginger.Interpret.Type
 import Language.Ginger.Interpret.Builtins
 
-import Control.Monad (foldM, forM)
+import Control.Monad (foldM, forM, void)
 import Control.Monad.Except
   ( MonadError (..)
   , throwError
   )
 import Control.Monad.Reader (ask , asks)
-import Control.Monad.State (gets, get, modify)
+import Control.Monad.State (gets)
 import Control.Monad.Trans (lift)
 import qualified Data.ByteString.Base64 as Base64
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (listToMaybe)
+import Data.Maybe (listToMaybe, catMaybes, fromMaybe)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as Text
@@ -568,13 +568,38 @@ evalS (IncludeS nameE missingPolicy contextPolicy) = do
               WithContext -> id
               WithoutContext -> withoutContext
       scopeModifier $ evalT template
+evalS (ImportS srcE nameMay identifiers missingPolicy contextPolicy) = do
+  src <- eval srcE >>= (eitherExcept . asTextVal)
+  templateMay <- case missingPolicy of
+    RequireMissing -> Just <$> loadTemplate src
+    IgnoreMissing -> loadTemplateMaybe src
+  case templateMay of
+    Nothing ->
+      pure NoneV
+    Just template -> do
+      let scopeModifier =
+            case contextPolicy of
+              WithContext -> id
+              WithoutContext -> withoutContext
+      e' <- scoped . scopeModifier $ do
+              void $ evalT template
+              gets evalEnv
+      let vars = case identifiers of
+            Nothing ->
+              case nameMay of
+                Nothing -> envVars e'
+                Just name -> Map.singleton name (DictV . Map.mapKeys toScalar $ envVars e')
+            Just importees -> Map.fromList . catMaybes $
+              [ (fromMaybe varName alias,) <$> Map.lookup varName (envVars e')
+              | (varName, alias) <- importees
+              ]
+      setVars vars
+      pure NoneV
 
 evalS (ExtendsS _nameE) = do
   throwError $ NotImplementedError (Just "extends")
 evalS (BlockS _name _block) = do
   throwError $ NotImplementedError (Just "block")
-evalS (ImportS _srcE _nameMay _identifiers _scopedness _requiredness) = do
-  throwError $ NotImplementedError (Just "import")
 evalS (WithS varEs bodyS) = do
   vars <- Map.fromList <$> mapM (\(k, valE) -> (k,) <$> evalE valE) varEs
   scoped $ do

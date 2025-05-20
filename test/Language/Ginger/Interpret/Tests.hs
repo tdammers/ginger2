@@ -26,8 +26,6 @@ import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
-import qualified Data.Text.Lazy as LText
-import qualified Data.Text.Lazy.Builder as Builder
 import Data.Word (Word8, Word16, Word32, Word64)
 import Test.Tasty
 import Test.Tasty.QuickCheck hiding ((.&.))
@@ -1194,7 +1192,7 @@ prop_callMacro body =
 
 prop_include :: ArbitraryText -> Statement -> Property
 prop_include (ArbitraryText name) body =
-  let bodySrc = LText.toStrict . Builder.toLazyText $ renderSyntax body
+  let bodySrc = renderSyntaxText body
       resultDirect = runGingerIdentityEither $
                       eval body
       loader = mockLoader [(name, bodySrc)]
@@ -1206,7 +1204,7 @@ prop_include (ArbitraryText name) body =
 
 prop_includeInto :: ArbitraryText -> Statement -> Statement -> Property
 prop_includeInto (ArbitraryText name) body parent =
-  let bodySrc = LText.toStrict . Builder.toLazyText $ renderSyntax body
+  let bodySrc = renderSyntaxText body
       resultDirect = runGingerIdentityEither $
                       eval (GroupS [ body, parent ])
       loader = mockLoader [(name, bodySrc)]
@@ -1222,7 +1220,7 @@ prop_includeInto (ArbitraryText name) body parent =
 
 prop_includeMacro :: ArbitraryText -> Identifier -> Statement -> Property
 prop_includeMacro (ArbitraryText name) macroName body =
-  let bodySrc = LText.toStrict . Builder.toLazyText $ renderSyntax $
+  let bodySrc = renderSyntaxText $
                   MacroS macroName [] body
       resultDirect = runGingerIdentityEither $
                       eval body
@@ -1240,7 +1238,7 @@ prop_includeMacro (ArbitraryText name) macroName body =
 
 prop_includeMacroWithoutContext :: ArbitraryText -> Identifier -> Statement -> Property
 prop_includeMacroWithoutContext (ArbitraryText name) macroName body =
-  let bodySrc = LText.toStrict . Builder.toLazyText $ renderSyntax $
+  let bodySrc = renderSyntaxText $
                   MacroS macroName [] body
       resultDirect = runGingerIdentityEither $
                       eval body
@@ -1259,7 +1257,7 @@ prop_includeMacroWithoutContext (ArbitraryText name) macroName body =
 
 prop_includeSet :: ArbitraryText -> Identifier -> ArbitraryText -> Property
 prop_includeSet (ArbitraryText name) varName (ArbitraryText varValue) =
-  let bodySrc = LText.toStrict . Builder.toLazyText $ renderSyntax $
+  let bodySrc = renderSyntaxText $
                   SetS varName (StringLitE varValue)
       resultDirect = runGingerIdentityEither $
                       eval (StringLitE varValue)
@@ -1277,7 +1275,7 @@ prop_includeSet (ArbitraryText name) varName (ArbitraryText varValue) =
 
 prop_includeWithContext :: ArbitraryText -> Identifier -> ArbitraryText -> Property
 prop_includeWithContext (ArbitraryText name) varName (ArbitraryText varValue) =
-  let bodySrc = LText.toStrict . Builder.toLazyText $ renderSyntax $
+  let bodySrc = renderSyntaxText $
                   InterpolationS (VarE varName)
       resultDirect = runGingerIdentityEither $
                       eval (StringLitE varValue)
@@ -1295,7 +1293,7 @@ prop_includeWithContext (ArbitraryText name) varName (ArbitraryText varValue) =
 
 prop_includeWithoutContext :: ArbitraryText -> Identifier -> ArbitraryText -> Property
 prop_includeWithoutContext (ArbitraryText name) varName (ArbitraryText varValue) =
-  let bodySrc = LText.toStrict . Builder.toLazyText $ renderSyntax $
+  let bodySrc = renderSyntaxText $
                   InterpolationS (VarE varName)
       loader = mockLoader [(name, bodySrc)]
       resultInclude = runGingerIdentityEitherWithLoader loader $
@@ -1312,7 +1310,7 @@ prop_includeWithoutContext (ArbitraryText name) varName (ArbitraryText varValue)
 
 prop_importValue :: ArbitraryText -> Identifier -> Expr -> Property
 prop_importValue (ArbitraryText name) varName valE =
-  let bodySrc = LText.toStrict . Builder.toLazyText $ renderSyntax (SetS varName valE)
+  let bodySrc = renderSyntaxText (SetS varName valE)
       resultDirect = runGingerIdentityEither $ eval valE
       loader = mockLoader [(name, bodySrc)]
       resultImport = runGingerIdentityEitherWithLoader loader . eval $
@@ -1326,7 +1324,7 @@ prop_importValue (ArbitraryText name) varName valE =
 
 prop_importValueAlias :: ArbitraryText -> Identifier -> Identifier -> Expr -> Property
 prop_importValueAlias (ArbitraryText name) alias varName valE =
-  let bodySrc = LText.toStrict . Builder.toLazyText $ renderSyntax (SetS varName valE)
+  let bodySrc = renderSyntaxText (SetS varName valE)
       resultDirect = runGingerIdentityEither $ eval valE
       loader = mockLoader [(name, bodySrc)]
       resultImport = runGingerIdentityEitherWithLoader loader . eval $
@@ -1343,7 +1341,7 @@ prop_importValueAlias (ArbitraryText name) alias varName valE =
 
 prop_importMacro :: ArbitraryText -> Identifier -> Statement -> Property
 prop_importMacro (ArbitraryText name) varName bodyS =
-  let bodySrc = LText.toStrict . Builder.toLazyText $ renderSyntax (MacroS varName [] bodyS)
+  let bodySrc = renderSyntaxText (MacroS varName [] bodyS)
       resultDirect = runGingerIdentityEither $ eval bodyS
       loader = mockLoader [(name, bodySrc)]
       resultImport = runGingerIdentityEitherWithLoader loader . eval $
@@ -1357,8 +1355,7 @@ prop_importMacro (ArbitraryText name) varName bodyS =
 
 prop_importWithoutContext :: ArbitraryText -> Identifier -> Identifier -> Expr -> Property
 prop_importWithoutContext (ArbitraryText name) macroName varName bodyE =
-  let bodySrc = LText.toStrict . Builder.toLazyText $
-                  renderSyntax
+  let bodySrc = renderSyntaxText $
                     (MacroS macroName []
                       (InterpolationS
                         (VarE varName)))
@@ -1379,8 +1376,7 @@ prop_importWithoutContext (ArbitraryText name) macroName varName bodyE =
 
 prop_importWithContext :: ArbitraryText -> Identifier -> Identifier -> Expr -> Property
 prop_importWithContext (ArbitraryText name) macroName varName bodyE =
-  let bodySrc = LText.toStrict . Builder.toLazyText $
-                  renderSyntax
+  let bodySrc = renderSyntaxText $
                     (MacroS macroName []
                       (InterpolationS
                         (VarE varName)))
@@ -1405,8 +1401,7 @@ prop_importExplicit (NonEmptyText name)
                     varName1 body1E
                     varName2 body2E
                     body3E =
-  let bodySrc = LText.toStrict . Builder.toLazyText $
-                  renderSyntax $
+  let bodySrc = renderSyntaxText $
                     GroupS
                       [ SetS varName1 body1E
                       , SetS varName2 body2E
@@ -1419,7 +1414,7 @@ prop_importExplicit (NonEmptyText name)
                         void $ eval $ InterpolationS body3E
                         void $ eval $ InterpolationS body1E
                         eval $ directS
-      directSrc = LText.toStrict . Builder.toLazyText . renderSyntax $ directS
+      directSrc = renderSyntaxText $ directS
 
       loader = mockLoader [(name, bodySrc)]
       mainS = GroupS
@@ -1429,7 +1424,7 @@ prop_importExplicit (NonEmptyText name)
                 , InterpolationS (VarE varName1)
                 ]
       resultImport = runGingerIdentityEitherWithLoader loader . eval $ mainS
-      importerSrc = LText.toStrict . Builder.toLazyText . renderSyntax $ mainS
+      importerSrc = renderSyntaxText $ mainS
   in
     counterexample ("DIRECT SOURCE:\n" ++ Text.unpack directSrc) $
     counterexample ("IMPORTED SOURCE:\n" ++ Text.unpack bodySrc) $
@@ -1443,7 +1438,7 @@ prop_extendSimple :: NonEmptyText
                   -> Statement
                   -> Property
 prop_extendSimple (NonEmptyText parentName) blockName body body' =
-  let parentSrc = LText.toStrict . Builder.toLazyText $ renderSyntax $
+  let parentSrc = renderSyntaxText $
                     GroupS
                       [ ImmediateS (Encoded "foo\n")
                       , BlockS blockName (Block body NotScoped Optional)
@@ -1454,12 +1449,12 @@ prop_extendSimple (NonEmptyText parentName) blockName body body' =
                   , body'
                   , ImmediateS (Encoded "bar\n")
                   ]
-      directSrc = LText.toStrict . Builder.toLazyText $ renderSyntax $
+      directSrc = renderSyntaxText $
                     directS
       mainT = Template
                 (Just parentName)
                 (BlockS blockName $ Block body' NotScoped Optional)
-      mainSrc = LText.toStrict . Builder.toLazyText $ renderSyntax $
+      mainSrc = renderSyntaxText $
                   templateBody mainT
       loader = mockLoader [(parentName, parentSrc)]
       resultDirect = runGingerIdentityEither $ do
@@ -1482,7 +1477,7 @@ prop_extendSuper :: NonEmptyText
                   -> Statement
                   -> Property
 prop_extendSuper (NonEmptyText parentName) blockName body body' =
-  let parentSrc = LText.toStrict . Builder.toLazyText $ renderSyntax $
+  let parentSrc = renderSyntaxText $
                     GroupS
                       [ ImmediateS (Encoded "foo\n")
                       , BlockS blockName (Block body NotScoped Optional)
@@ -1494,7 +1489,7 @@ prop_extendSuper (NonEmptyText parentName) blockName body body' =
                   , body
                   , ImmediateS (Encoded "bar\n")
                   ]
-      directSrc = LText.toStrict . Builder.toLazyText $ renderSyntax $
+      directSrc = renderSyntaxText $
                     directS
       mainT = Template
                 (Just parentName)
@@ -1507,7 +1502,7 @@ prop_extendSuper (NonEmptyText parentName) blockName body body' =
                       )
                       NotScoped
                       Optional)
-      mainSrc = LText.toStrict . Builder.toLazyText $ renderSyntax $
+      mainSrc = renderSyntaxText $
                   templateBody mainT
       loader = mockLoader [(parentName, parentSrc)]
       resultDirect = runGingerIdentityEither $ do
@@ -1535,21 +1530,21 @@ prop_extendWithContext (NonEmptyText parentName) blockName varName varExpr =
         [ SetS varName varExpr
         , BlockS blockName (Block (GroupS []) Scoped Optional)
         ]
-      parentSrc = LText.toStrict . Builder.toLazyText . renderSyntax $ parentS
+      parentSrc = renderSyntaxText $ parentS
 
       childT = Template
                   (Just parentName)
                   (BlockS blockName
                     (Block (InterpolationS (VarE varName)) Scoped Optional)
                   )
-      childSrc = LText.toStrict . Builder.toLazyText . renderSyntax $ childT
+      childSrc = renderSyntaxText $ childT
 
       directS = GroupS
                   [ SetS varName varExpr
                   , BlockS blockName
                       (Block (InterpolationS (VarE varName)) Scoped Optional)
                   ]
-      directSrc = LText.toStrict . Builder.toLazyText . renderSyntax $ directS
+      directSrc = renderSyntaxText $ directS
 
       loader = mockLoader [(parentName, parentSrc)]
 
@@ -1579,21 +1574,21 @@ prop_extendWithoutContext (NonEmptyText parentName) blockName varName varExpr du
         [ SetS varName varExpr
         , BlockS blockName (Block (GroupS []) NotScoped Optional)
         ]
-      parentSrc = LText.toStrict . Builder.toLazyText . renderSyntax $ parentS
+      parentSrc = renderSyntaxText $ parentS
 
       childT = Template
                   (Just parentName)
                   (BlockS blockName
                     (Block (InterpolationS (VarE varName)) NotScoped Optional)
                   )
-      childSrc = LText.toStrict . Builder.toLazyText . renderSyntax $ childT
+      childSrc = renderSyntaxText $ childT
 
       directS = GroupS
                   [ SetS dummyVarName varExpr
                   , BlockS blockName
                       (Block (InterpolationS (VarE varName)) NotScoped Optional)
                   ]
-      directSrc = LText.toStrict . Builder.toLazyText . renderSyntax $ directS
+      directSrc = renderSyntaxText $ directS
 
       loader = mockLoader [(parentName, parentSrc)]
 

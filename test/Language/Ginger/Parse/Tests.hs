@@ -8,8 +8,6 @@ where
 
 import Data.Text (Text)
 import qualified Data.Text as Text
-import qualified Data.Text.Lazy as LText
-import qualified Data.Text.Lazy.Builder as Builder
 import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.QuickCheck
@@ -506,7 +504,7 @@ test_parserEx p input expected = do
 
 prop_parserRoundTrip :: (Eq a, Show a, Arbitrary a, RenderSyntax a) => P a -> a -> Property
 prop_parserRoundTrip p v =
-  let src = LText.toStrict . Builder.toLazyText $ renderSyntax v
+  let src = renderSyntaxText $ v
       expected = Right v
       actual = parseGinger (p <* eof) "<input>" src
   in

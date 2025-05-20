@@ -19,6 +19,12 @@ import Text.Printf (printf)
 class RenderSyntax a where
   renderSyntax :: a -> Builder
 
+renderSyntaxLText :: RenderSyntax a => a -> LText.Text
+renderSyntaxLText = Builder.toLazyText . renderSyntax
+
+renderSyntaxText :: RenderSyntax a => a -> Text
+renderSyntaxText = LText.toStrict . renderSyntaxLText
+
 renderStringLit :: Text -> Builder
 renderStringLit str =
   "\"" <> mconcat (map renderStringLitChar $ Text.unpack str) <> "\""

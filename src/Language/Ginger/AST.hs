@@ -5,7 +5,7 @@
 module Language.Ginger.AST
 where
 
-import Data.Text (Text)
+import Data.Text (Text, pattern (:<) )
 import qualified Data.Text as Text
 import Data.String (IsString (..))
 import Test.Tasty.QuickCheck (Arbitrary (..))
@@ -29,9 +29,13 @@ instance Arbitrary Identifier where
     x <- QC.oneof $ map pure identifierLeadChars
     xs <- QC.listOf (QC.oneof $ map pure identifierChars)
     pure $ Identifier $ Text.pack (x : xs)
-  shrink (Identifier i) =
-    map (Identifier . Text.pack) . filter (not . null) $ shrink $ Text.unpack i
+  shrink _ = [] -- shrinking identifiers breaks references
 
+isValidIdentifier :: Text -> Bool
+isValidIdentifier t =
+  case t of
+    Text.Empty -> False
+    c :< _ -> c `elem` identifierLeadChars
 
 identifierLeadChars :: [Char]
 identifierLeadChars =
@@ -50,16 +54,10 @@ instance Arbitrary Encoded where
   shrink (Encoded e) =
     map (Encoded . Text.pack) . filter (not . null) $ shrink $ Text.unpack e
 
-data TemplateMain
-  = TemplateBody !Statement
-  | TemplateParent !Text
-  deriving (Show, Eq)
-
 data Template =
   Template
-    { templateMain :: !TemplateMain
-    , templateExports :: ![(Identifier, Expr)]
-    , templateBlocks :: ![(Identifier, Block)]
+    { templateParent :: !(Maybe Text)
+    , templateBody :: !Statement
     }
     deriving (Show, Eq)
 
@@ -135,9 +133,6 @@ data Statement
       !(Maybe Identifier) -- local name
       !(Maybe [(Identifier, Maybe Identifier)]) -- [ (imported name, local name) ]
       !IncludeMissingPolicy !IncludeContextPolicy
-  | -- | @{% extends expr %}@
-    ExtendsS
-      !Expr
   | -- | @{% block name with scope required %}body{% endblock %}@
     BlockS
       !Identifier -- block name
@@ -181,8 +176,6 @@ instance Arbitrary Statement where
     (ForS <$> pure keyMay <*> pure val <*> pure iteree <*> pure condMay <*> shrink recur <*> pure body <*> pure elseBranchMay) ++
     (ForS <$> pure keyMay <*> pure val <*> pure iteree <*> shrink condMay <*> pure recur <*> pure body <*> pure elseBranchMay) ++
     (ForS <$> pure keyMay <*> pure val <*> shrink iteree <*> pure condMay <*> pure recur <*> pure body <*> pure elseBranchMay) ++
-    (ForS <$> pure keyMay <*> shrink val <*> pure iteree <*> pure condMay <*> pure recur <*> pure body <*> pure elseBranchMay) ++
-    (ForS <$> shrink keyMay <*> pure val <*> pure iteree <*> pure condMay <*> pure recur <*> pure body <*> pure elseBranchMay) ++
     [body] ++
     maybe [] (:[]) elseBranchMay
   shrink (IfS cond yes noMay) =
@@ -200,38 +193,28 @@ instance Arbitrary Statement where
     (CallS <$> pure name <*> pure args <*> pure kwargs <*> shrink body) ++
     (CallS <$> pure name <*> pure args <*> shrink kwargs <*> shrink body) ++
     (CallS <$> pure name <*> shrink args <*> pure kwargs <*> pure body) ++
-    (CallS <$> shrink name <*> shrink args <*> pure kwargs <*> shrink body) ++
     [body]
   shrink (FilterS name args kwargs body) =
     (FilterS <$> pure name <*> pure args <*> pure kwargs <*> shrink body) ++
     (FilterS <$> pure name <*> pure args <*> shrink kwargs <*> shrink body) ++
     (FilterS <$> pure name <*> shrink args <*> pure kwargs <*> pure body) ++
-    (FilterS <$> shrink name <*> shrink args <*> pure kwargs <*> shrink body) ++
     [body]
   shrink (SetS name expr) =
-    (SetS <$> pure name <*> shrink expr) ++
-    (SetS <$> shrink name <*> pure expr)
+    (SetS <$> pure name <*> shrink expr)
   shrink (SetBlockS name body filterMay) =
     (SetBlockS <$> pure name <*> pure body <*> shrink filterMay) ++
-    (SetBlockS <$> pure name <*> shrink body <*> pure filterMay) ++
-    (SetBlockS <$> shrink name <*> pure body <*> pure filterMay)
+    (SetBlockS <$> pure name <*> shrink body <*> pure filterMay)
   shrink (IncludeS name m c) =
     (IncludeS <$> pure name <*> pure m <*> shrink c) ++
-    (IncludeS <$> pure name <*> shrink m <*> pure c) ++
-    (IncludeS <$> shrink name <*> pure m <*> pure c)
+    (IncludeS <$> pure name <*> shrink m <*> pure c)
   shrink (ImportS name lname imports m c) =
     (ImportS <$> pure name <*> pure lname <*> pure imports <*> pure m <*> shrink c) ++
     (ImportS <$> pure name <*> pure lname <*> pure imports <*> shrink m <*> pure c) ++
     (ImportS <$> pure name <*> pure lname <*> shrink imports <*> pure m <*> pure c) ++
-    (ImportS <$> pure name <*> shrink lname <*> pure imports <*> pure m <*> pure c) ++
-    (ImportS <$> shrink name <*> pure lname <*> pure imports <*> pure m <*> pure c)
-  shrink (ExtendsS expr) =
-    (ExtendsS <$> shrink expr) ++
-    [InterpolationS expr]
+    (ImportS <$> pure name <*> shrink lname <*> pure imports <*> pure m <*> pure c)
   shrink (BlockS name (Block b s r)) =
     (BlockS <$> pure name <*> (Block <$> pure b <*> pure s <*> shrink r)) ++
     (BlockS <$> pure name <*> (Block <$> pure b <*> pure s <*> shrink r)) ++
-    (BlockS <$> shrink name <*> pure (Block b s r)) ++
     [b]
   shrink (WithS defs body) =
     (WithS <$> pure defs <*> shrink body) ++
@@ -252,25 +235,28 @@ arbitraryStatement defined = do
         [ ImmediateS <$> arbitrary
         , InterpolationS <$> arbitraryExpr defined
         , escapeComment . CommentS . Text.strip . Text.pack <$> arbitrary
+
         , do
             let fuel' = fuel `div` 6
             keyNameMaybe <- arbitrary
             valName <- arbitrary
             iteree <- QC.resize fuel' $ arbitraryExpr defined
-            let defined' = defined <> Set.singleton valName <> Set.fromList (maybeToList keyNameMaybe) <> Set.singleton "loop"
+            let defined' = mempty <> Set.singleton valName <> Set.fromList (maybeToList keyNameMaybe) <> Set.singleton "loop"
             filterMay <- QC.oneof [ pure Nothing, QC.resize fuel' $ Just <$> arbitraryExpr defined ]
             body <- QC.resize fuel' $ arbitraryStatement defined'
-            elseBody <- QC.resize fuel' $ arbitrary
+            elseBody <- QC.resize fuel' $ QC.oneof [ pure Nothing, Just <$> arbitraryStatement defined' ]
             recursive <- arbitrary
 
             pure $ ForS keyNameMaybe valName iteree filterMay recursive body elseBody
+
         , IfS <$> QC.resize (fuel `div` 3) (arbitraryExpr defined)
               <*> QC.resize (fuel `div` 3) (arbitraryStatement defined)
               <*> QC.resize (fuel `div` 3) (QC.oneof [ pure Nothing, Just <$> arbitraryStatement defined ])
+
         , do
             args <- QC.resize (fuel `div` 2) $
                       QC.listOf ((,) <$> arbitrary <*> QC.oneof [ pure Nothing, Just <$> arbitraryExpr mempty ])
-            let defined' = defined <> Set.fromList (map fst args)
+            let defined' = Set.fromList (map fst args)
             body <- QC.resize (fuel `div` 2) (arbitraryStatement defined')
             name <- arbitrary
             pure $ MacroS name args body
@@ -287,15 +273,16 @@ arbitraryStatement defined = do
         , SetBlockS <$> arbitrary
                     <*> QC.resize (fuel `div` 2) (arbitraryStatement defined)
                     <*> QC.resize (fuel `div` 2) (QC.oneof [ pure Nothing, Just <$> arbitraryExpr defined ])
+
         -- , IncludeS <$> arbitraryExpr defined
-        -- , ExtendsS <$> arbitraryExpr defined
         -- , BlockS <$> arbitrary
         --          <*> QC.resize (fuel `div` 2) (arbitraryStatement defined)
         --          <*> arbitrary
         --          <*> arbitrary
+
         , do
             vars <- QC.listOf1 ((,) <$> arbitrary <*> QC.resize (fuel `div` 4) (arbitraryExpr defined))
-            let defined' = defined <> Set.fromList (map fst vars)
+            let defined' = mempty <> Set.fromList (map fst vars)
             body <- QC.resize (fuel * 3 `div` 4) (arbitraryStatement defined')
             pure $ WithS vars body
         ]
@@ -385,8 +372,8 @@ instance Arbitrary Expr where
   shrink (IsE a b args kwargs) =
     (IsE <$> pure a <*> pure b <*> pure args <*> shrink kwargs) ++
     (IsE <$> pure a <*> pure b <*> shrink args <*> pure kwargs) ++
-    (IsE <$> shrink a <*> pure b <*> pure args <*> pure kwargs) ++
     (IsE <$> pure a <*> shrink b <*> pure args <*> pure kwargs) ++
+    (IsE <$> shrink a <*> pure b <*> pure args <*> pure kwargs) ++
     [a, b] ++ args ++ map snd kwargs
   shrink (CallE f args kwargs) =
     (CallE <$> pure f <*> pure args <*> shrink kwargs) ++
@@ -404,7 +391,6 @@ instance Arbitrary Expr where
     (TernaryE <$> pure a <*> shrink b <*> pure c) ++
     (TernaryE <$> shrink a <*> pure b <*> pure c) ++
     [a, b, c]
-  shrink (VarE i) = VarE <$> shrink i
   shrink _ = []
 
 arbitraryExpr :: Set Identifier -> QC.Gen Expr
@@ -426,23 +412,27 @@ arbitraryExpr defined = do
                       <*> arbitraryExpr defined
                       <*> arbitraryExpr defined
             )
+
           , (10, QC.resize (max 0 $ fuel `div` 2 - 1) $
               DotE <$> arbitraryExpr defined
                    <*> (StringLitE . identifierName <$> arbitrary)
             )
+
           , (100, QC.resize (fuel `div` 3) $
               CallE <$> arbitraryExpr defined
                     <*> fuelledList (arbitraryExpr defined)
                     <*> fuelledList ((,) <$> arbitrary <*> arbitraryExpr defined)
             )
+
           , (100, QC.resize (fuel `div` 3) $
               TernaryE <$> arbitraryExpr defined
                        <*> arbitraryExpr defined
                        <*> arbitraryExpr defined
             )
-          -- , (10, QC.resize (fuel - 1) $
-          --     VarE <$> arbitrary
-          --   )
+
+          , (10, QC.resize (fuel - 1) $
+              VarE <$> arbitrary
+            )
           ]
         extraOptions =
           if Set.null defined then

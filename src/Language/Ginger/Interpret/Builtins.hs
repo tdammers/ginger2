@@ -742,6 +742,21 @@ fnArg context name argValues = do
   argV <- fnMaybeArg context (identifierName name) $ Map.lookup name argValues
   eitherExceptM $ fromValue argV
 
+mkFn0 :: ( Monad m
+         , ToValue r m
+         )
+      => Text
+      -> (ExceptT RuntimeError m r)
+      -> Procedure m
+mkFn0 funcName f =
+  NativeProcedure $ \args -> runExceptT $ do
+    _ <- eitherExcept $
+      resolveArgs
+        (Just funcName)
+        []
+        args
+    toValue <$> f
+
 mkFn1 :: ( Monad m
          , ToValue a m
          , FromValue a m

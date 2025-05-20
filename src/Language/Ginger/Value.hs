@@ -56,7 +56,21 @@ data Context m =
     { contextEncode :: Text -> m Encoded
     , contextLoadTemplateFile :: TemplateLoader m
     , contextVars :: !(Map Identifier (Value m))
+    , contextOutput :: !OutputPolicy
     }
+
+data OutputPolicy
+  = Quiet
+  | Output
+  deriving (Show, Eq, Ord, Enum, Bounded)
+
+instance Semigroup OutputPolicy where
+  Quiet <> Quiet = Quiet
+  _ <> _ = Output
+
+instance Monoid OutputPolicy where
+  mappend = (<>)
+  mempty = Quiet
 
 emptyContext :: Applicative m => Context m
 emptyContext =
@@ -64,6 +78,7 @@ emptyContext =
     { contextEncode = pure . Encoded
     , contextLoadTemplateFile = const $ pure Nothing
     , contextVars = mempty
+    , contextOutput = Output
     }
 
 data Scalar

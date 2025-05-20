@@ -666,6 +666,12 @@ tests = testGroup "Language.Ginger.Interpret"
       , testProperty "without context" prop_importWithoutContext
       , testProperty "explicit" prop_importExplicit
       ]
+    , testGroup "extends"
+      [ testProperty "simple" prop_extendSimple
+      , testProperty "super" prop_extendSuper
+      , testProperty "with context" prop_extendWithContext
+      , testProperty "without context" prop_extendWithoutContext
+      ]
     ]
   ]
 
@@ -1430,3 +1436,179 @@ prop_importExplicit (NonEmptyText name)
     counterexample ("MAIN SOURCE:\n" ++ Text.unpack importerSrc) $
     varName1 /= varName2 ==>
     resultImport === resultDirect
+
+prop_extendSimple :: NonEmptyText
+                  -> Identifier
+                  -> Statement
+                  -> Statement
+                  -> Property
+prop_extendSimple (NonEmptyText parentName) blockName body body' =
+  let parentSrc = LText.toStrict . Builder.toLazyText $ renderSyntax $
+                    GroupS
+                      [ ImmediateS (Encoded "foo\n")
+                      , BlockS blockName (Block body NotScoped Optional)
+                      , ImmediateS (Encoded "bar\n")
+                      ]
+      directS = GroupS
+                  [ ImmediateS (Encoded "foo\n")
+                  , body'
+                  , ImmediateS (Encoded "bar\n")
+                  ]
+      directSrc = LText.toStrict . Builder.toLazyText $ renderSyntax $
+                    directS
+      mainT = Template
+                (Just parentName)
+                (BlockS blockName $ Block body' NotScoped Optional)
+      mainSrc = LText.toStrict . Builder.toLazyText $ renderSyntax $
+                  templateBody mainT
+      loader = mockLoader [(parentName, parentSrc)]
+      resultDirect = runGingerIdentityEither $ do
+        evalS directS
+      resultExtends = runGingerIdentityEitherWithLoader loader $ do
+        evalT mainT
+      cat = case resultDirect of
+              Left err -> unwords . take 1 . words $ show err
+              Right _ -> "OK"
+  in
+    label cat $
+    counterexample ("PARENT SOURCE:\n" ++ Text.unpack parentSrc) $
+    counterexample ("CHILD SOURCE:\n" ++ Text.unpack mainSrc) $
+    counterexample ("DIRECT SOURCE:\n" ++ Text.unpack directSrc) $
+    resultExtends === resultDirect
+
+prop_extendSuper :: NonEmptyText
+                  -> Identifier
+                  -> Statement
+                  -> Statement
+                  -> Property
+prop_extendSuper (NonEmptyText parentName) blockName body body' =
+  let parentSrc = LText.toStrict . Builder.toLazyText $ renderSyntax $
+                    GroupS
+                      [ ImmediateS (Encoded "foo\n")
+                      , BlockS blockName (Block body NotScoped Optional)
+                      , ImmediateS (Encoded "bar\n")
+                      ]
+      directS = GroupS
+                  [ ImmediateS (Encoded "foo\n")
+                  , body'
+                  , body
+                  , ImmediateS (Encoded "bar\n")
+                  ]
+      directSrc = LText.toStrict . Builder.toLazyText $ renderSyntax $
+                    directS
+      mainT = Template
+                (Just parentName)
+                (BlockS blockName $
+                    Block
+                      (GroupS
+                        [ body'
+                        , CallS "super" [] [] (GroupS [])
+                        ]
+                      )
+                      NotScoped
+                      Optional)
+      mainSrc = LText.toStrict . Builder.toLazyText $ renderSyntax $
+                  templateBody mainT
+      loader = mockLoader [(parentName, parentSrc)]
+      resultDirect = runGingerIdentityEither $ do
+        evalS directS
+      resultExtends = runGingerIdentityEitherWithLoader loader $ do
+        evalT mainT
+      cat = case resultDirect of
+              Left err -> unwords . take 1 . words $ show err
+              Right _ -> "OK"
+  in
+    label cat $
+    counterexample ("PARENT SOURCE:\n" ++ Text.unpack parentSrc) $
+    counterexample ("CHILD SOURCE:\n" ++ Text.unpack mainSrc) $
+    counterexample ("DIRECT SOURCE:\n" ++ Text.unpack directSrc) $
+    resultExtends === resultDirect
+
+prop_extendWithContext :: NonEmptyText
+                       -> Identifier
+                       -> Identifier
+                       -> Expr
+                       -> Property
+prop_extendWithContext (NonEmptyText parentName) blockName varName varExpr =
+  let
+      parentS = GroupS
+        [ SetS varName varExpr
+        , BlockS blockName (Block (GroupS []) Scoped Optional)
+        ]
+      parentSrc = LText.toStrict . Builder.toLazyText . renderSyntax $ parentS
+
+      childT = Template
+                  (Just parentName)
+                  (BlockS blockName
+                    (Block (InterpolationS (VarE varName)) Scoped Optional)
+                  )
+      childSrc = LText.toStrict . Builder.toLazyText . renderSyntax $ childT
+
+      directS = GroupS
+                  [ SetS varName varExpr
+                  , BlockS blockName
+                      (Block (InterpolationS (VarE varName)) Scoped Optional)
+                  ]
+      directSrc = LText.toStrict . Builder.toLazyText . renderSyntax $ directS
+
+      loader = mockLoader [(parentName, parentSrc)]
+
+      resultDirect = runGingerIdentityEither $ do
+        evalS directS
+      resultExtends = runGingerIdentityEitherWithLoader loader $ do
+        evalT childT
+      cat = case resultDirect of
+              Left err -> unwords . take 1 . words $ show err
+              Right _ -> "OK"
+  in
+    label cat $
+    counterexample ("PARENT SOURCE:\n" ++ Text.unpack parentSrc) $
+    counterexample ("CHILD SOURCE:\n" ++ Text.unpack childSrc) $
+    counterexample ("DIRECT SOURCE:\n" ++ Text.unpack directSrc) $
+    resultExtends === resultDirect
+
+prop_extendWithoutContext :: NonEmptyText
+                          -> Identifier
+                          -> Identifier
+                          -> Expr
+                          -> Identifier
+                          -> Property
+prop_extendWithoutContext (NonEmptyText parentName) blockName varName varExpr dummyVarName =
+  let
+      parentS = GroupS
+        [ SetS varName varExpr
+        , BlockS blockName (Block (GroupS []) NotScoped Optional)
+        ]
+      parentSrc = LText.toStrict . Builder.toLazyText . renderSyntax $ parentS
+
+      childT = Template
+                  (Just parentName)
+                  (BlockS blockName
+                    (Block (InterpolationS (VarE varName)) NotScoped Optional)
+                  )
+      childSrc = LText.toStrict . Builder.toLazyText . renderSyntax $ childT
+
+      directS = GroupS
+                  [ SetS dummyVarName varExpr
+                  , BlockS blockName
+                      (Block (InterpolationS (VarE varName)) NotScoped Optional)
+                  ]
+      directSrc = LText.toStrict . Builder.toLazyText . renderSyntax $ directS
+
+      loader = mockLoader [(parentName, parentSrc)]
+
+      resultDirect = runGingerIdentityEither $ do
+        evalS directS
+      resultExtends = runGingerIdentityEitherWithLoader loader $ do
+        evalT childT
+      cat = case resultDirect of
+              Left (PrettyRuntimeError (NotInScopeError (Just n))) | Identifier n == varName -> "OK (NotInScope, expected)"
+              Left err -> unwords . take 1 . words $ show err
+              Right _ -> "Unexpected success"
+  in
+    label cat $
+    counterexample ("PARENT SOURCE:\n" ++ Text.unpack parentSrc) $
+    counterexample ("CHILD SOURCE:\n" ++ Text.unpack childSrc) $
+    counterexample ("DIRECT SOURCE:\n" ++ Text.unpack directSrc) $
+    varName /= dummyVarName ==>
+    resultExtends === resultDirect

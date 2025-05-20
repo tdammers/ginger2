@@ -15,6 +15,7 @@ module Language.Ginger.Interpret.Eval
 , evalE
 , evalS
 , evalSs
+, evalT
 , stringify
 , valuesEqual
 , asBool
@@ -39,7 +40,7 @@ import Control.Monad.Except
   ( MonadError (..)
   , throwError
   )
-import Control.Monad.Reader (ask , asks)
+import Control.Monad.Reader (ask , asks, local)
 import Control.Monad.State (gets)
 import Control.Monad.Trans (lift)
 import qualified Data.ByteString.Base64 as Base64
@@ -51,14 +52,14 @@ import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Text.Encoding (decodeUtf8)
 
-loadTemplate :: Monad m => Text -> GingerT m (LoadedTemplate m)
+loadTemplate :: Monad m => Text -> GingerT m LoadedTemplate
 loadTemplate name = do
   sMay <- loadTemplateMaybe name
   case sMay of
     Nothing -> throwError $ TemplateFileNotFoundError name
     Just s -> pure s
 
-loadTemplateMaybe :: Monad m => Text -> GingerT m (Maybe (LoadedTemplate m))
+loadTemplateMaybe :: Monad m => Text -> GingerT m (Maybe LoadedTemplate)
 loadTemplateMaybe name = do
   loader <- asks contextLoadTemplateFile
   srcMay <- lift (loader name)
@@ -70,13 +71,9 @@ loadTemplateMaybe name = do
         Left err ->
           throwError $ TemplateParseError (Just name) (Just $ Text.pack err)
         Right t -> do
-          exports <- fmap Map.fromList $ forM (templateExports t) $ \(key, expr) -> do
-            val <- evalE expr
-            pure (key, val)
-          body <- case templateMain t of
-            TemplateBody s -> pure $ LoadedTemplateBody s
-            TemplateParent p -> LoadedTemplateParent <$> loadTemplate p
-          pure . Just $ LoadedTemplate exports body
+          parent <- forM (templateParent t) loadTemplate
+          let body = templateBody t
+          pure . Just $ LoadedTemplate parent body
 
 stringify :: Monad m => Value m -> GingerT m Text
 stringify NoneV = pure ""
@@ -239,6 +236,9 @@ instance Monad m => Eval m Expr where
 
 instance Monad m => Eval m Statement where
   eval = evalS
+
+instance Monad m => Eval m Template where
+  eval = evalT
 
 evalE :: Monad m => Expr -> GingerT m (Value m)
 evalE NoneE = pure NoneV
@@ -492,26 +492,29 @@ concatValues a b = case (a, b) of
     yStr <- stringify y
     pure . StringV $ xStr <> yStr
 
-evalT :: Monad m => LoadedTemplate m -> GingerT m (Value m)
+evalT :: Monad m => Template -> GingerT m (Value m)
 evalT t = do
-  let body = getEffectiveBody t
-  loadVars t
-  evalS body
-  where
-    getEffectiveBody t' =
-      case loadedTemplateMain t' of
-        LoadedTemplateBody s -> s
-        LoadedTemplateParent p -> getEffectiveBody p
-    loadVars t' = do
-      case loadedTemplateMain t' of
-          LoadedTemplateBody _ -> pure ()
-          LoadedTemplateParent p -> loadVars p
-      setVars $ loadedTemplateExports t'
-      
+  case templateParent t of
+    Nothing ->
+      evalS (templateBody t)
+    Just parentName -> do
+      parent <- loadTemplate parentName
+      hush_ $ evalS (templateBody t)
+      evalLT parent
+
+evalLT :: Monad m => LoadedTemplate -> GingerT m (Value m)
+evalLT t = do
+  case loadedTemplateParent t of
+    Nothing ->
+      evalS (loadedTemplateBody t)
+    Just parent -> do
+      hush_ $ evalS (loadedTemplateBody t)
+      evalLT parent
 
 evalS :: Monad m => Statement -> GingerT m (Value m)
 evalS (ImmediateS enc) = pure (EncodedV enc)
-evalS (InterpolationS expr) = evalE expr
+evalS (InterpolationS expr) = whenOutputPolicy $ do
+  evalE expr
 evalS (CommentS _) = pure NoneV
 evalS (ForS loopKeyMay loopName itereeE loopCondMay recursivity bodyS elseSMay) = do
   iteree <- evalE itereeE
@@ -529,12 +532,12 @@ evalS (MacroS name argsSig body) = do
   setVar name . ProcedureV $ GingerProcedure env argsSig' (StatementE body)
   pure NoneV
 
-evalS (CallS name posArgsExpr namedArgsExpr bodyS) = do
+evalS (CallS name posArgsExpr namedArgsExpr bodyS) = whenOutputPolicy $ do
   callee <- lookupVar name
   callerVal <- eval bodyS
   let caller = ProcedureV $ NativeProcedure (const . pure . Right $ callerVal)
   call (Just caller) callee posArgsExpr namedArgsExpr
-evalS (FilterS name posArgsExpr namedArgsExpr bodyS) = do
+evalS (FilterS name posArgsExpr namedArgsExpr bodyS) = whenOutputPolicy $ do
   callee <- lookupVar name
   let posArgsExpr' = StatementE bodyS : posArgsExpr
   call Nothing callee posArgsExpr' namedArgsExpr
@@ -563,12 +566,8 @@ evalS (IncludeS nameE missingPolicy contextPolicy) = do
     Nothing ->
       pure NoneV
     Just template -> do
-      let scopeModifier =
-            case contextPolicy of
-              WithContext -> id
-              WithoutContext -> withoutContext
-      scopeModifier $ evalT template
-evalS (ImportS srcE nameMay identifiers missingPolicy contextPolicy) = do
+      withScopeModifier (contextPolicy == WithContext) $ evalLT template
+evalS (ImportS srcE nameMay identifiers missingPolicy contextPolicy) = hush $ do
   src <- eval srcE >>= (eitherExcept . asTextVal)
   templateMay <- case missingPolicy of
     RequireMissing -> Just <$> loadTemplate src
@@ -577,12 +576,8 @@ evalS (ImportS srcE nameMay identifiers missingPolicy contextPolicy) = do
     Nothing ->
       pure NoneV
     Just template -> do
-      let scopeModifier =
-            case contextPolicy of
-              WithContext -> id
-              WithoutContext -> withoutContext
-      e' <- scoped . scopeModifier $ do
-              void $ evalT template
+      e' <- scoped . withScopeModifier (contextPolicy == WithContext) $ do
+              void $ evalLT template
               gets evalEnv
       let vars = case identifiers of
             Nothing ->
@@ -595,17 +590,68 @@ evalS (ImportS srcE nameMay identifiers missingPolicy contextPolicy) = do
               ]
       setVars vars
       pure NoneV
-
-evalS (ExtendsS _nameE) = do
-  throwError $ NotImplementedError (Just "extends")
-evalS (BlockS _name _block) = do
-  throwError $ NotImplementedError (Just "block")
+evalS (BlockS name block) =
+  evalBlock name block
 evalS (WithS varEs bodyS) = do
   vars <- Map.fromList <$> mapM (\(k, valE) -> (k,) <$> evalE valE) varEs
   scoped $ do
     setVars vars
     evalS bodyS
 evalS (GroupS xs) = evalSs xs
+
+hush :: Monad m => GingerT m a -> GingerT m a
+hush = local (\c -> c { contextOutput = Quiet })
+
+hush_ :: Monad m => GingerT m a -> GingerT m ()
+hush_ = void . hush
+
+whenOutputPolicy :: Monad m => GingerT m (Value m) -> GingerT m (Value m)
+whenOutputPolicy action = do
+  outputPolicy <- asks contextOutput
+  if outputPolicy == Output then
+    action
+  else
+    pure NoneV
+
+withScopeModifier :: Monad m => Bool -> GingerT m a -> GingerT m a
+withScopeModifier policy inner = do
+  let scopeModifier = if policy then id else withoutContext
+  scopeModifier inner
+
+evalBlock :: Monad m => Identifier -> Block -> GingerT m (Value m)
+evalBlock name block = do
+  lblock <- setBlock name block
+  super <- makeSuper (loadedBlockParent lblock)
+  whenOutputPolicy .
+    withScopeModifier (is $ lblockScoped lblock) .
+      scoped $ do
+        setVar "super" super
+        evalS (blockBody . loadedBlock $ lblock)
+
+lblockScoped :: LoadedBlock -> Scoped
+lblockScoped lb =
+  case loadedBlockParent lb of
+    Nothing -> blockScoped (loadedBlock lb)
+    Just parent -> lblockScoped parent
+
+makeSuper :: Monad m => Maybe LoadedBlock -> GingerT m (Value m)
+makeSuper Nothing = pure NoneV
+makeSuper (Just lblock) = do
+  ctx <- ask
+  env <- gets evalEnv
+  parent <- makeSuper (loadedBlockParent lblock)
+  pure $ dictV
+    [ "__call__" .=
+        ProcedureV
+          (mkFn0 "super()" $
+              eitherExceptM $
+                runGingerT
+                  (evalS . blockBody . loadedBlock $ lblock)
+                  ctx
+                  env
+          )
+    , "super" .= parent
+    ]
 
 asBool :: Monad m => Text -> Value m -> GingerT m Bool
 asBool _ (BoolV b) = pure b

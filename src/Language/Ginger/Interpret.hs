@@ -14,6 +14,7 @@ module Language.Ginger.Interpret
 , evalE
 , evalS
 , evalSs
+, evalT
 , GingerT (..)
 , runGingerT
 , defEnv

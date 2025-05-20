@@ -49,32 +49,38 @@ newtype GingerT m a =
 data EvalState m =
   EvalState
     { evalEnv :: !(Env m)
-    , evalLoadedTemplates :: !(Map Text (CachedTemplate m))
+    , evalLoadedTemplates :: !(Map Text CachedTemplate)
+    , evalBlocks :: !(Map Identifier LoadedBlock)
     }
+
+data LoadedBlock =
+  LoadedBlock
+    { loadedBlock :: !Block
+    , loadedBlockParent :: !(Maybe LoadedBlock)
+    }
+    deriving (Show)
 
 instance Semigroup (EvalState m) where
   a <> b =
     EvalState
       { evalEnv = evalEnv a <> evalEnv b
       , evalLoadedTemplates = evalLoadedTemplates a <> evalLoadedTemplates b
+      , evalBlocks = evalBlocks a <> evalBlocks b
       }
 
-data CachedTemplate m
-  = CachedTemplate !(LoadedTemplate m)
+data CachedTemplate
+  = CachedTemplate !LoadedTemplate
   | MissingTemplate
 
-data LoadedTemplate m =
+data LoadedTemplate =
   LoadedTemplate
-    { loadedTemplateExports :: !(Map Identifier (Value m))
-    , loadedTemplateMain :: !(LoadedTemplateMain m)
+    { loadedTemplateParent :: !(Maybe LoadedTemplate)
+    , loadedTemplateBody :: !Statement
     }
 
-data LoadedTemplateMain m
-  = LoadedTemplateBody !Statement
-  | LoadedTemplateParent !(LoadedTemplate m)
-
 runGingerT :: Monad m => GingerT m a -> Context m -> Env m -> m (Either RuntimeError a)
-runGingerT g ctx env = runExceptT (evalStateT (runReaderT (unGingerT g) ctx) (EvalState env mempty))
+runGingerT g ctx env =
+  runExceptT (evalStateT (runReaderT (unGingerT g) ctx) (EvalState env mempty mempty))
 
 native :: Monad m => m (Either RuntimeError a) -> GingerT m a
 native action =
@@ -114,12 +120,35 @@ setVar :: Monad m
        => Identifier
        -> Value m
        -> GingerT m ()
-setVar name val = modifyEnv (\e -> e { envVars = Map.insert name val $ envVars e })
+setVar name val =
+  modifyEnv (\e -> e { envVars = Map.insert name val $ envVars e })
 
 setVars :: Monad m
         => Map Identifier (Value m)
         -> GingerT m ()
 setVars vars = modifyEnv (\e -> e { envVars = envVars e <> vars})
+
+setBlock :: Monad m
+         => Identifier
+         -> Block
+         -> GingerT m LoadedBlock
+setBlock name block = do
+  mparent <- gets (Map.lookup name . evalBlocks)
+  let lblock = LoadedBlock block Nothing
+      lblock' = maybe lblock (appendLoadedBlock lblock) mparent
+  modify (\s -> s { evalBlocks = Map.insert name lblock' (evalBlocks s) })
+  pure lblock'
+
+appendLoadedBlock :: LoadedBlock -> LoadedBlock -> LoadedBlock
+appendLoadedBlock t h =
+  case loadedBlockParent h of
+    Nothing -> h { loadedBlockParent = Just t }
+    Just p -> h { loadedBlockParent = Just (appendLoadedBlock t p) }
+
+getBlock :: Monad m
+         => Identifier
+         -> GingerT m (Maybe LoadedBlock)
+getBlock name = gets (Map.lookup name . evalBlocks)
 
 scoped :: Monad m
        => GingerT m a

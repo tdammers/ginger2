@@ -152,7 +152,7 @@ renderEncoded (Encoded txt) =
 instance RenderSyntax Statement where
   renderSyntax (ImmediateS e) = renderEncoded e
   renderSyntax (InterpolationS e) = "{{ " <> renderSyntax e <> " }}"
-  renderSyntax (CommentS msg) = "{# " <> Builder.fromText msg <> " #}"
+  renderSyntax (CommentS msg) = "{# " <> Builder.fromText msg <> " #}\n"
   renderSyntax (ForS kMay v iteree condMay recursivity body elseBranchMay) =
     renderFlow (
       "for " <>
@@ -178,6 +178,7 @@ instance RenderSyntax Statement where
     renderFlow (
       "macro " <>
       renderSyntax name <>
+      " " <>
       renderArgSpec args
     ) <>
     renderSyntax body <>
@@ -243,16 +244,13 @@ instance RenderSyntax Statement where
       " " <>
       renderSyntax contextPolicy
     )
-  renderSyntax (ExtendsS e) =
-    renderFlow (
-      "extends " <>
-      renderSyntax e
-    )
   renderSyntax (BlockS name (Block body scopedness requiredness)) =
     renderFlow (
       "block " <>
       renderSyntax name <>
+      " " <>
       renderSyntax scopedness <>
+      " " <>
       renderSyntax requiredness
     ) <>
     renderSyntax body <>
@@ -300,3 +298,8 @@ renderArgSpec args =
       ]
   ) <>
   ")"
+
+instance RenderSyntax Template where
+  renderSyntax (Template parentMay body) =
+    maybe "" (renderFlow . ("extends " <>) . renderSyntax . StringLitE) parentMay <>
+    renderSyntax body

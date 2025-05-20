@@ -407,12 +407,6 @@ tests = testGroup "Language.Ginger.Parse"
             "{% from 'foo.html' as foo import bar as baz ignore missing with context %}"
             (ImportS (StringLitE "foo.html") (Just "foo") (Just [("bar", Just "baz")]) IgnoreMissing WithContext)
       ]
-    , testGroup "ExtendsS"
-      [ testCase "extends" $
-          test_parser statement
-            "{% extends \"foo\" %}"
-            (ExtendsS (StringLitE "foo"))
-      ]
     , testGroup "BlockS"
       [ testCase "block" $
           test_parser statement

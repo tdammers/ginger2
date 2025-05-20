@@ -520,9 +520,12 @@ closeFlow = closeWithOverride "%}"
 
 template :: P Template
 template = do
-  -- TODO: parse {% extends %}
-  body <- statement
-  pure $ Template (TemplateBody body) [] []
+  Template <$> extends <*> statement
+
+extends :: P (Maybe Text)
+extends =
+  optional . flow "extends" $ do
+    stringLit <* space
 
 statement :: P Statement
 statement =
@@ -578,7 +581,6 @@ controlStatement =
     , setBlockStatement
     , includeStatement
     , importStatement
-    , extendsStatement
     , blockStatement
     , withStatement
     ]
@@ -727,9 +729,6 @@ explicitImportStatement =
 
 importPair :: P (Identifier, Maybe Identifier)
 importPair = (,) <$> identifier <*> optional (keyword "as" *> identifier)
-
-extendsStatement :: P Statement
-extendsStatement = flow "extends" $ ExtendsS <$> expr
 
 withStatement :: P Statement
 withStatement = do

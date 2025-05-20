@@ -408,9 +408,23 @@ memberAccessExpr = do
       selector <- identifier
       exprTail (DotE lhs selector)
 
+    sliceCont lhs op1May = do
+      try $ chunk ":" *> space
+      op2May <- optional expr
+      pure $ SliceE lhs op1May op2May
+
     bracketsTail lhs = do
-      selector <- bracketed expr
-      exprTail (IndexE lhs selector)
+      t <- bracketed $ do
+        op1May <- optional expr
+        case op1May of
+          Nothing ->
+            sliceCont lhs op1May
+          Just op1 -> do
+            choice
+              [ sliceCont lhs op1May
+              , pure $ IndexE lhs op1
+              ]
+      exprTail t
 
     callTail lhs = do
       (posArgs, kwArgs) <- callArgs

@@ -79,6 +79,14 @@ tests = testGroup "Language.Ginger.Interpret"
       , testProperty "Double negation" (prop_unop @Double UnopNegate negate)
       , testProperty "Boolean not" (prop_unop @Bool UnopNot not)
       ]
+    , testGroup "SliceE"
+      [ testProperty "List at start" prop_sliceListStart
+      , testProperty "List at end" prop_sliceListEnd
+      , testProperty "List both sides" prop_sliceListBoth
+      , testProperty "String at start" prop_sliceStringStart
+      , testProperty "String at end" prop_sliceStringEnd
+      , testProperty "String both sides" prop_sliceStringBoth
+      ]
     , testGroup "BinaryE"
       [ testProperty "Integer addition" (prop_binop @Integer BinopPlus (+))
       , testProperty "Integer subtraction" (prop_binop @Integer BinopMinus (-))
@@ -488,7 +496,7 @@ tests = testGroup "Language.Ginger.Interpret"
               (\(NonEmptyText sep, NonEmptyText item, PositiveInt i) ->
                 StringV $ Text.intercalate sep $ replicate i item
               )
-            
+
         , testProperty "string replace" $
             prop_method "replace"
               (\() ->
@@ -732,6 +740,98 @@ prop_scopedVarsDisappear (name1, val1) (name2, val2) =
 --------------------------------------------------------------------------------
 -- Expression properties
 --------------------------------------------------------------------------------
+
+prop_sliceListStart :: [Int]
+                        -> Int
+                        -> Property
+prop_sliceListStart items start =
+  let expected = if start < 0 then
+                    toValue $ drop (length items + start) items
+                 else
+                    toValue $ drop start items
+      actual = runGingerIdentity $ do
+                setVar "items" (toValue items)
+                setVar "start" (toValue start)
+                eval (SliceE (VarE "items") (Just $ VarE "start") Nothing)
+  in
+    actual === expected
+
+prop_sliceListEnd :: [Int]
+                  -> Int
+                  -> Property
+prop_sliceListEnd items end =
+  let expected = if end < 0 then
+                    toValue $ take (length items + end) items
+                 else
+                    toValue $ take end items
+      actual = runGingerIdentity $ do
+                setVar "items" (toValue items)
+                setVar "end" (toValue end)
+                eval (SliceE (VarE "items") Nothing (Just $ VarE "end"))
+  in
+    actual === expected
+
+prop_sliceListBoth :: [Int]
+                  -> Int
+                  -> Int
+                  -> Property
+prop_sliceListBoth items start end =
+  let start' = if start < 0 then length items + start else start
+      end' = if end < 0 then length items - start' + end else end
+      expected = toValue . take end' . drop start' $ items
+      actual = runGingerIdentity $ do
+                setVar "items" (toValue items)
+                setVar "start" (toValue start)
+                setVar "end" (toValue end)
+                eval (SliceE (VarE "items") (Just $ VarE "start") (Just $ VarE "end"))
+  in
+    actual === expected
+
+prop_sliceStringStart :: ArbitraryText
+                        -> Int
+                        -> Property
+prop_sliceStringStart (ArbitraryText items) start =
+  let expected = if start < 0 then
+                    toValue $ Text.drop (Text.length items + start) items
+                 else
+                    toValue $ Text.drop start items
+      actual = runGingerIdentity $ do
+                setVar "items" (toValue items)
+                setVar "start" (toValue start)
+                eval (SliceE (VarE "items") (Just $ VarE "start") Nothing)
+  in
+    actual === expected
+
+prop_sliceStringEnd :: ArbitraryText
+                  -> Int
+                  -> Property
+prop_sliceStringEnd (ArbitraryText items) end =
+  let expected = if end < 0 then
+                    toValue $ Text.take (Text.length items + end) items
+                 else
+                    toValue $ Text.take end items
+      actual = runGingerIdentity $ do
+                setVar "items" (toValue items)
+                setVar "end" (toValue end)
+                eval (SliceE (VarE "items") Nothing (Just $ VarE "end"))
+  in
+    actual === expected
+
+prop_sliceStringBoth :: ArbitraryText
+                  -> Int
+                  -> Int
+                  -> Property
+prop_sliceStringBoth (ArbitraryText items) start end =
+  let start' = if start < 0 then Text.length items + start else start
+      end' = if end < 0 then Text.length items - start' + end else end
+      expected = toValue . Text.take end' . Text.drop start' $ items
+      actual = runGingerIdentity $ do
+                setVar "items" (toValue items)
+                setVar "start" (toValue start)
+                setVar "end" (toValue end)
+                eval (SliceE (VarE "items") (Just $ VarE "start") (Just $ VarE "end"))
+  in
+    actual === expected
 
 prop_unop :: (ToValue a Identity, ToValue b Identity)
            => UnaryOperator
@@ -1075,7 +1175,7 @@ prop_forStatementFilter intItems =
     resultFor === expected
 
 prop_forStatementLoopVars :: [Integer] -> Property
-prop_forStatementLoopVars intItems = 
+prop_forStatementLoopVars intItems =
   let items = ListV $ map IntV intItems
       expected = StringV . Text.pack . mconcat $
           [ show (succ i) ++ show (i :: Int) ++ show v
@@ -1390,6 +1490,7 @@ prop_importWithContext (ArbitraryText name) macroName varName bodyE =
                           ]
   in
     counterexample ("SOURCE:\n" ++ Text.unpack bodySrc) $
+    macroName /= varName ==>
     resultImport === resultDirect
 
 prop_importExplicit :: NonEmptyText

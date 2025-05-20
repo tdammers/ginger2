@@ -266,6 +266,11 @@ evalE (DotE aExpr b) = do
       case itemMay of
         Just item -> pure item
         Nothing -> throwError $ NotInScopeError (Just $ Text.show a <> "." <> Text.show b)
+evalE (SliceE sliceeE beginEMay endEMay) = do
+  slicee <- evalE sliceeE
+  beginMay <- mapM evalE beginEMay
+  endMay <- mapM evalE endEMay
+  sliceValue slicee beginMay endMay
 evalE (CallE callableExpr posArgsExpr namedArgsExpr) = do
   callable <- evalE callableExpr
   call Nothing callable posArgsExpr namedArgsExpr
@@ -298,6 +303,51 @@ evalNamedArg :: Monad m => (Identifier, Expr) -> GingerT m (Maybe Identifier, Va
 evalNamedArg (kIdent, vExpr) = do
   vVal <- evalE vExpr
   return (Just kIdent, vVal)
+
+sliceList :: [a] -> Maybe Int -> Maybe Int -> [a]
+sliceList xs startMay endMay =
+  let start = case startMay of
+                Nothing -> 0
+                Just n | n < 0 -> length xs + n
+                Just n -> n
+      end = case endMay of
+                Nothing -> length xs - start
+                Just n | n < 0 -> length xs - start + n
+                Just n -> n
+  in take end . drop start $ xs
+
+sliceText :: Text -> Maybe Int -> Maybe Int -> Text
+sliceText xs startMay endMay =
+  let start = case startMay of
+                Nothing -> 0
+                Just n | n < 0 -> Text.length xs + n
+                Just n -> n
+      end = case endMay of
+                Nothing -> Text.length xs - start
+                Just n | n < 0 -> Text.length xs - start + n
+                Just n -> n
+  in Text.take end . Text.drop start $ xs
+
+sliceValue :: Monad m
+           => Value m
+           -> Maybe (Value m)
+           -> Maybe (Value m)
+           -> GingerT m (Value m)
+sliceValue (ListV xs) startValMay endValMay = do
+  startMay <- mapM (native . pure . asIntVal) startValMay
+  endMay <- mapM (native . pure . asIntVal) endValMay
+  pure . ListV $ sliceList xs (fromIntegral <$> startMay) (fromIntegral <$> endMay)
+sliceValue (StringV xs) startValMay endValMay = do
+  startMay <- mapM (native . pure . asIntVal) startValMay
+  endMay <- mapM (native . pure . asIntVal) endValMay
+  pure . StringV $ sliceText xs (fromIntegral <$> startMay) (fromIntegral <$> endMay)
+sliceValue (EncodedV (Encoded xs)) startValMay endValMay = do
+  startMay <- mapM (native . pure . asIntVal) startValMay
+  endMay <- mapM (native . pure . asIntVal) endValMay
+  pure . EncodedV . Encoded $ sliceText xs (fromIntegral <$> startMay) (fromIntegral <$> endMay)
+sliceValue x _ _ =
+  throwError $
+    TagError (Just "slicee") (Just "list or string") (Just . tagNameOf $ x)
 
 numericBinop :: Monad m
              => (Integer -> Integer -> Integer)

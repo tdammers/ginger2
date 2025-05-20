@@ -206,6 +206,11 @@ isDefined BoolE {} [] _ _ = pure . Right $ True
 isDefined StringLitE {} [] _ _ = pure . Right $ True
 isDefined IntLitE {} [] _ _ = pure . Right $ True
 isDefined FloatLitE {} [] _ _ = pure . Right $ True
+isDefined (SliceE slicee startMay endMay) [] ctx env = do
+  definedSlicee <- isDefined slicee [] ctx env
+  definedStart <- maybe (pure . Right $ True) (\start -> isDefined start [] ctx env) startMay
+  definedEnd <- maybe (pure . Right $ True) (\end -> isDefined end [] ctx env) endMay
+  pure $ allEitherBool [ definedSlicee, definedStart, definedEnd ]
 isDefined (IndexE parent selector) [] ctx env = do
   definedParent <- isDefined parent [] ctx env
   case definedParent of

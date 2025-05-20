@@ -335,6 +335,8 @@ data Expr
   | UnaryE !UnaryOperator !Expr
     -- | @BinaryE op lhs rhs
   | BinaryE !BinaryOperator !Expr !Expr
+    -- | @SliceE slicee start length
+  | SliceE !Expr !(Maybe Expr) !(Maybe Expr)
     -- | @DotE lhs rhs
   | DotE !Expr !Identifier
     -- | @IsE scrutinee test args kwargs@
@@ -375,6 +377,13 @@ instance Arbitrary Expr where
     (BinaryE <$> pure op <*> shrink a <*> pure b) ++
     (BinaryE <$> pure op <*> pure a <*> shrink b) ++
     [a, b]
+  shrink (SliceE slicee startMay endMay) =
+    (SliceE <$> pure slicee <*> pure startMay <*> shrink endMay) ++ 
+    (SliceE <$> pure slicee <*> shrink startMay <*> pure endMay) ++ 
+    (SliceE <$> shrink slicee <*> pure startMay <*> pure endMay) ++ 
+    maybeToList startMay ++
+    maybeToList endMay ++
+    [slicee]
   shrink (IsE a b args kwargs) =
     (IsE <$> pure a <*> pure b <*> pure args <*> shrink kwargs) ++
     (IsE <$> pure a <*> pure b <*> shrink args <*> pure kwargs) ++
@@ -419,6 +428,11 @@ arbitraryExpr defined = do
                       <*> arbitraryExpr defined
             )
 
+          , (10, QC.resize (max 0 $ fuel `div` 2 - 1) $
+              SliceE <$> arbitraryExpr defined
+                     <*> (fmap IntLitE <$> arbitrary)
+                     <*> (fmap IntLitE <$> arbitrary)
+            )
           , (10, QC.resize (max 0 $ fuel `div` 2 - 1) $
               DotE <$> arbitraryExpr defined
                    <*> arbitrary

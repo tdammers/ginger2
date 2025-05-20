@@ -89,6 +89,10 @@ instance RenderSyntax Expr where
     renderSyntax a <> "." <> renderSyntax b
   renderSyntax (DotE a b) =
     "(" <> renderSyntax a <> ")." <> renderSyntax b
+  renderSyntax (SliceE slicee start end) =
+    renderSyntax slicee <> "[" <>
+      maybe "" renderSyntax start <> ":" <>
+      maybe "" renderSyntax end <> "]"
   renderSyntax (IsE scrutinee test args kwargs) =
     "(" <> renderSyntax scrutinee <> " is " <> renderSyntax test <> renderArgs args kwargs <> ")"
   renderSyntax (CallE callee args kwargs) =

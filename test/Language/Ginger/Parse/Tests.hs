@@ -188,6 +188,12 @@ tests = testGroup "Language.Ginger.Parse"
           test_parser expr "foo(a, b = c)" (CallE (VarE "foo") [VarE "a"] [("b", VarE "c")])
       , testCase "index" $
           test_parser expr "foo[bar]" (IndexE (VarE "foo") (VarE "bar"))
+      , testCase "slice begin" $
+          test_parser expr "foo[bar:]" (SliceE (VarE "foo") (Just $ VarE "bar") Nothing)
+      , testCase "slice end" $
+          test_parser expr "foo[:bar]" (SliceE (VarE "foo") Nothing (Just $ VarE "bar"))
+      , testCase "slice both" $
+          test_parser expr "foo[bar:baz]" (SliceE (VarE "foo") (Just $ VarE "bar") (Just $ VarE "baz"))
       , testCase "dot-member" $
           test_parser expr "foo.bar" (DotE (VarE "foo") "bar")
       , testCase "filter (no args)" $
@@ -506,7 +512,14 @@ prop_parserRoundTrip :: (Eq a, Show a, Arbitrary a, RenderSyntax a) => P a -> a 
 prop_parserRoundTrip p v =
   let src = renderSyntaxText $ v
       expected = Right v
-      actual = parseGinger (p <* eof) "<input>" src
+      actual = mapLeft ImmediateString $ parseGinger (p <* eof) "<input>" src
   in
     counterexample (Text.unpack src) $
     expected === actual
+
+newtype ImmediateString = ImmediateString String
+  deriving (Eq)
+
+instance Show ImmediateString where
+  show (ImmediateString str) = str
+

@@ -189,7 +189,7 @@ tests = testGroup "Language.Ginger.Parse"
       , testCase "index" $
           test_parser expr "foo[bar]" (IndexE (VarE "foo") (VarE "bar"))
       , testCase "dot-member" $
-          test_parser expr "foo.bar" (DotE (VarE "foo") (StringLitE "bar"))
+          test_parser expr "foo.bar" (DotE (VarE "foo") "bar")
       , testCase "filter (no args)" $
           test_parser expr "foo|bar" (FilterE (VarE "foo") (VarE "bar") [] [])
       , testCase "filter (positional arg)" $
@@ -303,7 +303,7 @@ tests = testGroup "Language.Ginger.Parse"
               Nothing (Identifier "user") (VarE "users")
               Nothing
               NotRecursive
-              (InterpolationS (DotE (VarE "user") (StringLitE "name")))
+              (InterpolationS (DotE (VarE "user") "name"))
               Nothing
             )
       , testCase "for-else" $
@@ -313,7 +313,7 @@ tests = testGroup "Language.Ginger.Parse"
               Nothing (Identifier "user") (VarE "users")
               Nothing
               NotRecursive
-              (InterpolationS (DotE (VarE "user") (StringLitE "name")))
+              (InterpolationS (DotE (VarE "user") "name"))
               (Just (ImmediateS (Encoded "Nope")))
             )
       , testCase "for-if" $
@@ -321,9 +321,9 @@ tests = testGroup "Language.Ginger.Parse"
             "{% for user in users if user.name is defined %}{{ user.name }}{% endfor %}"
             (ForS
               Nothing (Identifier "user") (VarE "users")
-              (Just (IsE (DotE (VarE "user") (StringLitE "name")) (VarE "defined") [] []))
+              (Just (IsE (DotE (VarE "user") "name") (VarE "defined") [] []))
               NotRecursive
-              (InterpolationS (DotE (VarE "user") (StringLitE "name")))
+              (InterpolationS (DotE (VarE "user") "name"))
               Nothing
             )
       , testCase "for-if-else" $
@@ -334,7 +334,7 @@ tests = testGroup "Language.Ginger.Parse"
               (TernaryE (NotE (VarE "bar")) (VarE "foo") (VarE "baz"))
               Nothing
               NotRecursive
-              (InterpolationS (DotE (VarE "user") (StringLitE "name")))
+              (InterpolationS (DotE (VarE "user") "name"))
               Nothing
             )
       , testCase "for-if-recursive" $
@@ -345,7 +345,7 @@ tests = testGroup "Language.Ginger.Parse"
               (VarE "foo")
               (Just (VarE "bar"))
               Recursive
-              (InterpolationS (DotE (VarE "user") (StringLitE "name")))
+              (InterpolationS (DotE (VarE "user") "name"))
               Nothing
             )
       ]

@@ -256,6 +256,16 @@ evalE (BinaryE op aExpr bExpr) = do
   a <- evalE aExpr
   b <- evalE bExpr
   evalBinary op a b
+evalE (DotE aExpr b) = do
+  a <- evalE aExpr
+  attrMay <- getAttr a b
+  case attrMay of
+    Just attr -> pure attr
+    Nothing -> do
+      itemMay <- getItem a (StringV . identifierName $ b)
+      case itemMay of
+        Just item -> pure item
+        Nothing -> throwError $ NotInScopeError (Just $ Text.show a <> "." <> Text.show b)
 evalE (CallE callableExpr posArgsExpr namedArgsExpr) = do
   callable <- evalE callableExpr
   call Nothing callable posArgsExpr namedArgsExpr
@@ -421,17 +431,6 @@ evalBinary BinopIndex a b = do
       case attrMay of
         Just attr -> pure attr
         Nothing -> pure NoneV
-evalBinary BinopDot a b = do
-  attrMay <- case b of
-    StringV s -> getAttr a (Identifier s)
-    _ -> pure Nothing
-  case attrMay of
-    Just attr -> pure attr
-    Nothing -> do
-      itemMay <- getItem a b
-      case itemMay of
-        Just item -> pure item
-        Nothing -> throwError $ NotInScopeError (Just $ Text.show a <> "." <> Text.show b)
 evalBinary BinopConcat a b = concatValues a b
 
 getItem :: Monad m

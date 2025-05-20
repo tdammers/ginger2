@@ -83,12 +83,12 @@ instance RenderSyntax Expr where
     "-" <> renderSyntax expr
   renderSyntax (IndexE a b) =
     renderSyntax a <> "[" <> renderSyntax b <> "]"
-  renderSyntax (DotE (VarE a) (StringLitE s)) =
-    renderSyntax a <> "." <> Builder.fromText s
-  renderSyntax (DotE a (StringLitE s)) =
-    "(" <> renderSyntax a <> ")." <> Builder.fromText s
   renderSyntax (BinaryE op a b) =
     "(" <> renderSyntax a <> renderSyntax op <> renderSyntax b <> ")"
+  renderSyntax (DotE (VarE a) b) =
+    renderSyntax a <> "." <> renderSyntax b
+  renderSyntax (DotE a b) =
+    "(" <> renderSyntax a <> ")." <> renderSyntax b
   renderSyntax (IsE scrutinee test args kwargs) =
     "(" <> renderSyntax scrutinee <> " is " <> renderSyntax test <> renderArgs args kwargs <> ")"
   renderSyntax (CallE callee args kwargs) =
@@ -139,7 +139,6 @@ instance RenderSyntax BinaryOperator where
   renderSyntax BinopOr = " or "
   renderSyntax BinopIn = " in "
   renderSyntax BinopIndex = " [] "
-  renderSyntax BinopDot = "."
   renderSyntax BinopConcat = " ~ "
 
 renderFlow :: Builder -> Builder

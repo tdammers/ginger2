@@ -223,6 +223,8 @@ isDefined (BinaryE _ a b) [] ctx env = do
   definedA <- isDefined a [] ctx env
   definedB <- isDefined b [] ctx env
   pure $ (&&) <$> definedA <*> definedB
+isDefined (DotE a _b) [] ctx env = do
+  isDefined a [] ctx env
 isDefined (TernaryE c a b) [] ctx env = do
   definedA <- isDefined a [] ctx env
   definedB <- isDefined b [] ctx env

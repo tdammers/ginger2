@@ -405,7 +405,7 @@ memberAccessExpr = do
 
     dotTail lhs = do
       chunk "." *> space
-      selector <- StringLitE <$> identifierRaw
+      selector <- identifier
       exprTail (DotE lhs selector)
 
     bracketsTail lhs = do

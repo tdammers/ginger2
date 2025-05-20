@@ -930,7 +930,7 @@ prop_attr :: (Arbitrary a, Show a, ToValue b Identity)
             -> a
             -> Property
 prop_attr methodName mkSelf mkExpected =
-  prop_eval (\t' -> DotE (mkSelf t') (StringLitE $ identifierName methodName))
+  prop_eval (\t' -> DotE (mkSelf t') methodName)
             (toValue . mkExpected)
 
 prop_method :: (Arbitrary a, Show a)
@@ -942,7 +942,7 @@ prop_method :: (Arbitrary a, Show a)
             -> Property
 prop_method methodName mkSelf mkArgs mkExpected t =
   counterexample (show $ mkArgs t) $
-  prop_eval (\t' -> CallE (DotE (mkSelf t) (StringLitE $ identifierName methodName)) (mkArgs t') [])
+  prop_eval (\t' -> CallE (DotE (mkSelf t) methodName) (mkArgs t') [])
             mkExpected
             t
 
@@ -1333,7 +1333,7 @@ prop_importValueAlias (ArbitraryText name) alias varName valE =
                           , InterpolationS $
                               DotE
                                 (VarE alias)
-                                (StringLitE $ identifierName varName)
+                                varName
                           ]
   in
     counterexample ("SOURCE:\n" ++ Text.unpack bodySrc) $

@@ -335,6 +335,8 @@ data Expr
   | UnaryE !UnaryOperator !Expr
     -- | @BinaryE op lhs rhs
   | BinaryE !BinaryOperator !Expr !Expr
+    -- | @DotE lhs rhs
+  | DotE !Expr !Identifier
     -- | @IsE scrutinee test args kwargs@
   | IsE !Expr !Expr ![Expr] ![(Identifier, Expr)]
     -- | @CallE callee args kwargs@
@@ -365,6 +367,10 @@ instance Arbitrary Expr where
   shrink (UnaryE op e) =
     (UnaryE <$> pure op <*> shrink e) ++
     [e]
+  shrink (DotE a b) =
+    (DotE <$> pure a <*> shrink b) ++
+    (DotE <$> shrink a <*> pure b) ++
+    [a]
   shrink (BinaryE op a b) =
     (BinaryE <$> pure op <*> shrink a <*> pure b) ++
     (BinaryE <$> pure op <*> pure a <*> shrink b) ++
@@ -408,14 +414,14 @@ arbitraryExpr defined = do
           , (100, ListE <$> fuelledList (arbitraryExpr defined))
           , (100, DictE <$> fuelledList ((,) <$> arbitraryExpr defined <*> arbitraryExpr defined))
           , (90, QC.resize (max 0 $ fuel `div` 2 - 1) $
-              BinaryE <$> (arbitrary `QC.suchThat` (/= BinopDot))
+              BinaryE <$> arbitrary
                       <*> arbitraryExpr defined
                       <*> arbitraryExpr defined
             )
 
           , (10, QC.resize (max 0 $ fuel `div` 2 - 1) $
               DotE <$> arbitraryExpr defined
-                   <*> (StringLitE . identifierName <$> arbitrary)
+                   <*> arbitrary
             )
 
           , (100, QC.resize (fuel `div` 3) $
@@ -478,8 +484,6 @@ data BinaryOperator
   | BinopIn
     -- List / dict indexing (@[]@)
   | BinopIndex
-    -- Dot member access (@.@)
-  | BinopDot
     -- String concatenation
   | BinopConcat
     -- Test
@@ -535,9 +539,6 @@ pattern InE a b = BinaryE BinopIn a b
 
 pattern IndexE :: Expr -> Expr -> Expr
 pattern IndexE a b = BinaryE BinopIndex a b
-
-pattern DotE :: Expr -> Expr -> Expr
-pattern DotE a b = BinaryE BinopDot a b
 
 pattern ConcatE :: Expr -> Expr -> Expr
 pattern ConcatE a b = BinaryE BinopConcat a b

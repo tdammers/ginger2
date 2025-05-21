@@ -30,6 +30,7 @@ import Data.Maybe (fromMaybe, listToMaybe, catMaybes)
 import Text.Read (readMaybe)
 import Data.Bits (popCount)
 import Data.List (sortBy)
+import Text.Printf (printf)
 
 --------------------------------------------------------------------------------
 -- Builtins
@@ -52,7 +53,7 @@ builtinFunctions = Map.fromList $
   , ("dictsort", ProcedureV fnDictsort)
   , ("escape", ProcedureV fnEscape)
   , ("even", intBuiltin even)
-  -- , ("filesizeformat", undefined)
+  , ("filesizeformat", ProcedureV fnFilesizeFormat)
   , ("first", ProcedureV fnFirst)
   , ("float", ProcedureV fnToFloat)
   -- , ("forceescape", undefined)
@@ -64,7 +65,7 @@ builtinFunctions = Map.fromList $
   , ("join", ProcedureV fnJoin)
   , ("last", ProcedureV fnLast)
   , ("length", ProcedureV fnLength)
-  -- , ("list", undefined)
+  , ("list", ProcedureV fnToList)
   , ("lower", textBuiltin Text.toLower)
   -- , ("map", undefined)
   -- , ("max", undefined)
@@ -219,6 +220,37 @@ fnEscape = mkFn1' "escape"
   $ \ctx value ->
         (EncodedV @m) <$>
           encodeWith ctx value
+
+fnToList :: forall m. Monad m => Procedure m
+fnToList = mkFn1 "list"
+              ("value", Nothing :: Maybe (Value m))
+  $ \case
+    ListV xs -> pure xs
+    DictV xs -> pure (Map.elems xs)
+    StringV txt ->
+      pure $ map (toValue . Text.singleton) $ Text.unpack txt
+    EncodedV (Encoded txt) ->
+      pure $ map (toValue . Text.singleton) $ Text.unpack txt
+    NativeV obj ->
+      native (Right <$> nativeObjectAsList obj) >>=
+        maybe
+          (throwError $
+            ArgumentError
+              (Just "list")
+              (Just "value")
+              (Just "iterable")
+              (Just "non-iterable native object")
+          )
+          pure
+    BytesV bytes ->
+      pure $ map toValue $ BS.unpack bytes
+    x -> throwError $
+            ArgumentError
+              (Just "list")
+              (Just "value")
+              (Just "iterable")
+              (Just . tagNameOf $ x)
+
 
 fnToFloat :: forall m. Monad m => Procedure m
 fnToFloat = mkFn2 "float"
@@ -485,6 +517,59 @@ fnCenter = mkFn3 "center"
       Text.replicate paddingLeft fillchar <>
       value <>
       Text.replicate paddingRight fillchar
+
+newtype FileSize = FileSize Integer
+
+instance ToValue FileSize m where
+  toValue (FileSize i) = IntV i
+
+instance Monad m => FromValue FileSize m where
+  fromValue (IntV i) =
+    pure . Right $ FileSize i
+  fromValue (FloatV f) =
+    pure . Right $ FileSize (round f)
+  fromValue (StringV txt) =
+    case readMaybe (Text.unpack txt) of
+      Nothing ->
+        case readMaybe (Text.unpack txt) of
+          Nothing ->
+            pure . Left $ ArgumentError (Just "int") (Just "value") (Just "numeric value") (Just $ Text.show txt)
+          Just (f :: Double) ->
+            pure . Right $ FileSize (round f)
+      Just i ->
+        pure . Right $ FileSize i
+  fromValue x =
+    pure . Left $ ArgumentError (Just "int") (Just "value") (Just "numeric value") (Just . tagNameOf $ x)
+
+fnFilesizeFormat :: Monad m => Procedure m
+fnFilesizeFormat = mkFn2 "filesizeformat"
+                    ("value", Nothing)
+                    ("binary", Just False)
+  $ \(FileSize value) binary -> do
+      let (multiplier, units) =
+            if binary then
+              (1024, ["ki", "Mi", "Gi", "Ti", "Pi"])
+            else
+              (1000, ["k", "M", "G", "T", "P"])
+      let str = go multiplier units value
+      pure $ str <> "B"
+  where
+    go :: Integer -> [Text] -> Integer -> Text
+    go _ [] value
+      = Text.show value
+    go multiplier units value | value < 0
+      = "-" <> go multiplier units (abs value)
+    go multiplier (unit:units) value
+      | value < multiplier
+      = Text.show value
+      | value < multiplier * multiplier || null units
+      = Text.pack $
+          printf "%i.%01i%s"
+            (value `div` multiplier)
+            ((value * 10 `div` multiplier) `mod` 10)
+            unit
+      | otherwise
+      = go multiplier units (value `div` multiplier)
 
 fnBatch :: forall m. Monad m => Procedure m
 fnBatch = mkFn3 "batch"

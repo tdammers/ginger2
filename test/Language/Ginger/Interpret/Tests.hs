@@ -186,6 +186,78 @@ tests = testGroup "Language.Ginger.Interpret"
         , testProperty "float from int" $
             prop_eval (\i -> FilterE (FloatLitE i) (VarE "float") [] [])
                       FloatV
+        , testProperty "list from list" $
+            prop_eval (\xs -> FilterE (ListE $ map IntLitE xs) (VarE "list") [] [])
+                      (ListV . map IntV)
+        , testProperty "list from string" $
+            prop_eval (\(ArbitraryText txt) ->
+                        FilterE (StringLitE txt) (VarE "list") [] []
+                      )
+                      (\(ArbitraryText txt) ->
+                        ListV . map (StringV . Text.singleton) . Text.unpack $ txt
+                      )
+        , testGroup "filesizeformat"
+            [ testProperty "bytes" $
+                prop_eval
+                  (\(i :: Word8) ->
+                    FilterE (IntLitE $ fromIntegral i) (VarE "filesizeformat") [] []
+                  )
+                  (\i -> StringV $ Text.show i <> "B")
+            , testProperty "whole kilobytes" $
+                prop_eval
+                  (\(i :: Word8) ->
+                    FilterE (IntLitE $ fromIntegral i * 1000 + 1000) (VarE "filesizeformat") [] []
+                  )
+                  (\i -> StringV $ Text.show (fromIntegral i + 1 :: Int) <> ".0kB")
+            , testProperty "fractional kilobytes" $
+                prop_eval
+                  (\(i :: Word8, j :: Word8) ->
+                    FilterE (IntLitE $ fromIntegral i * 1000 + 1000 + fromIntegral j) (VarE "filesizeformat") [] []
+                  )
+                  (\(i, j) ->
+                    StringV $
+                      Text.show (fromIntegral i + 1 :: Int) <> "." <>
+                      Text.show (j `div` 100) <>
+                      "kB"
+                  )
+            , testProperty "fractional megabytes" $
+                prop_eval
+                  (\(i :: Word8, j :: Word8) ->
+                    FilterE (IntLitE $ fromIntegral i * 1000000 + 1000000 + fromIntegral j * 1000) (VarE "filesizeformat") [] []
+                  )
+                  (\(i, j) ->
+                    StringV $
+                      Text.show (fromIntegral i + 1 :: Int) <> "." <>
+                      Text.show (j `div` 100) <>
+                      "MB"
+                  )
+            , testProperty "fractional gigabytes" $
+                prop_eval
+                  (\(i :: Word8, j :: Word8) ->
+                    FilterE (IntLitE $ fromIntegral i * 1000000000 + 1000000000 + fromIntegral j * 1000000) (VarE "filesizeformat") [] []
+                  )
+                  (\(i, j) ->
+                    StringV $
+                      Text.show (fromIntegral i + 1 :: Int) <> "." <>
+                      Text.show (j `div` 100) <>
+                      "GB"
+                  )
+            , testProperty "fractional kibibytes" $
+                prop_eval
+                  (\(i :: Word8, j :: Word8) ->
+                    FilterE
+                      (IntLitE $ fromIntegral i * 1024 + 1024 + fromIntegral j)
+                      (VarE "filesizeformat")
+                      [TrueE]
+                      []
+                  )
+                  (\(i, j) ->
+                    StringV $
+                      Text.show (fromIntegral i + 1 :: Int) <> "." <>
+                      Text.show (fromIntegral j * 1000 `div` 102400 :: Int) <>
+                      "kiB"
+                  )
+            ]
         , testProperty "length (string)" $
             prop_eval
               (\(ArbitraryText t) ->

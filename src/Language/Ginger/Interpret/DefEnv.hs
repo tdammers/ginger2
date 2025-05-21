@@ -25,6 +25,10 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust, fromJust)
 import Data.Text (Text)
+import qualified Data.Text as Text
+import qualified Data.Text.Lazy as LText
+import Data.Text.Lazy.Builder (Builder)
+import qualified Data.Text.Lazy.Builder as Builder
 
 defEnv :: Monad m => Env m
 defEnv =
@@ -37,7 +41,23 @@ defContext :: Monad m => Context m
 defContext =
   emptyContext
     { contextVars = defVars
+    , contextEncode = pure . htmlEncode
     }
+
+htmlEncode :: Text -> Encoded
+htmlEncode =
+  Encoded . LText.toStrict . Builder.toLazyText . Text.foldl' f mempty
+  where
+    f :: Builder -> Char -> Builder
+    f lhs c = lhs <> encodeChar c
+
+    encodeChar :: Char -> Builder
+    encodeChar '&' = "&amp;"
+    encodeChar '<' = "&lt;"
+    encodeChar '>' = "&gt;"
+    encodeChar '"' = "&quot;"
+    encodeChar '\'' = "&apos;"
+    encodeChar c = Builder.singleton c
 
 defVars :: forall m. Monad m => Map Identifier (Value m)
 defVars = Map.fromList

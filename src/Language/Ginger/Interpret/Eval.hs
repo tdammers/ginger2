@@ -8,6 +8,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 module Language.Ginger.Interpret.Eval
 ( Eval (..)
@@ -40,17 +41,17 @@ import Control.Monad.Except
   ( MonadError (..)
   , throwError
   )
-import Control.Monad.Reader (ask , asks, local)
+import Control.Monad.Reader (ask , asks, local, MonadReader (..))
 import Control.Monad.State (gets)
-import Control.Monad.Trans (lift)
-import qualified Data.ByteString.Base64 as Base64
+import Control.Monad.Trans (lift, MonadTrans (..))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (listToMaybe, catMaybes, fromMaybe)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as Text
-import Data.Text.Encoding (decodeUtf8)
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as ByteString
 
 loadTemplate :: Monad m => Text -> GingerT m LoadedTemplate
 loadTemplate name = do
@@ -74,50 +75,6 @@ loadTemplateMaybe name = do
           parent <- forM (templateParent t) loadTemplate
           let body = templateBody t
           pure . Just $ LoadedTemplate parent body
-
-stringify :: Monad m => Value m -> GingerT m Text
-stringify NoneV = pure ""
-stringify TrueV = pure "true"
-stringify FalseV = pure ""
-stringify (StringV str) = pure str
-stringify (BytesV b) =
-  pure . decodeUtf8 . Base64.encode $ b
-stringify (EncodedV (Encoded e)) =
-  pure e
-stringify (IntV i) = pure $ Text.show i
-stringify (FloatV f) = pure $ Text.show f
-stringify (ScalarV s) = pure . Text.show $ s
-stringify (ListV xs) = do
-  elems <- mapM stringify xs
-  pure $ Text.intercalate ", " elems
-stringify (DictV m) = do
-  elems <- mapM stringifyKV $ Map.toAscList m
-  pure $ Text.intercalate ", " elems
-stringify (NativeV n) =
-  native (Right <$> nativeObjectStringified n)
-stringify (ProcedureV _) =
-  pure "[[procedure]]"
-stringify (TestV _) =
-  pure "[[test]]"
-stringify (FilterV _) =
-  pure "[[filter]]"
-
-stringifyKV :: Monad m => (Scalar, Value m) -> GingerT m Text
-stringifyKV (k, v) = do
-  kStr <- stringify (ScalarV k)
-  vStr <- stringify v
-  pure $ kStr <> ": " <> vStr
-
-encodeText :: Monad m => Text -> GingerT m Encoded
-encodeText str = do
-  encoder <- asks contextEncode
-  native (Right <$> encoder str)
-
-encode :: Monad m => Value m -> GingerT m Encoded
-encode (EncodedV e) = pure e
-encode (NativeV n) = native (Right <$> nativeObjectEncoded n)
-encode (ProcedureV _) = pure $ Encoded "[[procedure]]"
-encode v = encodeText =<< stringify v
 
 mapArgs :: forall m. Monad m
         => [(Identifier, Maybe (Value m))]
@@ -208,7 +165,8 @@ call callerMay callable posArgsExpr namedArgsExpr = do
   case callable of
     ProcedureV (NativeProcedure f) ->
       withEnv mempty $ do
-        native $ f args
+        ctx <- ask
+        native $ f args ctx
     ProcedureV (GingerProcedure env argsSig f) -> do
       withEnv env $ do
         maybe (pure ()) (setVar "caller") callerMay
@@ -328,6 +286,18 @@ sliceText xs startMay endMay =
                 Just n -> n
   in Text.take end . Text.drop start $ xs
 
+sliceByteString :: ByteString -> Maybe Int -> Maybe Int -> ByteString
+sliceByteString xs startMay endMay =
+  let start = case startMay of
+                Nothing -> 0
+                Just n | n < 0 -> ByteString.length xs + n
+                Just n -> n
+      end = case endMay of
+                Nothing -> ByteString.length xs - start
+                Just n | n < 0 -> ByteString.length xs - start + n
+                Just n -> n
+  in ByteString.take end . ByteString.drop start $ xs
+
 sliceValue :: Monad m
            => Value m
            -> Maybe (Value m)
@@ -341,6 +311,10 @@ sliceValue (StringV xs) startValMay endValMay = do
   startMay <- mapM (native . pure . asIntVal) startValMay
   endMay <- mapM (native . pure . asIntVal) endValMay
   pure . StringV $ sliceText xs (fromIntegral <$> startMay) (fromIntegral <$> endMay)
+sliceValue (BytesV xs) startValMay endValMay = do
+  startMay <- mapM (native . pure . asIntVal) startValMay
+  endMay <- mapM (native . pure . asIntVal) endValMay
+  pure . BytesV $ sliceByteString xs (fromIntegral <$> startMay) (fromIntegral <$> endMay)
 sliceValue (EncodedV (Encoded xs)) startValMay endValMay = do
   startMay <- mapM (native . pure . asIntVal) startValMay
   endMay <- mapM (native . pure . asIntVal) endValMay
@@ -584,7 +558,9 @@ evalS (MacroS name argsSig body) = do
 evalS (CallS name posArgsExpr namedArgsExpr bodyS) = whenOutputPolicy $ do
   callee <- lookupVar name
   callerVal <- eval bodyS
-  let caller = ProcedureV $ NativeProcedure (const . pure . Right $ callerVal)
+  let caller =
+        ProcedureV $
+          NativeProcedure (const . const . pure . Right $ callerVal)
   call (Just caller) callee posArgsExpr namedArgsExpr
 evalS (FilterS name posArgsExpr namedArgsExpr bodyS) = whenOutputPolicy $ do
   callee <- lookupVar name
@@ -757,7 +733,6 @@ evalLoop loopKeyMay loopName iteree loopCondMay recursivity bodyS elseSMay recur
         maybe (pure ()) (\loopKey -> setVar loopKey k) loopKeyMay
         setVar loopName v
         env <- gets evalEnv
-        ctx <- ask
         setVar "loop" $
           dictV
             [ "index" .= (n + 1)
@@ -773,7 +748,7 @@ evalLoop loopKeyMay loopName iteree loopCondMay recursivity bodyS elseSMay recur
             , "previtem" .= prevVal
             , "nextitem" .= (snd <$> listToMaybe xs)
             , "changed" .= changedFunc env v
-            , "__call__" .= if is recursivity then Just (recurFunc ctx env) else Nothing
+            , "__call__" .= if is recursivity then Just (recurFunc env) else Nothing
             ]
         body <- evalS bodyS
         pure (Just v, body)
@@ -785,12 +760,20 @@ evalLoop loopKeyMay loopName iteree loopCondMay recursivity bodyS elseSMay recur
     changedFunc env v = ProcedureV $ GingerProcedure env [("val", Just v)] $
       EqualE (IndexE (VarE "loop") (StringLitE "previtem")) (VarE "val")
 
-    recurFunc :: Context m -> Env m -> Value m
-    recurFunc ctx env = ProcedureV . NativeProcedure $ \args -> do
+    recurFunc :: Env m -> Value m
+    recurFunc env = ProcedureV . NativeProcedure $ \args ctx -> do
       case args of
         [(_, iteree')] ->
           runGingerT
-            (evalLoop loopKeyMay loopName iteree' loopCondMay recursivity bodyS elseSMay (succ recursionLevel))
+            (evalLoop
+              loopKeyMay
+              loopName
+              iteree'
+              loopCondMay
+              recursivity
+              bodyS
+              elseSMay
+              (succ recursionLevel))
             ctx
             env
         [] -> pure . Left $

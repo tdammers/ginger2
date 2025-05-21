@@ -7,6 +7,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 
 module Language.Ginger.Interpret.Type
@@ -81,10 +82,6 @@ data LoadedTemplate =
 runGingerT :: Monad m => GingerT m a -> Context m -> Env m -> m (Either RuntimeError a)
 runGingerT g ctx env =
   runExceptT (evalStateT (runReaderT (unGingerT g) ctx) (EvalState env mempty mempty))
-
-native :: Monad m => m (Either RuntimeError a) -> GingerT m a
-native action =
-  lift action >>= either throwError pure
 
 deriving instance Monad m => MonadState (EvalState m) (GingerT m)
 deriving instance Monad m => MonadReader (Context m) (GingerT m)

@@ -18,6 +18,7 @@ import qualified Data.ByteString as BS
 import Data.Char (isControl, isSpace, isAlpha, isAlphaNum, chr)
 import Data.Either (isRight)
 import Data.Int (Int8, Int16, Int32, Int64)
+import Data.List (sortOn)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust, isNothing)
@@ -32,6 +33,7 @@ import Test.Tasty.QuickCheck hiding ((.&.))
 
 import Language.Ginger.AST
 import Language.Ginger.Interpret
+import Language.Ginger.Interpret.DefEnv (htmlEncode)
 import Language.Ginger.Render
 import Language.Ginger.RuntimeError
 import Language.Ginger.TestUtils
@@ -86,6 +88,9 @@ tests = testGroup "Language.Ginger.Interpret"
       , testProperty "String at start" prop_sliceStringStart
       , testProperty "String at end" prop_sliceStringEnd
       , testProperty "String both sides" prop_sliceStringBoth
+      , testProperty "Bytes at start" prop_sliceBytesStart
+      , testProperty "Bytes at end" prop_sliceBytesEnd
+      , testProperty "Bytes both sides" prop_sliceBytesBoth
       ]
     , testGroup "BinaryE"
       [ testProperty "Integer addition" (prop_binop @Integer BinopPlus (+))
@@ -203,92 +208,213 @@ tests = testGroup "Language.Ginger.Interpret"
                     [] []
               )
               (\(PositiveInt i) -> toValue i)
-        , testProperty "join" $
+
+        , testGroup "escape"
+            [ testProperty "string" $
+                prop_eval
+                  (\(ArbitraryText t) ->
+                    FilterE (StringLitE t) (VarE "escape") [] []
+                  )
+                  (\(ArbitraryText t) ->
+                      EncodedV (htmlEncode t)
+                  )
+            , testProperty "int" $
+                prop_eval
+                  (\i ->
+                    FilterE (IntLitE i) (VarE "escape") [] []
+                  )
+                  (\i ->
+                      EncodedV (Encoded $ Text.show i)
+                  )
+            ]
+
+        , testGroup "first"
+            [ testProperty "list" $
+                prop_eval
+                  (\(x, xs) ->
+                    FilterE (ListE (IntLitE x : map IntLitE xs)) (VarE "first") [] []
+                  )
+                  (\(x, _) ->
+                      IntV x
+                  )
+            , testProperty "empty list" $
+                prop_eval
+                  (\() ->
+                    FilterE (ListE []) (VarE "first") [] []
+                  )
+                  (\() ->
+                      NoneV
+                  )
+            , testProperty "string" $
+                prop_eval
+                  (\(x, ArbitraryText xs) ->
+                    FilterE (StringLitE (Text.singleton x <> xs)) (VarE "first") [] []
+                  )
+                  (\(x, _) ->
+                      StringV (Text.singleton x)
+                  )
+            , testProperty "empty string" $
+                prop_eval
+                  (\() ->
+                    FilterE (StringLitE "") (VarE "first") [] []
+                  )
+                  (\() ->
+                      StringV ""
+                  )
+            ]
+
+        , testGroup "last"
+            [ testProperty "list" $
+                prop_eval
+                  (\(x, xs) ->
+                    FilterE (ListE (map IntLitE (xs ++ [x]))) (VarE "last") [] []
+                  )
+                  (\(x, _) ->
+                      IntV x
+                  )
+            , testProperty "empty list" $
+                prop_eval
+                  (\() ->
+                    FilterE (ListE []) (VarE "last") [] []
+                  )
+                  (\() ->
+                      NoneV
+                  )
+            , testProperty "string" $
+                prop_eval
+                  (\(x, ArbitraryText xs) ->
+                    FilterE (StringLitE (xs <> Text.singleton x)) (VarE "last") [] []
+                  )
+                  (\(x, _) ->
+                      StringV (Text.singleton x)
+                  )
+            , testProperty "empty string" $
+                prop_eval
+                  (\() ->
+                    FilterE (StringLitE "") (VarE "last") [] []
+                  )
+                  (\() ->
+                      StringV ""
+                  )
+            ]
+
+        , testProperty "dictsort" $
             prop_eval
-              (\(ArbitraryText t, ArbitraryText u) ->
-                  FilterE (ListE [StringLitE t, StringLitE u]) (VarE "join") [] []
+              (\items ->
+                FilterE
+                  (DictE $
+                    [ (StringLitE k, StringLitE v)
+                    | (NonEmptyText k, ArbitraryText v)
+                    <- items
+                    ]
+                  )
+                  (VarE "dictsort")
+                  []
+                  [(Identifier "case_sensitive", TrueE)]
               )
-              (\(ArbitraryText t, ArbitraryText u) ->
-                StringV (t <> u)
+              (\items ->
+                toValue $
+                  sortOn fst
+                    [ (k, v)
+                    | (NonEmptyText k, ArbitraryText v)
+                    <- Map.toAscList . Map.fromList $ items
+                    ]
               )
-        , testProperty "join ints" $
-            prop_eval
-              (\(i, j) ->
-                  FilterE (ListE [IntLitE i, IntLitE j]) (VarE "join") [] []
-              )
-              (\(i, j) ->
-                StringV (Text.show i <> Text.show j)
-              )
-        , testProperty "join with sep" $
-            prop_eval
-              (\(ArbitraryText t, ArbitraryText u, ArbitraryText v, ArbitraryText s) ->
-                  FilterE
-                    (ListE [StringLitE t, StringLitE u, StringLitE v])
-                    (VarE "join")
-                    [StringLitE s]
-                    []
-              )
-              (\(ArbitraryText t, ArbitraryText u, ArbitraryText v, ArbitraryText s) ->
-                StringV (t <> s <> u <> s <> v)
-              )
-        , testProperty "default (undefined)" $
-            prop_eval (\i -> FilterE (VarE "something_undefined") (VarE "default") [(IntLitE i)] []) IntV
-        , testProperty "default (none)" $
-            prop_eval (\i -> FilterE NoneE (VarE "default") [(IntLitE i)] []) IntV
-        , testProperty "default (boolean false)" $
-            prop_eval (\i -> FilterE FalseE (VarE "default") [(IntLitE i)] []) (const FalseV)
-        , testProperty "default (boolean false, boolean mode)" $
-            prop_eval (\i -> FilterE FalseE (VarE "default") [(IntLitE i), TrueE] []) IntV
-        , testProperty "center string (width as vararg)" $
-            prop_eval (\((ArbitraryText t), w) ->
-                          FilterE (StringLitE t) (VarE "center") [IntLitE $ fromIntegral w] []
-                      )
-                      (\((ArbitraryText t), w) ->
-                          if Text.length t >= w then
-                            StringV t
-                          else
-                            let p = w - Text.length t
-                                pL = p `div` 2
-                                pR = p - pL
-                            in StringV $ Text.replicate pL " " <> t <> Text.replicate pR " "
-                      )
-        , testProperty "center string (width as kwarg)" $
-            prop_eval (\((ArbitraryText t), w) ->
-                          FilterE (StringLitE t) (VarE "center") [] [("width", IntLitE $ fromIntegral w)]
-                      )
-                      (\((ArbitraryText t), w) ->
-                          if Text.length t >= w then
-                            StringV t
-                          else
-                            let p = w - Text.length t
-                                pL = p `div` 2
-                                pR = p - pL
-                            in StringV $ Text.replicate pL " " <> t <> Text.replicate pR " "
-                      )
-        , testProperty "round" $
-            prop_eval
-              (\(PositiveInt i) ->
-                  FilterE
-                    (FloatLitE $ fromIntegral i / 10)
-                    (VarE "round")
-                    []
-                    [("precision", IntLitE 0), ("method", StringLitE "floor")]
-              )
-              (\(PositiveInt i) ->
-                  FloatV . fromIntegral $ (i `div` 10 :: Integer)
-              )
-        , testProperty "round (precision 2, floor)" $
-            prop_eval
-              (\(PositiveInt i) ->
-                  FilterE
-                    (FloatLitE $ fromIntegral i / 1000)
-                    (VarE "round")
-                    []
-                    [("precision", IntLitE 2), ("method", StringLitE "floor")]
-              )
-              (\(PositiveInt i) ->
-                  FloatV $ fromIntegral (i `div` 10 :: Integer) / 100
-              )
+
+        , testGroup "join"
+            [ testProperty "simple" $
+                prop_eval
+                  (\(ArbitraryText t, ArbitraryText u) ->
+                      FilterE (ListE [StringLitE t, StringLitE u]) (VarE "join") [] []
+                  )
+                  (\(ArbitraryText t, ArbitraryText u) ->
+                    StringV (t <> u)
+                  )
+            , testProperty "ints" $
+                prop_eval
+                  (\(i, j) ->
+                      FilterE (ListE [IntLitE i, IntLitE j]) (VarE "join") [] []
+                  )
+                  (\(i, j) ->
+                    StringV (Text.show i <> Text.show j)
+                  )
+            , testProperty "with sep" $
+                prop_eval
+                  (\(ArbitraryText t, ArbitraryText u, ArbitraryText v, ArbitraryText s) ->
+                      FilterE
+                        (ListE [StringLitE t, StringLitE u, StringLitE v])
+                        (VarE "join")
+                        [StringLitE s]
+                        []
+                  )
+                  (\(ArbitraryText t, ArbitraryText u, ArbitraryText v, ArbitraryText s) ->
+                    StringV (t <> s <> u <> s <> v)
+                  )
+            ]
+        , testGroup "default"
+            [ testProperty "undefined" $
+                prop_eval (\i -> FilterE (VarE "something_undefined") (VarE "default") [(IntLitE i)] []) IntV
+            , testProperty "none" $
+                prop_eval (\i -> FilterE NoneE (VarE "default") [(IntLitE i)] []) IntV
+            , testProperty "boolean false" $
+                prop_eval (\i -> FilterE FalseE (VarE "default") [(IntLitE i)] []) (const FalseV)
+            , testProperty "boolean false, boolean mode" $
+                prop_eval (\i -> FilterE FalseE (VarE "default") [(IntLitE i), TrueE] []) IntV
+            ]
+        , testGroup "center string"
+            [ testProperty "width as vararg" $
+                prop_eval (\((ArbitraryText t), w) ->
+                              FilterE (StringLitE t) (VarE "center") [IntLitE $ fromIntegral w] []
+                          )
+                          (\((ArbitraryText t), w) ->
+                              if Text.length t >= w then
+                                StringV t
+                              else
+                                let p = w - Text.length t
+                                    pL = p `div` 2
+                                    pR = p - pL
+                                in StringV $ Text.replicate pL " " <> t <> Text.replicate pR " "
+                          )
+            , testProperty "width as kwarg" $
+                prop_eval (\((ArbitraryText t), w) ->
+                              FilterE (StringLitE t) (VarE "center") [] [("width", IntLitE $ fromIntegral w)]
+                          )
+                          (\((ArbitraryText t), w) ->
+                              if Text.length t >= w then
+                                StringV t
+                              else
+                                let p = w - Text.length t
+                                    pL = p `div` 2
+                                    pR = p - pL
+                                in StringV $ Text.replicate pL " " <> t <> Text.replicate pR " "
+                          )
+            ]
+        , testGroup "round"
+            [ testProperty "precision 0" $
+                prop_eval
+                  (\(PositiveInt i) ->
+                      FilterE
+                        (FloatLitE $ fromIntegral i / 10)
+                        (VarE "round")
+                        []
+                        [("precision", IntLitE 0), ("method", StringLitE "floor")]
+                  )
+                  (\(PositiveInt i) ->
+                      FloatV . fromIntegral $ (i `div` 10 :: Integer)
+                  )
+            , testProperty "precision 2, floor" $
+                prop_eval
+                  (\(PositiveInt i) ->
+                      FilterE
+                        (FloatLitE $ fromIntegral i / 1000)
+                        (VarE "round")
+                        []
+                        [("precision", IntLitE 2), ("method", StringLitE "floor")]
+                  )
+                  (\(PositiveInt i) ->
+                      FloatV $ fromIntegral (i `div` 10 :: Integer) / 100
+                  )
+            ]
 
         , testProperty "items" $
             prop_eval
@@ -833,6 +959,52 @@ prop_sliceStringBoth (ArbitraryText items) start end =
   in
     actual === expected
 
+prop_sliceBytesStart :: ArbitraryByteString
+                        -> Int
+                        -> Property
+prop_sliceBytesStart (ArbitraryByteString items) start =
+  let expected = if start < 0 then
+                    toValue $ BS.drop (BS.length items + start) items
+                 else
+                    toValue $ BS.drop start items
+      actual = runGingerIdentity $ do
+                setVar "items" (toValue items)
+                setVar "start" (toValue start)
+                eval (SliceE (VarE "items") (Just $ VarE "start") Nothing)
+  in
+    actual === expected
+
+prop_sliceBytesEnd :: ArbitraryByteString
+                  -> Int
+                  -> Property
+prop_sliceBytesEnd (ArbitraryByteString items) end =
+  let expected = if end < 0 then
+                    toValue $ BS.take (BS.length items + end) items
+                 else
+                    toValue $ BS.take end items
+      actual = runGingerIdentity $ do
+                setVar "items" (toValue items)
+                setVar "end" (toValue end)
+                eval (SliceE (VarE "items") Nothing (Just $ VarE "end"))
+  in
+    actual === expected
+
+prop_sliceBytesBoth :: ArbitraryByteString
+                  -> Int
+                  -> Int
+                  -> Property
+prop_sliceBytesBoth (ArbitraryByteString items) start end =
+  let start' = if start < 0 then BS.length items + start else start
+      end' = if end < 0 then BS.length items - start' + end else end
+      expected = toValue . BS.take end' . BS.drop start' $ items
+      actual = runGingerIdentity $ do
+                setVar "items" (toValue items)
+                setVar "start" (toValue start)
+                setVar "end" (toValue end)
+                eval (SliceE (VarE "items") (Just $ VarE "start") (Just $ VarE "end"))
+  in
+    actual === expected
+
 prop_unop :: (ToValue a Identity, ToValue b Identity)
            => UnaryOperator
            -> (a -> b)
@@ -945,7 +1117,8 @@ prop_varNeg name1 val1 name2 =
 
 prop_nativeNullary :: Identifier -> Integer -> Property
 prop_nativeNullary varName constVal =
-  let fVal = ProcedureV . NativeProcedure $ const . pure @Identity . Right . toValue $ constVal
+  let fVal = ProcedureV . NativeProcedure $
+              const . const . pure @Identity . Right . toValue $ constVal
       expr = CallE (VarE varName) [] []
       result = runGingerIdentity (setVar varName fVal >> eval expr)
   in

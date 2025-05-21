@@ -6,14 +6,17 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 module Language.Ginger.Value
 where
 
 import Control.Monad.Except (runExceptT, throwError, MonadError)
+import Control.Monad.Reader (ReaderT (..), MonadReader (..))
 import Control.Monad.Trans (MonadTrans, lift)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Base64 as Base64
 import qualified Data.ByteString.Lazy as LBS
 import Data.Int
 import Data.Map.Strict (Map)
@@ -22,6 +25,7 @@ import Data.Maybe (fromMaybe)
 import Data.String (IsString (..))
 import Data.Text (Text)
 import qualified Data.Text as Text
+import Data.Text.Encoding (decodeUtf8)
 import qualified Data.Text.Lazy as LText
 import Data.Word
 import GHC.Float (float2Double)
@@ -159,20 +163,20 @@ pattern FloatV :: Double -> Value m
 pattern FloatV v = ScalarV (FloatScalar v)
 
 data Procedure m
-  = NativeProcedure !([(Maybe Identifier, Value m)] -> m (Either RuntimeError (Value m)))
+  = NativeProcedure !([(Maybe Identifier, Value m)] -> Context m -> m (Either RuntimeError (Value m)))
   | GingerProcedure !(Env m) ![(Identifier, Maybe (Value m))] !Expr
 
 pureNativeProcedure :: Applicative m
                     => ([(Maybe Identifier, Value m)] -> Either RuntimeError (Value m))
                     -> Procedure m
 pureNativeProcedure f =
-  NativeProcedure $ \args -> pure (f args)
+  NativeProcedure $ \args _ -> pure (f args)
 
 nativeFunc :: (Monad m)
            => (Value m -> m (Either RuntimeError (Value m)))
            -> Procedure m
 nativeFunc f =
-  NativeProcedure $ \case
+  NativeProcedure $ \args _ -> case args of
     [] ->
       pure . Left $
         ArgumentError (Just "<native function>") Nothing (Just "value") (Just "end of arguments")
@@ -186,7 +190,7 @@ pureNativeFunc :: (Applicative m)
                => (Value m -> Either RuntimeError (Value m))
                -> Procedure m
 pureNativeFunc f =
-  NativeProcedure $ \case
+  NativeProcedure $ \args _ -> case args of
     [] ->
       pure . Left $
         ArgumentError (Just "<native function>") Nothing (Just "value") (Just "end of arguments")
@@ -200,7 +204,7 @@ pureNativeFunc2 :: (Applicative m)
                => (Value m -> Value m -> Either RuntimeError (Value m))
                -> Procedure m
 pureNativeFunc2 f =
-  NativeProcedure $ \case
+  NativeProcedure $ \args _ -> case args of
     [] ->
       pure . Left $
         ArgumentError (Just "<native function>") Nothing (Just "value") (Just "end of arguments")
@@ -234,7 +238,7 @@ data NativeObject m =
     , nativeObjectGetField :: Scalar -> m (Maybe (Value m))
     , nativeObjectGetAttribute :: Identifier -> m (Maybe (Value m))
     , nativeObjectStringified :: m Text
-    , nativeObjectEncoded :: m Encoded
+    , nativeObjectEncoded :: Context m -> m Encoded
     , nativeObjectAsList :: m (Maybe [Value m])
     , nativeObjectCall :: Maybe
                             (NativeObject m
@@ -269,7 +273,7 @@ defNativeObject =
     , nativeObjectGetField = \_ -> pure Nothing
     , nativeObjectGetAttribute = \_ -> pure Nothing
     , nativeObjectStringified = pure "<native object>"
-    , nativeObjectEncoded = pure (Encoded "[[native object]]")
+    , nativeObjectEncoded = const $ pure (Encoded "[[native object]]")
     , nativeObjectAsList = pure Nothing
     , nativeObjectCall = Nothing
     , nativeObjectEq = \_self _other -> pure . Right $ False
@@ -545,38 +549,38 @@ instance ToValue v m => ToValue (Map String v) m where
 --------------------------------------------------------------------------------
 
 class ToNativeProcedure m a where
-  toNativeProcedure :: a -> [(Maybe Identifier, Value m)] -> m (Either RuntimeError (Value m))
+  toNativeProcedure :: a -> [(Maybe Identifier, Value m)] -> Context m -> m (Either RuntimeError (Value m))
 
 instance Applicative m => ToNativeProcedure m (Value m) where
-  toNativeProcedure val [] =
+  toNativeProcedure val [] _ =
     pure (Right val)
-  toNativeProcedure _ _ =
+  toNativeProcedure _ _ _ =
     pure . Left $
       ArgumentError (Just "<native function>") Nothing (Just "end of arguments") (Just "value")
 
 instance Applicative m => ToNativeProcedure m (m (Value m)) where
-  toNativeProcedure action [] =
+  toNativeProcedure action [] _ =
     Right <$> action
-  toNativeProcedure _ _ =
+  toNativeProcedure _ _ _ =
     pure . Left $
       ArgumentError (Just "<native function>") Nothing (Just "end of arguments") (Just "value")
 
 instance Applicative m => ToNativeProcedure m (m (Either RuntimeError (Value m))) where
-  toNativeProcedure action [] =
+  toNativeProcedure action [] _ =
     action
-  toNativeProcedure _ _ =
+  toNativeProcedure _ _ _ =
     pure . Left $
       ArgumentError (Just "<native function>") Nothing (Just "end of arguments") (Just "value")
 
 instance (Applicative m, ToNativeProcedure m a) => ToNativeProcedure m (Value m -> a) where
-  toNativeProcedure _ [] =
+  toNativeProcedure _ [] _ =
     pure . Left $
       ArgumentError (Just "<native function>") Nothing (Just "value") (Just "end of arguments")
-  toNativeProcedure _ ((Just _, _):_) =
+  toNativeProcedure _ ((Just _, _):_) _ =
     pure . Left $
       ArgumentError (Just "<native function>") Nothing (Just "positional argument") (Just "named argument")
-  toNativeProcedure f ((Nothing, v):xs) =
-    toNativeProcedure (f v) xs
+  toNativeProcedure f ((Nothing, v):xs) ctx =
+    toNativeProcedure (f v) xs ctx
 
 
 instance Applicative m => ToValue (Value m -> Value m) m where
@@ -839,6 +843,105 @@ boolFunc2 :: Monad m
          -> Either RuntimeError (Value m)
 boolFunc2 f a b = BoolV <$> (f <$> asBoolVal a <*> asBoolVal b)
 
+native :: (Monad m, MonadTrans t, MonadError RuntimeError (t m))
+       => m (Either RuntimeError a)
+       -> t m a
+native action =
+  lift action >>= either throwError pure
+
+--------------------------------------------------------------------------------
+-- String / Encoding helpers
+--------------------------------------------------------------------------------
+
+stringifyWith :: (Monad m, MonadError RuntimeError m)
+              => Context m
+              -> Value m
+              -> m Text
+stringifyWith ctx val =
+  runReaderT (stringify val) ctx
+
+stringify :: (Monad m, MonadError RuntimeError (t m), MonadTrans t)
+          => Value m
+          -> t m Text
+stringify NoneV = pure ""
+stringify TrueV = pure "true"
+stringify FalseV = pure ""
+stringify (StringV str) = pure str
+stringify (BytesV b) =
+  pure . decodeUtf8 . Base64.encode $ b
+stringify (EncodedV (Encoded e)) =
+  pure e
+stringify (IntV i) = pure $ Text.show i
+stringify (FloatV f) = pure $ Text.show f
+stringify (ScalarV s) = pure . Text.show $ s
+stringify (ListV xs) = do
+  elems <- mapM stringify xs
+  pure $ Text.intercalate ", " elems
+stringify (DictV m) = do
+  elems <- mapM stringifyKV $ Map.toAscList m
+  pure $ Text.intercalate ", " elems
+stringify (NativeV n) =
+  native (Right <$> nativeObjectStringified n)
+stringify (ProcedureV _) =
+  pure "[[procedure]]"
+stringify (TestV _) =
+  pure "[[test]]"
+stringify (FilterV _) =
+  pure "[[filter]]"
+
+stringifyKV :: (Monad m, MonadError RuntimeError (t m), MonadTrans t)
+            => (Scalar, Value m)
+            -> t m Text
+stringifyKV (k, v) = do
+  kStr <- stringify (ScalarV k)
+  vStr <- stringify v
+  pure $ kStr <> ": " <> vStr
+
+encodeText :: ( Monad m
+              , MonadError RuntimeError (t m)
+              , MonadTrans t
+              , MonadReader (Context m) (t m)
+              )
+           => Text
+           -> t m Encoded
+encodeText str = do
+  ctx <- ask
+  encodeTextWith ctx str
+
+encodeTextWith :: ( Monad m
+              , MonadError RuntimeError (t m)
+              , MonadTrans t
+              )
+           => Context m
+           -> Text
+           -> t m Encoded
+encodeTextWith ctx str = do
+  let encoder = contextEncode ctx
+  native (Right <$> encoder str)
+
+encode :: ( Monad m
+          , MonadError RuntimeError (t m)
+          , MonadTrans t
+          , MonadReader (Context m) (t m)
+          )
+       => Value m
+       -> t m Encoded
+encode v = do
+  ctx <- ask
+  encodeWith ctx v
+
+encodeWith :: ( Monad m
+          , MonadError RuntimeError (t m)
+          , MonadTrans t
+          )
+       => Context m
+       -> Value m
+       -> t m Encoded
+encodeWith _ (EncodedV e) = pure e
+encodeWith ctx (NativeV n) = native (Right <$> nativeObjectEncoded n ctx)
+encodeWith _ (ProcedureV _) = pure $ Encoded "[[procedure]]"
+encodeWith ctx v = encodeTextWith ctx =<< stringify v
+
 --------------------------------------------------------------------------------
 -- Dictionary helpers
 --------------------------------------------------------------------------------
@@ -894,7 +997,7 @@ instance Monad m => Arbitrary (Value m) where
 arbitraryNativeProcedure :: Monad m => QC.Gen (Procedure m)
 arbitraryNativeProcedure = do
   retval <- QC.scale (`div` 2) arbitrary
-  pure $ NativeProcedure (\_ -> pure (Right retval))
+  pure $ NativeProcedure (\_ _ -> pure (Right retval))
 
 arbitraryNative :: Monad m => QC.Gen (NativeObject m)
 arbitraryNative = do

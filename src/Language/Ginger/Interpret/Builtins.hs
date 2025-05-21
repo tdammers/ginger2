@@ -29,6 +29,7 @@ import Data.Char (isUpper, isLower, isAlphaNum, isPrint, isSpace, isAlpha, isDig
 import Data.Maybe (fromMaybe, listToMaybe, catMaybes)
 import Text.Read (readMaybe)
 import Data.Bits (popCount)
+import Data.List (sortBy)
 
 --------------------------------------------------------------------------------
 -- Builtins
@@ -48,11 +49,11 @@ builtinFunctions = Map.fromList $
   , ("capitalize", textBuiltin Text.toTitle)
   , ("center", ProcedureV fnCenter)
   , ("count", ProcedureV fnLength)
-  -- , ("dictsort", undefined)
-  -- , ("escape", undefined)
+  , ("dictsort", ProcedureV fnDictsort)
+  , ("escape", ProcedureV fnEscape)
   , ("even", intBuiltin even)
   -- , ("filesizeformat", undefined)
-  -- , ("first", undefined)
+  , ("first", ProcedureV fnFirst)
   , ("float", ProcedureV fnToFloat)
   -- , ("forceescape", undefined)
   -- , ("format", undefined)
@@ -61,7 +62,7 @@ builtinFunctions = Map.fromList $
   , ("int", ProcedureV fnToInt)
   , ("items", ProcedureV fnItems)
   , ("join", ProcedureV fnJoin)
-  -- , ("last", undefined)
+  , ("last", ProcedureV fnLast)
   , ("length", ProcedureV fnLength)
   -- , ("list", undefined)
   , ("lower", textBuiltin Text.toLower)
@@ -212,6 +213,13 @@ fnLength = mkFn1 "length"
               (Just "iterable")
               (Just . tagNameOf $ x)
 
+fnEscape :: forall m. Monad m => Procedure m
+fnEscape = mkFn1' "escape"
+              ("value", Nothing)
+  $ \ctx value ->
+        (EncodedV @m) <$>
+          encodeWith ctx value
+
 fnToFloat :: forall m. Monad m => Procedure m
 fnToFloat = mkFn2 "float"
               ("value", Nothing :: Maybe (Value m))
@@ -246,6 +254,51 @@ fnItems = mkFn1 "items"
             ("value", Nothing)
   $ \value ->
       pure (Map.toAscList value :: [(Scalar, Value m)])
+
+data DictSortBy
+  = ByKey
+  | ByValue
+  deriving (Show, Read, Eq, Ord, Enum, Bounded)
+
+instance ToValue DictSortBy m where
+  toValue ByKey = StringV "key"
+  toValue ByValue = StringV "value"
+
+instance (Monad m) => FromValue DictSortBy m where
+  fromValue (StringV "key") = pure . Right $ ByKey
+  fromValue (StringV "value") = pure . Right $ ByValue
+  fromValue (StringV x) = pure . Left $ TagError Nothing (Just "'key' or 'value'") (Just $ "string " <> Text.show x)
+  fromValue x = pure . Left $ TagError Nothing (Just "string") (Just . tagNameOf $ x)
+
+fnDictsort :: forall m. Monad m => Procedure m
+fnDictsort = mkFn4 "dictsort"
+              ("value", Nothing :: Maybe (Map Scalar (Value m)))
+              ("case_sensitive", Just False)
+              ("by", Just ByKey)
+              ("reverse", Just False)
+  $ \value caseSensitive by reverseSort -> do
+    let cmp a b = if caseSensitive then
+                    compare (fst a) (fst b)
+                  else
+                    compare (Text.toCaseFold (fst a)) (Text.toCaseFold (fst b))
+        cmp' = if reverseSort then flip cmp else cmp
+        proj (k, v) = do
+            sk <- case by of
+                        ByKey ->
+                          case k of
+                            StringScalar s -> pure s
+                            IntScalar i -> pure $ Text.show i
+                            FloatScalar f -> pure $ Text.show f
+                            NoneScalar -> pure ""
+                            BoolScalar b -> pure . Text.toLower $ Text.show b
+                            EncodedScalar (Encoded e) -> pure e
+                            BytesScalar bs -> pure $ Text.decodeUtf8 bs
+                        ByValue ->
+                          stringify v
+            pure (sk, (k, v))
+        itemsRaw = Map.toList value
+    items' <- mapM proj itemsRaw
+    pure $ map snd $ sortBy cmp' items'
 
 fnRound :: forall m. Monad m => Procedure m
 fnRound = mkFn3 "round"
@@ -454,6 +507,27 @@ fnBatch = mkFn3 "batch"
           in [xs' ++ padding]
         xs' -> xs' : chunksOf fillMay n (drop n xs)
 
+fnFirst :: forall m. Monad m => Procedure m
+fnFirst = mkFn1 "first"
+            ("value", Nothing :: Maybe (Value m))
+  $ \case
+    ListV (x:_) -> pure x
+    ListV [] -> pure NoneV
+    StringV txt -> pure $ StringV $ Text.take 1 txt
+    EncodedV (Encoded txt) -> pure $ EncodedV . Encoded $ Text.take 1 txt
+    BytesV arr -> pure . toValue $ BS.indexMaybe arr 0
+    x -> throwError $ ArgumentError (Just "first") (Just "value") (Just "list or string") (Just . tagNameOf $ x)
+      
+fnLast :: forall m. Monad m => Procedure m
+fnLast = mkFn1 "first"
+            ("value", Nothing :: Maybe (Value m))
+  $ \case
+    ListV [] -> pure NoneV
+    ListV xs -> pure (last xs)
+    StringV txt -> pure $ StringV $ Text.takeEnd 1 txt
+    BytesV arr -> pure . toValue $ BS.indexMaybe arr (BS.length arr - 1)
+    EncodedV (Encoded txt) -> pure $ EncodedV . Encoded $ Text.takeEnd 1 txt
+    x -> throwError $ ArgumentError (Just "first") (Just "value") (Just "list or string") (Just . tagNameOf $ x)
 
 isUpperVal :: Value m -> Value m
 isUpperVal (StringV txt) = BoolV (Text.all isUpper txt)
@@ -472,6 +546,11 @@ isBoolean _ _ = FalseV
 isNone :: Value m -> Value m
 isNone NoneV = TrueV
 isNone _ = FalseV
+
+--------------------------------------------------------------------------------
+-- Text conversion
+--------------------------------------------------------------------------------
+
 
 --------------------------------------------------------------------------------
 -- Utilities
@@ -718,7 +797,7 @@ textProcAttrib f =
   pureAttrib $ nativeMethod f . StringV
 
 builtinNotImplemented :: Monad m => Text -> Value m
-builtinNotImplemented name = ProcedureV $ NativeProcedure $ \_ ->
+builtinNotImplemented name = ProcedureV $ NativeProcedure $ \_ _ ->
   pure . Left $ NotImplementedError (Just name)
 
 fnMaybeArg :: Monad m => Text -> Text -> Maybe b -> ExceptT RuntimeError m b
@@ -742,6 +821,21 @@ fnArg context name argValues = do
   argV <- fnMaybeArg context (identifierName name) $ Map.lookup name argValues
   eitherExceptM $ fromValue argV
 
+mkFn0' :: ( Monad m
+         , ToValue r m
+         )
+      => Text
+      -> (Context m -> ExceptT RuntimeError m r)
+      -> Procedure m
+mkFn0' funcName f =
+  NativeProcedure $ \args ctx -> runExceptT $ do
+    _ <- eitherExcept $
+      resolveArgs
+        (Just funcName)
+        []
+        args
+    toValue <$> f ctx
+
 mkFn0 :: ( Monad m
          , ToValue r m
          )
@@ -749,13 +843,27 @@ mkFn0 :: ( Monad m
       -> (ExceptT RuntimeError m r)
       -> Procedure m
 mkFn0 funcName f =
-  NativeProcedure $ \args -> runExceptT $ do
-    _ <- eitherExcept $
+  mkFn0' funcName (const f)
+
+mkFn1' :: ( Monad m
+         , ToValue a m
+         , FromValue a m
+         , ToValue r m
+         )
+      => Text
+      -> (Identifier, Maybe a)
+      -> (Context m -> a -> ExceptT RuntimeError m r)
+      -> Procedure m
+mkFn1' funcName (argname1, default1) f =
+  NativeProcedure $ \args ctx -> runExceptT $ do
+    argValues <- eitherExcept $
       resolveArgs
         (Just funcName)
-        []
+        [ (argname1, toValue <$> default1)
+        ]
         args
-    toValue <$> f
+    arg1 <- fnArg funcName argname1 argValues
+    toValue <$> f ctx arg1
 
 mkFn1 :: ( Monad m
          , ToValue a m
@@ -766,16 +874,36 @@ mkFn1 :: ( Monad m
       -> (Identifier, Maybe a)
       -> (a -> ExceptT RuntimeError m r)
       -> Procedure m
-mkFn1 funcName (argname1, default1) f =
-  NativeProcedure $ \args -> runExceptT $ do
+mkFn1 funcName a f =
+  mkFn1' funcName a (const f)
+
+mkFn2' :: ( Monad m
+         , ToValue a1 m
+         , FromValue a1 m
+         , ToValue a2 m
+         , FromValue a2 m
+         , ToValue r m
+         )
+      => Text
+      -> (Identifier, Maybe a1)
+      -> (Identifier, Maybe a2)
+      -> (Context m -> a1 -> a2 -> ExceptT RuntimeError m r)
+      -> Procedure m
+mkFn2' funcName
+    (argname1, default1)
+    (argname2, default2)
+    f =
+  NativeProcedure $ \args ctx -> runExceptT $ do
     argValues <- eitherExcept $
       resolveArgs
         (Just funcName)
         [ (argname1, toValue <$> default1)
+        , (argname2, toValue <$> default2)
         ]
         args
     arg1 <- fnArg funcName argname1 argValues
-    toValue <$> f arg1
+    arg2 <- fnArg funcName argname2 argValues
+    toValue <$> f ctx arg1 arg2
 
 mkFn2 :: ( Monad m
          , ToValue a1 m
@@ -789,21 +917,42 @@ mkFn2 :: ( Monad m
       -> (Identifier, Maybe a2)
       -> (a1 -> a2 -> ExceptT RuntimeError m r)
       -> Procedure m
-mkFn2 funcName
+mkFn2 funcName a b f =
+  mkFn2' funcName a b (const f)
+
+mkFn3' :: ( Monad m
+         , ToValue a1 m
+         , FromValue a1 m
+         , ToValue a2 m
+         , FromValue a2 m
+         , ToValue a3 m
+         , FromValue a3 m
+         , ToValue r m
+         )
+      => Text
+      -> (Identifier, Maybe a1)
+      -> (Identifier, Maybe a2)
+      -> (Identifier, Maybe a3)
+      -> (Context m -> a1 -> a2 -> a3 -> ExceptT RuntimeError m r)
+      -> Procedure m
+mkFn3' funcName
     (argname1, default1)
     (argname2, default2)
+    (argname3, default3)
     f =
-  NativeProcedure $ \args -> runExceptT $ do
+  NativeProcedure $ \args ctx -> runExceptT $ do
     argValues <- eitherExcept $
       resolveArgs
         (Just funcName)
         [ (argname1, toValue <$> default1)
         , (argname2, toValue <$> default2)
+        , (argname3, toValue <$> default3)
         ]
         args
     arg1 <- fnArg funcName argname1 argValues
     arg2 <- fnArg funcName argname2 argValues
-    toValue <$> f arg1 arg2
+    arg3 <- fnArg funcName argname3 argValues
+    toValue <$> f ctx arg1 arg2 arg3
 
 mkFn3 :: ( Monad m
          , ToValue a1 m
@@ -820,24 +969,48 @@ mkFn3 :: ( Monad m
       -> (Identifier, Maybe a3)
       -> (a1 -> a2 -> a3 -> ExceptT RuntimeError m r)
       -> Procedure m
-mkFn3 funcName
+mkFn3 funcName a b c f =
+  mkFn3' funcName a b c (const f)
+
+mkFn4' :: ( Monad m
+         , ToValue a1 m
+         , FromValue a1 m
+         , ToValue a2 m
+         , FromValue a2 m
+         , ToValue a3 m
+         , FromValue a3 m
+         , ToValue a4 m
+         , FromValue a4 m
+         , ToValue r m
+         )
+      => Text
+      -> (Identifier, Maybe a1)
+      -> (Identifier, Maybe a2)
+      -> (Identifier, Maybe a3)
+      -> (Identifier, Maybe a4)
+      -> (Context m -> a1 -> a2 -> a3 -> a4 -> ExceptT RuntimeError m r)
+      -> Procedure m
+mkFn4' funcName
     (argname1, default1)
     (argname2, default2)
     (argname3, default3)
+    (argname4, default4)
     f =
-  NativeProcedure $ \args -> runExceptT $ do
+  NativeProcedure $ \args ctx -> runExceptT $ do
     argValues <- eitherExcept $
       resolveArgs
         (Just funcName)
         [ (argname1, toValue <$> default1)
         , (argname2, toValue <$> default2)
         , (argname3, toValue <$> default3)
+        , (argname4, toValue <$> default4)
         ]
         args
     arg1 <- fnArg funcName argname1 argValues
     arg2 <- fnArg funcName argname2 argValues
     arg3 <- fnArg funcName argname3 argValues
-    toValue <$> f arg1 arg2 arg3
+    arg4 <- fnArg funcName argname4 argValues
+    toValue <$> f ctx arg1 arg2 arg3 arg4
 
 mkFn4 :: ( Monad m
          , ToValue a1 m
@@ -857,25 +1030,5 @@ mkFn4 :: ( Monad m
       -> (Identifier, Maybe a4)
       -> (a1 -> a2 -> a3 -> a4 -> ExceptT RuntimeError m r)
       -> Procedure m
-mkFn4 funcName
-    (argname1, default1)
-    (argname2, default2)
-    (argname3, default3)
-    (argname4, default4)
-    f =
-  NativeProcedure $ \args -> runExceptT $ do
-    argValues <- eitherExcept $
-      resolveArgs
-        (Just funcName)
-        [ (argname1, toValue <$> default1)
-        , (argname2, toValue <$> default2)
-        , (argname3, toValue <$> default3)
-        , (argname4, toValue <$> default4)
-        ]
-        args
-    arg1 <- fnArg funcName argname1 argValues
-    arg2 <- fnArg funcName argname2 argValues
-    arg3 <- fnArg funcName argname3 argValues
-    arg4 <- fnArg funcName argname4 argValues
-    toValue <$> f arg1 arg2 arg3 arg4
-
+mkFn4 funcName a b c d f =
+  mkFn4' funcName a b c d (const f)

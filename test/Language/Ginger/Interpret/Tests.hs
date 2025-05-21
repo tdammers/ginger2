@@ -18,7 +18,7 @@ import qualified Data.ByteString as BS
 import Data.Char (isControl, isSpace, isAlpha, isAlphaNum, chr)
 import Data.Either (isRight)
 import Data.Int (Int8, Int16, Int32, Int64)
-import Data.List (sortOn, intersperse)
+import Data.List (sort, sortOn, intersperse)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust, isNothing)
@@ -493,6 +493,36 @@ tests = testGroup "Language.Ginger.Interpret"
                   )
                   (\(xs, _, _, _, ArbitraryText defval) ->
                       ListV $ intersperse (StringV defval) (map IntV xs)
+                  )
+            ]
+
+        , testGroup "sort"
+            [ testProperty "strings, simple" $
+                prop_eval
+                  (\xs ->
+                      FilterE
+                        (ListE [StringLitE t | ArbitraryText t <- xs])
+                        (VarE "sort")
+                        []
+                        [ ("case_sensitive", TrueE)
+                        ]
+                  )
+                  (\xs ->
+                      ListV $ [StringV t | ArbitraryText t <- sort xs]
+                  )
+            , testProperty "strings, reverse" $
+                prop_eval
+                  (\xs ->
+                      FilterE
+                        (ListE [StringLitE t | ArbitraryText t <- xs])
+                        (VarE "sort")
+                        []
+                        [ ("case_sensitive", TrueE)
+                        , ("reverse", TrueE)
+                        ]
+                  )
+                  (\xs ->
+                      ListV $ [StringV t | ArbitraryText t <- reverse (sort xs)]
                   )
             ]
 

@@ -86,7 +86,7 @@ builtinFunctions evalE = Map.fromList $
   -- , ("selectattr", undefined)
   -- , ("select", undefined)
   -- , ("slice", undefined)
-  -- , ("sort", undefined)
+  , ("sort", ProcedureV fnSort)
   , ("string", ProcedureV fnToString)
   -- , ("striptags", undefined)
   -- , ("sum", undefined)
@@ -311,6 +311,31 @@ instance (Monad m) => FromValue DictSortBy m where
   fromValue (StringV "value") = pure . Right $ ByValue
   fromValue (StringV x) = pure . Left $ TagError Nothing (Just "'key' or 'value'") (Just $ "string " <> Text.show x)
   fromValue x = pure . Left $ TagError Nothing (Just "string") (Just . tagNameOf $ x)
+
+fnSort :: forall m. Monad m => Procedure m
+fnSort = mkFn4 "sort"
+              ("value", Nothing :: Maybe [Value m])
+              ("reverse", Just False)
+              ("case_sensitive", Just False)
+              ("attribute", Just Nothing :: Maybe (Maybe (Value m)))
+  $ \value reverseSort caseSensitive attributeMay -> do
+    let cmp a b = if caseSensitive then
+                    compare (fst a) (fst b)
+                  else
+                    compare (Text.toCaseFold (fst a)) (Text.toCaseFold (fst b))
+        cmp' = if reverseSort then flip cmp else cmp
+        proj x = do
+          sk <- case attributeMay of
+                  Nothing ->
+                    stringify x
+                  Just a -> do
+                    v <- fmap (fromMaybe NoneV) $ eitherExceptM $ getItemOrAttrRaw x a
+                    stringify v
+          pure (sk, x)
+    (items' :: [(Text, Value m)]) <- mapM proj value
+    pure $ map snd $ sortBy cmp' items'
+
+
 
 fnDictsort :: forall m. Monad m => Procedure m
 fnDictsort = mkFn4 "dictsort"
@@ -863,6 +888,19 @@ getAttrOrItemRaw a i = runExceptT $ do
   case xMay of
     Just x -> pure . Just $ x
     Nothing -> lift $ getItemRaw a (StringV . identifierName $ i)
+
+getItemOrAttrRaw :: Monad m
+                 => Value m
+                 -> Value m
+                 -> m (Either RuntimeError (Maybe (Value m)))
+getItemOrAttrRaw a b = runExceptT $ do
+  xMay <- lift $ getItemRaw a b
+  case xMay of
+    Just x -> pure . Just $ x
+    Nothing -> case b of
+      StringV i -> eitherExceptM $ getAttrRaw a (Identifier $ i)
+      _ -> pure Nothing
+
 
 --------------------------------------------------------------------------------
 -- Method and property conversion helpers

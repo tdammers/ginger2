@@ -17,8 +17,10 @@ where
 import Language.Ginger.AST
 import Language.Ginger.RuntimeError
 import Language.Ginger.Value
+import Language.Ginger.Interpret.Type
 
 import Control.Monad.Except
+import Control.Monad.Trans (lift)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.ByteString as BS
@@ -38,8 +40,10 @@ import Text.Printf (printf)
 
 type BuiltinAttribs a m = Map Identifier (a -> m (Either RuntimeError (Value m)))
 
-builtinFunctions :: forall m. Monad m => Map Identifier (Value m)
-builtinFunctions = Map.fromList $
+builtinFunctions :: forall m. Monad m
+                 => (Expr -> GingerT m (Value m))
+                 -> Map Identifier (Value m)
+builtinFunctions evalE = Map.fromList $
   [ ("abs", numericBuiltin abs abs)
   , ("attr", toValue (\x y -> case y :: Value m of
                                 StringV yStr ->
@@ -67,7 +71,7 @@ builtinFunctions = Map.fromList $
   , ("length", ProcedureV fnLength)
   , ("list", ProcedureV fnToList)
   , ("lower", textBuiltin Text.toLower)
-  -- , ("map", undefined)
+  , ("map", FilterV . NativeFilter $ fnMap evalE)
   -- , ("max", undefined)
   -- , ("min", undefined)
   , ("odd", intBuiltin odd)
@@ -83,7 +87,7 @@ builtinFunctions = Map.fromList $
   -- , ("select", undefined)
   -- , ("slice", undefined)
   -- , ("sort", undefined)
-  -- , ("string", undefined)
+  , ("string", ProcedureV fnToString)
   -- , ("striptags", undefined)
   -- , ("sum", undefined)
   , ("title", textBuiltin Text.toTitle)
@@ -281,6 +285,12 @@ fnToInt = mkFn3 "int"
         pure . fromMaybe def $ readMaybe (Text.unpack s)
       _ -> pure def
 
+fnToString :: forall m. Monad m => Procedure m
+fnToString = mkFn1 "string"
+              ("value", Nothing :: Maybe (Value m))
+  $ \value ->
+    stringify value
+
 fnItems :: forall m. Monad m => Procedure m
 fnItems = mkFn1 "items"
             ("value", Nothing)
@@ -331,6 +341,139 @@ fnDictsort = mkFn4 "dictsort"
         itemsRaw = Map.toList value
     items' <- mapM proj itemsRaw
     pure $ map snd $ sortBy cmp' items'
+
+fnMap :: forall m. Monad m
+      => (Expr -> GingerT m (Value m))
+      -> FilterFunc m
+fnMap evalE scrutineeE args ctx env = runExceptT $ do
+  -- This one is quite a monster, because it accepts arguments in so many
+  -- different ways.
+  -- Specifically:
+  --
+  -- @scrutinee|map('foobar', args...)@ - interpret the string @'foobar'@ as
+  -- the name of a filter (or procedure), and pass @args...@ on to that filter.
+  --
+  -- @scrutinee|map(foobar, args...)@ - interpret @foobar@ as a filter (or a
+  -- procedure), and pass @args...@ on to that filter.
+  --
+  -- @scrutinee|map(attribute='foobar', {default=value})@ - interpret @'foobar'
+  -- as the name of an attribute in each list element, extract that list
+  -- element, use the @default=@ value if the attribute is absent.
+  let funcName = "map"
+  argValues <- eitherExcept $
+    resolveArgs
+      (Just funcName)
+      []
+      args
+  varargs <- fnArg funcName "varargs" argValues
+  (kwargs :: Map Scalar (Value m)) <- fnArg funcName "kwargs" argValues
+  (scrutinee :: Value m) <- eitherExceptM $ runGingerT (evalE scrutineeE) ctx env
+  (xs :: [Value m]) <- eitherExceptM $ fromValue scrutinee
+
+  -- First, let's see if an attribute was specified.
+  let attributeMay = Map.lookup "attribute" kwargs
+  case attributeMay of
+    Just attribute -> do
+      -- Attribute was specified, so let's extract that.
+      -- We also need to find the default value.
+      let defVal = fromMaybe NoneV (Map.lookup "default" kwargs) :: Value m
+      ListV <$> mapM
+        (\x -> do
+          attributeIdent <- Identifier <$> eitherExceptM (fromValue attribute)
+          fromMaybe defVal <$>
+            eitherExceptM
+              (getAttrOrItemRaw x attributeIdent)
+        )
+        xs
+    Nothing ->
+      -- Attribute was not specified, so we will use the first of the
+      -- positional arguments as a mapping function/filter.
+      case varargs of
+        [] ->
+          -- No argument = error.
+          throwError $
+            ArgumentError
+              (Just funcName)
+              (Just "attribute/callee")
+              (Just "attribute=identifier or callable")
+              (Just "no argument")
+        (callee:varargs') -> do
+          -- Re-pack the remaining arguments
+          let args' = zip (repeat Nothing) varargs' ++
+                      Map.toList (Map.mapKeys toIdentifier kwargs)
+
+          -- Determine how to handle each list element.
+          let apply' filterV x =
+                case filterV of
+                  StringV name -> do
+                    -- If it's a string, we interpret it as a filter name, and
+                    -- try to look up the corresponding filter in the current
+                    -- scope.
+                    filterV' <- eitherExceptM $
+                      runGingerT
+                        (scoped $ do
+                            scopify "jinja-filters"
+                            evalE (VarE $ Identifier name)
+                        )
+                        ctx env
+                    apply' filterV' x
+                  DictV m -> do
+                    -- If it's a dict, try to find a @"__call__"@ item.
+                    case Map.lookup "__call__" m of
+                      Nothing -> throwError $
+                                    NonCallableObjectError
+                                      (Just $ tagNameOf callee <> " " <> Text.show filterV)
+                      Just v -> apply' v x
+                  NativeV obj -> do
+                    -- If it's a native object, use its @nativeObjectCall@
+                    -- method, if available.
+                    case nativeObjectCall obj of
+                      Nothing -> throwError $
+                                    NonCallableObjectError
+                                      (Just "non-callable native object")
+                      Just f -> eitherExceptM $ f obj args'
+                  FilterV f -> do
+                    -- If it's a filter, we apply it as such, mapping the
+                    -- current list element to the variable "@" (which cannot
+                    -- be used as a normal identifier, because the syntax
+                    -- doesn't allow it). We need to bind it, because
+                    -- 'runFilter' takes an unevaluated expression as its
+                    -- scrutinee argument, but we have an already-evaluated
+                    -- value.
+                    let env' = env { envVars = Map.insert "@" x $ envVars env }
+                    eitherExceptM $ runFilter f (VarE "@") args' ctx env'
+                  ProcedureV (NativeProcedure f) -> do
+                    -- If it's a native procedure, we can just call it without
+                    -- binding anything.
+                    eitherExceptM $ f ((Nothing, x):args') ctx
+                  ProcedureV (GingerProcedure env' argSpecs body) -> do
+                    -- If it's a ginger procedure, we need to prepend the
+                    -- current list element to the argument list (so it becomes
+                    -- the first positional argument), and then resolve and
+                    -- bind all the arguments into the environment where we
+                    -- then run the ginger procedure.
+                    args'' <- eitherExcept $
+                                resolveArgs
+                                  (Just "map callback")
+                                  argSpecs
+                                  ((Nothing, x):args')
+                    eitherExceptM $
+                      runGingerT (setVars args'' >> evalE body) ctx env'
+                  _ ->
+                    -- Not something we can call.
+                      throwError $
+                        NonCallableObjectError
+                          (Just $ tagNameOf callee <> " " <> Text.show filterV)
+
+              apply = apply' callee
+
+          ListV <$> mapM apply xs
+  where
+    toIdentifier :: Scalar -> Maybe Identifier
+    toIdentifier (StringScalar s) = Just $ Identifier s
+    toIdentifier (IntScalar i) = Just $ Identifier (Text.show i)
+    toIdentifier (FloatScalar f) = Just $ Identifier (Text.show f) -- dubious
+    toIdentifier _ = Nothing
 
 fnRound :: forall m. Monad m => Procedure m
 fnRound = mkFn3 "round"
@@ -413,7 +556,11 @@ fnJoin = mkFn3 "join"
                 $ \iterable d attrMay -> do
   iterable' <- case attrMay of
     Nothing -> pure iterable
-    Just attr -> catMaybes <$> mapM (eitherExceptM . \x -> getAttrRaw x (Identifier attr)) iterable
+    Just attr ->
+      catMaybes <$>
+        mapM
+          (\x -> eitherExceptM $ getAttrOrItemRaw x (Identifier attr))
+          iterable
   Text.intercalate d <$> mapM (eitherExcept . asTextVal) iterable'
 
 fnStrJoin :: Monad m => Procedure m
@@ -706,6 +853,16 @@ getItemRaw a b = case a of
     ScalarV k -> nativeObjectGetField n k
     _ -> pure Nothing
   _ -> pure Nothing
+
+getAttrOrItemRaw :: Monad m
+                 => Value m
+                 -> Identifier
+                 -> m (Either RuntimeError (Maybe (Value m)))
+getAttrOrItemRaw a i = runExceptT $ do
+  xMay <- eitherExceptM $ getAttrRaw a i
+  case xMay of
+    Just x -> pure . Just $ x
+    Nothing -> lift $ getItemRaw a (StringV . identifierName $ i)
 
 --------------------------------------------------------------------------------
 -- Method and property conversion helpers

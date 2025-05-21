@@ -97,7 +97,7 @@ defVars = Map.fromList
         ]
     )
   ]
-  <> builtinFunctions
+  <> builtinFunctions evalE
 
 isCallable' :: Monad m => Value m -> Bool
 isCallable' (ProcedureV {}) = True

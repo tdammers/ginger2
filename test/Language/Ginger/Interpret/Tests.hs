@@ -18,7 +18,7 @@ import qualified Data.ByteString as BS
 import Data.Char (isControl, isSpace, isAlpha, isAlphaNum, chr)
 import Data.Either (isRight)
 import Data.Int (Int8, Int16, Int32, Int64)
-import Data.List (sortOn)
+import Data.List (sortOn, intersperse)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust, isNothing)
@@ -392,6 +392,109 @@ tests = testGroup "Language.Ginger.Interpret"
                     <- Map.toAscList . Map.fromList $ items
                     ]
               )
+
+        , testGroup "map"
+            [ testProperty "map(string)" $
+                prop_eval
+                  (\xs ->
+                    FilterE
+                      (ListE (map IntLitE xs))
+                      (VarE "map")
+                      [VarE "string"]
+                      []
+                  )
+                  (\xs ->
+                      ListV (map (StringV . Text.show) xs)
+                  )
+            , testProperty "map('string')" $
+                prop_eval
+                  (\xs ->
+                    FilterE
+                      (ListE (map IntLitE xs))
+                      (VarE "map")
+                      [StringLitE "string"]
+                      []
+                  )
+                  (\xs ->
+                      ListV (map (StringV . Text.show) xs)
+                  )
+            , testProperty "map(center, width)" $
+                prop_eval
+                  (\(xs, PositiveInt n) ->
+                    FilterE
+                      (ListE [ StringLitE x | ArbitraryText x <- xs ])
+                      (VarE "map")
+                      [VarE "center"]
+                      [("width", IntLitE n)]
+                  )
+                  (\(xs, PositiveInt n) ->
+                      let w = fromInteger n
+                      in
+                        ListV
+                          [ if Text.length t >= w then
+                              StringV t
+                            else
+                              let p = w - Text.length t
+                                  pL = p `div` 2
+                                  pR = p - pL
+                              in StringV $ Text.replicate pL " " <> t <> Text.replicate pR " "
+                          | ArbitraryText t <- xs
+                          ]
+                  )
+            , testProperty "map('center', width)" $
+                prop_eval
+                  (\(xs, PositiveInt n) ->
+                    FilterE
+                      (ListE [ StringLitE x | ArbitraryText x <- xs ])
+                      (VarE "map")
+                      [StringLitE "center"]
+                      [("width", IntLitE n)]
+                  )
+                  (\(xs, PositiveInt n) ->
+                      let w = fromInteger n
+                      in
+                        ListV
+                          [ if Text.length t >= w then
+                              StringV t
+                            else
+                              let p = w - Text.length t
+                                  pL = p `div` 2
+                                  pR = p - pL
+                              in StringV $ Text.replicate pL " " <> t <> Text.replicate pR " "
+                          | ArbitraryText t <- xs
+                          ]
+                  )
+            , testProperty "map(attribute=)" $
+                prop_eval
+                  (\(xs, name) ->
+                    FilterE
+                      (ListE [ DictE [(StringLitE $ identifierName name, IntLitE x)] | x <- xs ])
+                      (VarE "map")
+                      []
+                      [("attribute", StringLitE $ identifierName name)]
+                  )
+                  (\(xs, _) ->
+                      ListV (map IntV xs)
+                  )
+            , testProperty "map(attribute=x, default=y)" $
+                prop_eval
+                  (\(xs, name, otherName, ArbitraryText dummyVal, ArbitraryText defval) ->
+                    FilterE
+                      (ListE $ intersperse
+                        (DictE [(StringLitE $ identifierName otherName, StringLitE dummyVal)])
+                        [ DictE [(StringLitE $ identifierName name, IntLitE x)]
+                        | x <- xs
+                        ])
+                      (VarE "map")
+                      []
+                      [ ("attribute", StringLitE $ identifierName name)
+                      , ("default", StringLitE defval)
+                      ]
+                  )
+                  (\(xs, _, _, _, ArbitraryText defval) ->
+                      ListV $ intersperse (StringV defval) (map IntV xs)
+                  )
+            ]
 
         , testGroup "join"
             [ testProperty "simple" $

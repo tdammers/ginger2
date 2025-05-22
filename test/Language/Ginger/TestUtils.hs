@@ -14,7 +14,6 @@ import qualified Data.Map.Strict as Map
 import Test.Tasty.QuickCheck
 
 import Language.Ginger.Interpret
-import Language.Ginger.RuntimeError
 import Language.Ginger.Value
 
 newtype ArbitraryText = ArbitraryText Text

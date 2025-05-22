@@ -9,7 +9,13 @@ module Language.Ginger.Parse
 , template
 , parseGinger
 , parseGingerFile
+, parseGingerWith
+, parseGingerFileWith
 , mapLeft
+, POptions (..)
+, defPOptions
+, BlockTrimming (..)
+, BlockStripping (..)
 )
 where
 
@@ -507,7 +513,7 @@ closeWithOverride base = do
   ovr <- try $ overrideToken <* chunk base
   policy <- asks (override ovr)
   when (pstateTrimBlocks policy == TrimBlocks) $
-    void . try $ inlineSpace *> optional anyNewline
+    void . optional . try $ inlineSpace *> (void anyNewline <|> eof)
 
 openComment :: P ()
 openComment = openWithOverride "{#"

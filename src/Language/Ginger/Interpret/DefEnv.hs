@@ -44,9 +44,13 @@ defContext =
     , contextEncode = pure . htmlEncode
     }
 
+htmlEncoder :: Monad m => Encoder m
+htmlEncoder txt = do
+  pure $ htmlEncode txt
+
 htmlEncode :: Text -> Encoded
-htmlEncode =
-  Encoded . LText.toStrict . Builder.toLazyText . Text.foldl' f mempty
+htmlEncode txt =
+  (Encoded . LText.toStrict . Builder.toLazyText . Text.foldl' f mempty) txt
   where
     f :: Builder -> Char -> Builder
     f lhs c = lhs <> encodeChar c

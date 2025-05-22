@@ -55,9 +55,11 @@ instance Monoid (Env m) where
 
 type TemplateLoader m = Text -> m (Maybe Text)
 
+type Encoder m = Text -> m Encoded
+
 data Context m =
   Context
-    { contextEncode :: Text -> m Encoded
+    { contextEncode :: Encoder m
     , contextLoadTemplateFile :: TemplateLoader m
     , contextVars :: !(Map Identifier (Value m))
     , contextOutput :: !OutputPolicy

@@ -26,9 +26,11 @@ module Language.Ginger.Interpret
 , scoped
  ,bind
 , valuesEqual
+, RuntimeError (..)
 )
 where
 
 import Language.Ginger.Interpret.Type
 import Language.Ginger.Interpret.DefEnv
 import Language.Ginger.Interpret.Eval
+import Language.Ginger.RuntimeError

@@ -35,7 +35,6 @@ import Language.Ginger.AST
 import Language.Ginger.Interpret
 import Language.Ginger.Interpret.DefEnv (htmlEncode)
 import Language.Ginger.Render
-import Language.Ginger.RuntimeError
 import Language.Ginger.TestUtils
 import Language.Ginger.Value
 

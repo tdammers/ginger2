@@ -59,6 +59,7 @@ renderUnicodeEscape c =
     Builder.fromString $ printf format o
 
 instance RenderSyntax Expr where
+  renderSyntax (PositionedE _ e) = renderSyntax e
   renderSyntax NoneE = "none"
   renderSyntax TrueE = "true"
   renderSyntax FalseE = "false"
@@ -159,6 +160,7 @@ renderEncoded (Encoded txt) =
   txt
 
 instance RenderSyntax Statement where
+  renderSyntax (PositionedS _ s) = renderSyntax s
   renderSyntax (ImmediateS e) = renderEncoded e
   renderSyntax (InterpolationS e) = "{{ " <> renderSyntax e <> " }}"
   renderSyntax (CommentS msg) = "{# " <> Builder.fromText msg <> " #}\n"

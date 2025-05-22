@@ -34,7 +34,6 @@ defEnv :: Monad m => Env m
 defEnv =
   emptyEnv
     { envVars = mempty
-    , envRoot = defEnv
     }
 
 defContext :: Monad m => Context m
@@ -98,10 +97,11 @@ defVars = Map.fromList
   , ( "jinja-filters"
     , dictV
         [ ("default", FilterV $ NativeFilter defaultFilter)
+        , ("d", FilterV $ NativeFilter defaultFilter)
         ]
     )
   ]
-  <> builtinFunctions evalE
+  <> builtinGlobals evalE
 
 isCallable' :: Monad m => Value m -> Bool
 isCallable' (ProcedureV {}) = True
@@ -128,7 +128,7 @@ isFilter expr _ ctx env = do
           ctx env
       pure $ (exists ||) <$> existsExt
     Right a ->
-      pure . Left $ TagError (Just "filter name") (Just "string") (Just . tagNameOf $ a)
+      pure . Left $ TagError "filter name" "string" (tagNameOf a)
     Left err ->
       pure $ Left err
 
@@ -168,7 +168,7 @@ isTest expr _ ctx env = do
         _ -> pure . Right $ False
         
     Right a ->
-      pure . Left $ TagError (Just "test name") (Just "string") (Just . tagNameOf $ a)
+      pure . Left $ TagError "test name" "string" (tagNameOf a)
     Left err ->
       pure $ Left err
 
@@ -201,7 +201,7 @@ defaultFilter :: Monad m => FilterFunc m
 defaultFilter expr args ctx env = do
   calleeEither <- runGingerT (evalE expr) ctx env
   let resolvedArgsEither = resolveArgs
-                            (Just "default")
+                            "default"
                             [("default_value", Just (StringV "")), ("boolean", Just FalseV)]
                             args
   case (calleeEither, resolvedArgsEither) of
@@ -220,7 +220,9 @@ defaultFilter expr args ctx env = do
       pure . Left $ err
 
 isDefined :: Monad m => TestFunc m
-isDefined _ (_:_) _ _ = pure $ Left $ ArgumentError (Just "defined") (Just "0") (Just "end of arguments") (Just "argument")
+isDefined _ (_:_) _ _ = pure $ Left $ ArgumentError "defined" "0" "end of arguments" "argument"
+isDefined (PositionedE _ e) [] ctx env =
+  isDefined e [] ctx env
 isDefined (VarE name) [] ctx env =
   pure . Right $
     name `Map.member` (envVars env) ||
@@ -324,9 +326,9 @@ fnMaybeArg context name =
   maybe
     (throwError $
         ArgumentError
-          (Just context)
-          (Just name)
-          (Just "argument")
-          (Just "end of arguments")
+          context
+          name
+          "argument"
+          "end of arguments"
     )
     pure

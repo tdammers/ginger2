@@ -10,7 +10,7 @@ import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
 import System.FilePath (takeDirectory, takeFileName, takeExtension, (</>) )
 import System.Directory (getCurrentDirectory)
-import System.IO (hPrint, stderr)
+import System.IO (hPutStrLn, stderr)
 import Options.Applicative
 import Data.Map.Strict (Map)
 
@@ -171,7 +171,7 @@ printResult = printResultTo Nothing
 
 printResultTo :: Maybe FilePath -> Either RuntimeError Encoded -> IO ()
 printResultTo _ (Left err) =
-  hPrint stderr err
+  hPutStrLn stderr $ prettyRuntimeError err
 printResultTo Nothing (Right output) =
   Text.putStrLn $ encoded output
 printResultTo (Just outputPath) (Right output) =

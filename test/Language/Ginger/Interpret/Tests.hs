@@ -653,6 +653,12 @@ tests = testGroup "Language.Ginger.Interpret"
                   )
               )
 
+        -- TODO:
+        -- regex module
+        -- split
+        -- reverse
+        -- dateformat
+
         ]
     , testGroup "DotE"
       [ testGroup "StringV"

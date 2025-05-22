@@ -24,15 +24,33 @@ import Control.Monad.Trans (lift)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as LBS
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
 import Data.Char (isUpper, isLower, isAlphaNum, isPrint, isSpace, isAlpha, isDigit, ord)
-import Data.Maybe (fromMaybe, listToMaybe, catMaybes)
+import Data.Maybe (fromMaybe, listToMaybe, catMaybes, isJust)
 import Text.Read (readMaybe)
 import Data.Bits (popCount)
 import Data.List (sortBy)
 import Text.Printf (printf)
+import qualified Text.Regex.TDFA as RE
+import qualified Data.Array as Array
+import qualified Data.Aeson as JSON
+import Data.Time
+        ( TimeZone (..)
+        , ZonedTime (..)
+        , TimeOfDay (..)
+        , LocalTime (..)
+        , parseTimeM
+        , defaultTimeLocale
+        , utc
+        , fromGregorian
+        , utcToZonedTime
+        , zonedTimeToUTC
+        , formatTime
+        )
+import Data.Foldable (asum)
 
 --------------------------------------------------------------------------------
 -- Builtins
@@ -40,10 +58,10 @@ import Text.Printf (printf)
 
 type BuiltinAttribs a m = Map Identifier (a -> m (Either RuntimeError (Value m)))
 
-builtinFunctions :: forall m. Monad m
+builtinGlobals :: forall m. Monad m
                  => (Expr -> GingerT m (Value m))
                  -> Map Identifier (Value m)
-builtinFunctions evalE = Map.fromList $
+builtinGlobals evalE = Map.fromList $
   [ ("abs", numericBuiltin abs abs)
   , ("attr", toValue (\x y -> case y :: Value m of
                                 StringV yStr ->
@@ -54,6 +72,8 @@ builtinFunctions evalE = Map.fromList $
   , ("capitalize", textBuiltin Text.toTitle)
   , ("center", ProcedureV fnCenter)
   , ("count", ProcedureV fnLength)
+  , ("date", ProcedureV fnDateFormat)
+  , ("dateformat", ProcedureV fnDateFormat)
   , ("dictsort", ProcedureV fnDictsort)
   , ("escape", ProcedureV fnEscape)
   , ("even", intBuiltin even)
@@ -67,6 +87,7 @@ builtinFunctions evalE = Map.fromList $
   , ("int", ProcedureV fnToInt)
   , ("items", ProcedureV fnItems)
   , ("join", ProcedureV fnJoin)
+  , ("json", ProcedureV fnToJSON)
   , ("last", ProcedureV fnLast)
   , ("length", ProcedureV fnLength)
   , ("list", ProcedureV fnToList)
@@ -77,21 +98,23 @@ builtinFunctions evalE = Map.fromList $
   , ("odd", intBuiltin odd)
   -- , ("pprint", undefined)
   -- , ("random", undefined)
+  , ("regex", regexModule)
   -- , ("rejectattr", undefined)
   -- , ("reject", undefined)
   , ("replace", ProcedureV fnStrReplace)
-  -- , ("reverse", undefined)
+  , ("reverse", ProcedureV fnReverse)
   , ("round", ProcedureV fnRound)
   -- , ("safe", undefined)
   -- , ("selectattr", undefined)
   -- , ("select", undefined)
   -- , ("slice", undefined)
   , ("sort", ProcedureV fnSort)
+  , ("split", ProcedureV fnStrSplit)
   , ("string", ProcedureV fnToString)
   -- , ("striptags", undefined)
   -- , ("sum", undefined)
   , ("title", textBuiltin Text.toTitle)
-  -- , ("tojson", undefined)
+  , ("tojson", ProcedureV fnToJSON)
   -- , ("trim", undefined)
   -- , ("truncate", undefined)
   -- , ("unique", undefined)
@@ -203,6 +226,64 @@ builtinDictAttribs = Map.fromList
 -- Built-in function implementations
 --------------------------------------------------------------------------------
 
+regexModule :: forall m. Monad m => Value m
+regexModule = dictV
+  [ ("match", ProcedureV fnReMatch)
+  , ("matches", ProcedureV fnReMatches)
+  , ("test", ProcedureV fnReTest)
+  ]
+
+runReWith :: forall a m. Monad m
+          => (RE.Regex -> Text -> a)
+          -> Text
+          -> Text
+          -> Text
+          -> ExceptT RuntimeError m a
+runReWith matchFunc regexText haystack optsText = do
+    let opts = parseCompOpts optsText
+    let regex = RE.makeRegexOpts opts RE.defaultExecOpt (Text.unpack regexText)
+    pure $ matchFunc regex haystack
+
+fnReMatch :: forall m. Monad m => Procedure m
+fnReMatch = mkFn3 "regex.match"
+              ("regex", Nothing)
+              ("haystack", Nothing)
+              ("opts", Just "")
+  $ runReWith (\r h -> convertMatchOnceText $ RE.matchOnceText r h)
+
+fnReMatches :: forall m. Monad m => Procedure m
+fnReMatches = mkFn3 "regex.match"
+              ("regex", Nothing)
+              ("haystack", Nothing)
+              ("opts", Just "")
+  $ runReWith (\r h -> fmap convertMatchText $ RE.matchAllText r h)
+
+fnReTest :: forall m. Monad m => Procedure m
+fnReTest = mkFn3 "regex.match"
+              ("regex", Nothing)
+              ("haystack", Nothing)
+              ("opts", Just "")
+  $ runReWith (\r h -> isJust $ RE.matchOnceText r h)
+
+parseCompOpts :: Text -> RE.CompOption
+parseCompOpts = do
+  Text.foldl'
+    (\x ->
+      \case
+        'i' -> x { RE.caseSensitive = False }
+        'm' -> x { RE.multiline = True }
+        _ -> x
+    )
+    RE.blankCompOpt
+
+convertMatchOnceText :: Maybe (Text, RE.MatchText Text, Text) -> Maybe [Text]
+convertMatchOnceText Nothing = Nothing
+convertMatchOnceText (Just (_, m, _)) = Just (convertMatchText m)
+
+convertMatchText :: RE.MatchText Text -> [Text]
+convertMatchText matches =
+  map fst $ Array.elems matches
+
 fnLength :: forall m. Monad m => Procedure m
 fnLength = mkFn1 "length"
               ("value", Nothing :: Maybe (Value m))
@@ -213,10 +294,10 @@ fnLength = mkFn1 "length"
       x -> 
           throwError $
             ArgumentError
-              (Just "length")
-              (Just "value")
-              (Just "iterable")
-              (Just . tagNameOf $ x)
+              "length"
+              "value"
+              "iterable"
+              (tagNameOf x)
 
 fnEscape :: forall m. Monad m => Procedure m
 fnEscape = mkFn1' "escape"
@@ -240,20 +321,20 @@ fnToList = mkFn1 "list"
         maybe
           (throwError $
             ArgumentError
-              (Just "list")
-              (Just "value")
-              (Just "iterable")
-              (Just "non-iterable native object")
+              "list"
+              "value"
+              "iterable"
+              "non-iterable native object"
           )
           pure
     BytesV bytes ->
       pure $ map toValue $ BS.unpack bytes
     x -> throwError $
             ArgumentError
-              (Just "list")
-              (Just "value")
-              (Just "iterable")
-              (Just . tagNameOf $ x)
+              "list"
+              "value"
+              "iterable"
+              (tagNameOf x)
 
 
 fnToFloat :: forall m. Monad m => Procedure m
@@ -291,6 +372,13 @@ fnToString = mkFn1 "string"
   $ \value ->
     stringify value
 
+fnReverse :: forall m. Monad m => Procedure m
+fnReverse = mkFn1 "reverse"
+              ("value", Nothing)
+  $ \case
+      Left t -> pure $ StringV (Text.reverse t)
+      Right xs -> pure $ ListV (reverse (xs :: [Value m]))
+
 fnItems :: forall m. Monad m => Procedure m
 fnItems = mkFn1 "items"
             ("value", Nothing)
@@ -309,8 +397,8 @@ instance ToValue DictSortBy m where
 instance (Monad m) => FromValue DictSortBy m where
   fromValue (StringV "key") = pure . Right $ ByKey
   fromValue (StringV "value") = pure . Right $ ByValue
-  fromValue (StringV x) = pure . Left $ TagError Nothing (Just "'key' or 'value'") (Just $ "string " <> Text.show x)
-  fromValue x = pure . Left $ TagError Nothing (Just "string") (Just . tagNameOf $ x)
+  fromValue (StringV x) = pure . Left $ TagError "conversion to dictsort target" "'key' or 'value'" ("string " <> Text.show x)
+  fromValue x = pure . Left $ TagError "conversion to dictsort target" "string" (tagNameOf x)
 
 fnSort :: forall m. Monad m => Procedure m
 fnSort = mkFn4 "sort"
@@ -387,7 +475,7 @@ fnMap evalE scrutineeE args ctx env = runExceptT $ do
   let funcName = "map"
   argValues <- eitherExcept $
     resolveArgs
-      (Just funcName)
+      funcName
       []
       args
   varargs <- fnArg funcName "varargs" argValues
@@ -418,10 +506,10 @@ fnMap evalE scrutineeE args ctx env = runExceptT $ do
           -- No argument = error.
           throwError $
             ArgumentError
-              (Just funcName)
-              (Just "attribute/callee")
-              (Just "attribute=identifier or callable")
-              (Just "no argument")
+              funcName
+              "attribute/callee"
+              "attribute=identifier or callable"
+              "no argument"
         (callee:varargs') -> do
           -- Re-pack the remaining arguments
           let args' = zip (repeat Nothing) varargs' ++
@@ -447,7 +535,7 @@ fnMap evalE scrutineeE args ctx env = runExceptT $ do
                     case Map.lookup "__call__" m of
                       Nothing -> throwError $
                                     NonCallableObjectError
-                                      (Just $ tagNameOf callee <> " " <> Text.show filterV)
+                                      (tagNameOf callee <> " " <> Text.show filterV)
                       Just v -> apply' v x
                   NativeV obj -> do
                     -- If it's a native object, use its @nativeObjectCall@
@@ -455,7 +543,7 @@ fnMap evalE scrutineeE args ctx env = runExceptT $ do
                     case nativeObjectCall obj of
                       Nothing -> throwError $
                                     NonCallableObjectError
-                                      (Just "non-callable native object")
+                                      "non-callable native object"
                       Just f -> eitherExceptM $ f obj args'
                   FilterV f -> do
                     -- If it's a filter, we apply it as such, mapping the
@@ -479,7 +567,7 @@ fnMap evalE scrutineeE args ctx env = runExceptT $ do
                     -- then run the ginger procedure.
                     args'' <- eitherExcept $
                                 resolveArgs
-                                  (Just "map callback")
+                                  "map callback"
                                   argSpecs
                                   ((Nothing, x):args')
                     eitherExceptM $
@@ -488,7 +576,7 @@ fnMap evalE scrutineeE args ctx env = runExceptT $ do
                     -- Not something we can call.
                       throwError $
                         NonCallableObjectError
-                          (Just $ tagNameOf callee <> " " <> Text.show filterV)
+                          (tagNameOf callee <> " " <> Text.show filterV)
 
               apply = apply' callee
 
@@ -510,7 +598,7 @@ fnRound = mkFn3 "round"
     "common" -> pure (floor . (+ 0.5))
     "ceil" -> pure ceiling
     "floor" -> pure floor
-    x -> throwError $ ArgumentError (Just "round") (Just "method") (Just "one of 'common', 'floor', 'ceil'") (Just x)
+    x -> throwError $ ArgumentError "round" "method" "one of 'common', 'floor', 'ceil'" x
   if precision == 0 then
     pure $ fromIntegral $ r value
   else do
@@ -572,6 +660,12 @@ fnStrRStrip = mkFn2 "rstrip"
       let chars = Text.unpack charsText
       pure $ Text.dropWhileEnd (`elem` chars) value
 
+fnToJSON :: forall m. Monad m => Procedure m
+fnToJSON = mkFn2 "tojson"
+              ("value", Nothing :: Maybe (Value m))
+              ("indent", Just (Nothing :: Maybe Int))
+  $ \value _indentMay ->
+    pure . Text.decodeUtf8 . LBS.toStrict $ JSON.encode value
 
 fnJoin :: forall m. Monad m => Procedure m
 fnJoin = mkFn3 "join"
@@ -605,10 +699,10 @@ fnStrSplit = mkFn3 "split"
     Nothing -> pure . Text.words . Text.strip $ value
     Just "" -> throwError $
                   ArgumentError
-                    (Just "split")
-                    (Just "sep")
-                    (Just "non-empty string")
-                    (Just "empty string")
+                    "split"
+                    "sep"
+                    "non-empty string"
+                    "empty string"
     Just sep -> pure $ Text.splitOn sep value
   case maxsplitMay of
     Nothing ->
@@ -653,7 +747,7 @@ fnStrEncode = mkFn3 "encode"
     "utf16be" -> pure Text.encodeUtf16BE
     "utf32le" -> pure Text.encodeUtf32LE
     "utf32be" -> pure Text.encodeUtf32BE
-    _ -> throwError $ ArgumentError (Just "encode") (Just "encoding") (Just "valid encoding") (Just encoding)
+    _ -> throwError $ ArgumentError "encode" "encoding" "valid encoding" encoding
   pure $ func value
   where
     encodeASCII =
@@ -705,13 +799,13 @@ instance Monad m => FromValue FileSize m where
       Nothing ->
         case readMaybe (Text.unpack txt) of
           Nothing ->
-            pure . Left $ ArgumentError (Just "int") (Just "value") (Just "numeric value") (Just $ Text.show txt)
+            pure . Left $ ArgumentError "int" "value" "numeric value" (Text.show txt)
           Just (f :: Double) ->
             pure . Right $ FileSize (round f)
       Just i ->
         pure . Right $ FileSize i
   fromValue x =
-    pure . Left $ ArgumentError (Just "int") (Just "value") (Just "numeric value") (Just . tagNameOf $ x)
+    pure . Left $ ArgumentError "int" "value" "numeric value" (tagNameOf x)
 
 fnFilesizeFormat :: Monad m => Procedure m
 fnFilesizeFormat = mkFn2 "filesizeformat"
@@ -773,7 +867,7 @@ fnFirst = mkFn1 "first"
     StringV txt -> pure $ StringV $ Text.take 1 txt
     EncodedV (Encoded txt) -> pure $ EncodedV . Encoded $ Text.take 1 txt
     BytesV arr -> pure . toValue $ BS.indexMaybe arr 0
-    x -> throwError $ ArgumentError (Just "first") (Just "value") (Just "list or string") (Just . tagNameOf $ x)
+    x -> throwError $ ArgumentError "first" "value" "list or string" (tagNameOf x)
       
 fnLast :: forall m. Monad m => Procedure m
 fnLast = mkFn1 "first"
@@ -784,7 +878,106 @@ fnLast = mkFn1 "first"
     StringV txt -> pure $ StringV $ Text.takeEnd 1 txt
     BytesV arr -> pure . toValue $ BS.indexMaybe arr (BS.length arr - 1)
     EncodedV (Encoded txt) -> pure $ EncodedV . Encoded $ Text.takeEnd 1 txt
-    x -> throwError $ ArgumentError (Just "first") (Just "value") (Just "list or string") (Just . tagNameOf $ x)
+    x -> throwError $ ArgumentError "first" "value" "list or string" (tagNameOf x)
+
+autoParseDate :: TimeZone -> Text -> Maybe ZonedTime
+autoParseDate defTZ input =
+  asum [ parse t (Text.unpack input) | (parse, t) <- formats ]
+  where
+    ztparse :: String -> String -> Maybe ZonedTime
+    ztparse fmt = parseTimeM True defaultTimeLocale fmt
+    utcparse :: String -> String -> Maybe ZonedTime
+    utcparse fmt i = do
+        lt <- parseTimeM True defaultTimeLocale fmt i
+        return $ ZonedTime lt defTZ
+    formats =
+        [ (ztparse, "%Y-%m-%dT%H:%M:%S%Q%Z")
+        , (utcparse, "%Y-%m-%d %H:%M:%S%Q")
+        , (ztparse, "%Y-%m-%d %H:%M:%S%Q%z")
+        , (ztparse, "%Y-%m-%d %H:%M:%S%Q%Z")
+        , (utcparse, "%Y-%m-%d")
+        ]
+
+dateFromParts :: forall m. Monad m
+              => TimeZone
+              -> [Value m]
+              -> Maybe ZonedTime
+dateFromParts defTZ parts = do
+  year <- case parts of
+            (IntV y : _) -> Just y
+            (StringV x : _) -> readMaybe . Text.unpack $ x
+            (_ : _) -> Nothing
+            _ -> Just 2000
+  month <- case parts of
+            (_ : IntV m : _) -> Just m
+            (_ : StringV x : _) -> readMaybe . Text.unpack $ x
+            (_ : _ : _) -> Nothing
+            _ -> Just 1
+  day <- case parts of
+            (_ : _ : IntV d : _) -> Just d
+            (_ : _ : StringV x : _) -> readMaybe . Text.unpack $ x
+            (_ : _ : _ : _) -> Nothing
+            _ -> Just 1
+  hour <- case parts of
+            (_ : _ : _ : IntV h : _) -> Just h
+            (_ : _ : _ : StringV x : _) -> readMaybe . Text.unpack $ x
+            (_ : _ : _ : _ : _) -> Nothing
+            _ -> Just 0
+  minute <- case parts of
+            (_ : _ : _ : _ : IntV m : _) -> Just m
+            (_ : _ : _ : _ : StringV x : _) -> readMaybe . Text.unpack $ x
+            (_ : _ : _ : _ : _ : _) -> Nothing
+            _ -> Just 0
+  second <- case parts of
+            (_ : _ : _ : _ : _ : IntV s : _) -> Just s
+            (_ : _ : _ : _ : _ : StringV x : _) -> readMaybe . Text.unpack $ x
+            (_ : _ : _ : _ : _ : _ : _) -> Nothing
+            _ -> Just 0
+  tz <- case parts of
+            (_ : _ : _ : _ : _ : _ : v : _) -> parseTZ v
+            _ -> Just defTZ
+  pure $ ZonedTime
+          (LocalTime
+            (fromGregorian year (fromInteger month) (fromInteger day))
+            (TimeOfDay (fromInteger hour) (fromInteger minute) (fromInteger second)))
+          tz
+
+parseTZ :: Value m -> Maybe TimeZone
+parseTZ (StringV s) =
+  parseTimeM True defaultTimeLocale "%z" $ Text.unpack s
+parseTZ (IntV i) =
+  Just $ TimeZone (fromInteger i) False ""
+parseTZ (ListV [IntV minutes, BoolV summerOnly, StringV name]) =
+  Just $ TimeZone (fromInteger minutes) summerOnly (Text.unpack name)
+parseTZ _ = Nothing
+
+convertTZ :: Maybe TimeZone -> ZonedTime -> ZonedTime
+convertTZ Nothing = id
+convertTZ (Just tz) = utcToZonedTime tz . zonedTimeToUTC
+
+fnDateFormat :: forall m. Monad m => Procedure m
+fnDateFormat = mkFn4 "dateformat"
+                ("date", Nothing :: Maybe (Either Text [Value m]))
+                ("format", Just "%c")
+                ("tz", Just Nothing :: Maybe (Maybe (Value m)))
+                ("locale", Just Nothing :: Maybe (Maybe Text))
+    $ \dateRaw fmt tzVal _localeMay -> do
+      let tzMay = parseTZ =<< tzVal
+          defTZ = fromMaybe utc tzMay
+          locale = defaultTimeLocale -- TODO: use getlocale
+      date <- maybe
+                (throwError $
+                  ArgumentError
+                    "dateformat"
+                    "date"
+                    "date string or date array"
+                    (Text.show dateRaw)
+                )
+                pure $
+                case dateRaw of
+                  Left str -> autoParseDate defTZ str
+                  Right parts -> dateFromParts defTZ parts
+      pure . Text.pack . formatTime locale (Text.unpack fmt) . convertTZ tzMay $ date
 
 isUpperVal :: Value m -> Value m
 isUpperVal (StringV txt) = BoolV (Text.all isUpper txt)
@@ -1078,17 +1271,17 @@ textProcAttrib f =
 
 builtinNotImplemented :: Monad m => Text -> Value m
 builtinNotImplemented name = ProcedureV $ NativeProcedure $ \_ _ ->
-  pure . Left $ NotImplementedError (Just name)
+  pure . Left $ NotImplementedError name
 
 fnMaybeArg :: Monad m => Text -> Text -> Maybe b -> ExceptT RuntimeError m b
 fnMaybeArg context name =
   maybe
     (throwError $
         ArgumentError
-          (Just context)
-          (Just name)
-          (Just "argument")
-          (Just "end of arguments")
+          context
+          name
+          "argument"
+          "end of arguments"
     )
     pure
 
@@ -1111,7 +1304,7 @@ mkFn0' funcName f =
   NativeProcedure $ \args ctx -> runExceptT $ do
     _ <- eitherExcept $
       resolveArgs
-        (Just funcName)
+        funcName
         []
         args
     toValue <$> f ctx
@@ -1138,7 +1331,7 @@ mkFn1' funcName (argname1, default1) f =
   NativeProcedure $ \args ctx -> runExceptT $ do
     argValues <- eitherExcept $
       resolveArgs
-        (Just funcName)
+        funcName
         [ (argname1, toValue <$> default1)
         ]
         args
@@ -1176,7 +1369,7 @@ mkFn2' funcName
   NativeProcedure $ \args ctx -> runExceptT $ do
     argValues <- eitherExcept $
       resolveArgs
-        (Just funcName)
+        funcName
         [ (argname1, toValue <$> default1)
         , (argname2, toValue <$> default2)
         ]
@@ -1223,7 +1416,7 @@ mkFn3' funcName
   NativeProcedure $ \args ctx -> runExceptT $ do
     argValues <- eitherExcept $
       resolveArgs
-        (Just funcName)
+        funcName
         [ (argname1, toValue <$> default1)
         , (argname2, toValue <$> default2)
         , (argname3, toValue <$> default3)
@@ -1279,7 +1472,7 @@ mkFn4' funcName
   NativeProcedure $ \args ctx -> runExceptT $ do
     argValues <- eitherExcept $
       resolveArgs
-        (Just funcName)
+        funcName
         [ (argname1, toValue <$> default1)
         , (argname2, toValue <$> default2)
         , (argname3, toValue <$> default3)

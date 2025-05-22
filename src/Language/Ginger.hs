@@ -1,3 +1,6 @@
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
+
 module Language.Ginger
 ( Statement (..)
 , Expr (..)
@@ -14,6 +17,7 @@ module Language.Ginger
 , Eval (..)
 , Encoded (..)
 , RuntimeError (..)
+, prettyRuntimeError
 , Identifier (..)
 , module M
 )
@@ -22,6 +26,7 @@ where
 import Language.Ginger.AST
 import Language.Ginger.Value
 import Language.Ginger.Interpret
+import Language.Ginger.RuntimeError (prettyRuntimeError)
 import Language.Ginger.FileLoader as M
         ( fileLoader
         )
@@ -42,7 +47,7 @@ import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Map.Strict (Map)
 
-ginger :: Monad m
+ginger :: forall m. Monad m
        => TemplateLoader m
        -> POptions
        -> Encoder m
@@ -60,7 +65,7 @@ ginger loader parserOptions encoder templateName vars = runExceptT $ do
                       (Text.unpack templateName)
                       templateSrc
   template <- either
-                (throwError . TemplateParseError (Just templateName) . Just . Text.pack)
+                (throwError . TemplateParseError templateName . Text.pack)
                 pure
                 parseResult
   let ctx = defContext
@@ -68,7 +73,7 @@ ginger loader parserOptions encoder templateName vars = runExceptT $ do
               , contextLoadTemplateFile = loader
               }
       env = defEnv
-              { envVars = vars
+              { envVars = envVars defEnv <> vars
               }
   eitherExceptM $ runGingerT
     (evalT template >>= encode)

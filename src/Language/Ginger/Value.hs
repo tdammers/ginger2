@@ -31,7 +31,13 @@ import Data.Word
 import GHC.Float (float2Double)
 import Test.Tasty.QuickCheck (Arbitrary (..))
 import qualified Test.Tasty.QuickCheck as QC
-import Data.Aeson (FromJSON (..), FromJSONKey (..), ToJSON (..), FromJSONKeyFunction (..))
+import Data.Aeson
+          ( FromJSON (..)
+          , FromJSONKey (..)
+          , ToJSON (..)
+          , FromJSONKeyFunction (..)
+          , ToJSONKey (..)
+          )
 import qualified Data.Aeson as JSON
 import qualified Data.Aeson.Types as JSON
 import Data.Scientific (floatingOrInteger)
@@ -42,16 +48,20 @@ import Language.Ginger.RuntimeError
 data Env m =
   Env
     { envVars :: !(Map Identifier (Value m))
-    , envRoot :: Env m
+    , envRootMay :: Maybe (Env m)
     }
 
+envRoot :: Env m -> Env m
+envRoot e =
+  fromMaybe e $ envRootMay e
+
 emptyEnv :: Env m
-emptyEnv = Env mempty emptyEnv
+emptyEnv = Env mempty Nothing
 
 instance Semigroup (Env m) where
   a <> b = Env
             { envVars = envVars a <> envVars b
-            , envRoot = envRoot b
+            , envRootMay = envRootMay a <> envRootMay b
             }
 
 instance Monoid (Env m) where
@@ -116,11 +126,7 @@ instance ToJSON Scalar where
   toJSON NoneScalar = JSON.Null
   toJSON (BoolScalar b) = JSON.Bool b
   toJSON (StringScalar s) = toJSON s
-  toJSON (EncodedScalar (Encoded e)) =
-    JSON.object
-      [ ("@type", JSON.String "encoded")
-      , ("@data", JSON.String e)
-      ]
+  toJSON (EncodedScalar (Encoded e)) = JSON.String e
   toJSON (BytesScalar bs) =
     JSON.object
       [ ("@type", JSON.String "bytes")
@@ -131,6 +137,19 @@ instance ToJSON Scalar where
 
 instance FromJSONKey Scalar where
   fromJSONKey = FromJSONKeyText StringScalar
+
+instance ToJSONKey Scalar where
+  toJSONKey = JSON.toJSONKeyText scalarToText
+
+scalarToText :: Scalar -> Text
+scalarToText NoneScalar = ""
+scalarToText (BoolScalar True) = "true"
+scalarToText (BoolScalar False) = "false"
+scalarToText (StringScalar str) = str
+scalarToText (BytesScalar b) = decodeUtf8 . Base64.encode $ b
+scalarToText (EncodedScalar (Encoded e)) = e
+scalarToText (IntScalar i) = Text.show i
+scalarToText (FloatScalar f) = Text.show f
 
 data Value m
   = ScalarV !Scalar
@@ -145,6 +164,12 @@ instance FromJSON (Value m) where
   parseJSON v@JSON.Object {} = DictV <$> parseJSON v
   parseJSON v@JSON.Array {} = ListV <$> parseJSON v
   parseJSON v = ScalarV <$> parseJSON v
+
+instance ToJSON (Value m) where
+  toJSON (ScalarV s) = toJSON s
+  toJSON (ListV xs) = toJSON xs
+  toJSON (DictV d) = toJSON d
+  toJSON x = toJSON (show x)
 
 traverseValue :: Monoid a => (Value m -> a) -> Value m -> a
 traverseValue p v@(ListV xs) =
@@ -221,12 +246,20 @@ nativeFunc f =
   NativeProcedure $ \args _ -> case args of
     [] ->
       pure . Left $
-        ArgumentError (Just "<native function>") Nothing (Just "value") (Just "end of arguments")
+        ArgumentError
+          "<native function>"
+          "<positional argument>"
+          "value"
+          "end of arguments"
     [(_, x)] ->
       f x
     (_:(name, x):_) ->
       pure . Left $
-        ArgumentError (Just "<native function>") (identifierName <$> name) (Just "end of arguments") (Just . tagNameOf $ x)
+        ArgumentError
+          "<native function>"
+          (maybe "<positional argument>" identifierName $ name)
+          "end of arguments"
+          (tagNameOf $ x)
 
 pureNativeFunc :: (Applicative m)
                => (Value m -> Either RuntimeError (Value m))
@@ -235,12 +268,20 @@ pureNativeFunc f =
   NativeProcedure $ \args _ -> case args of
     [] ->
       pure . Left $
-        ArgumentError (Just "<native function>") Nothing (Just "value") (Just "end of arguments")
+        ArgumentError
+          "<native function>"
+          "<positional argument>"
+          "value"
+          "end of arguments"
     [(_, x)] ->
       pure $ f x
     (_:(name, x):_) ->
       pure . Left $
-        ArgumentError (Just "<native function>") (identifierName <$> name) (Just "end of arguments") (Just . tagNameOf $ x)
+        ArgumentError
+          "<native function>"
+          (maybe "<positional argument>" identifierName $ name)
+          "end of arguments"
+          (tagNameOf $ x)
 
 pureNativeFunc2 :: (Applicative m)
                => (Value m -> Value m -> Either RuntimeError (Value m))
@@ -249,15 +290,27 @@ pureNativeFunc2 f =
   NativeProcedure $ \args _ -> case args of
     [] ->
       pure . Left $
-        ArgumentError (Just "<native function>") Nothing (Just "value") (Just "end of arguments")
+        ArgumentError
+          "<native function>"
+          "<positional argument>"
+          "value"
+          "end of arguments"
     [_] ->
       pure . Left $
-        ArgumentError (Just "<native function>") Nothing (Just "value") (Just "end of arguments")
+        ArgumentError
+          "<native function>"
+          "<positional argument>"
+          "value"
+          "end of arguments"
     [(_, x), (_, y)] ->
       pure $ f x y
     (_:_:(name, x):_) ->
       pure . Left $
-        ArgumentError (Just "<native function>") (identifierName <$> name) (Just "end of arguments") (Just . tagNameOf $ x)
+        ArgumentError
+          "<native function>"
+          (maybe "<positional argument>" identifierName $ name)
+          "end of arguments"
+          (tagNameOf $ x)
 
 type MetaFunc m a =
      Expr
@@ -442,11 +495,20 @@ instance Applicative m => FromValue Bool m where
 
 instance Applicative m => FromValue () m where
   fromValue NoneV = pure $ Right ()
-  fromValue x = pure . Left $ TagError Nothing (Just "fromValue") (Just . tagNameOf $ x)
+  fromValue x = pure . Left $ TagError "" "fromValue" (tagNameOf x)
 
 instance (Applicative m, FromValue a m) => FromValue (Maybe a) m where
   fromValue NoneV = pure $ Right Nothing
   fromValue x = fmap (fmap Just) $ fromValue x
+
+instance (Monad m, FromValue l m, FromValue r m) => FromValue (Either l r) m where
+  fromValue v = do
+    fromValue v >>= \case
+      Right r -> pure . Right $ Right r
+      _ -> do
+        fromValue v >>= \case
+          Left e -> pure $ Left e
+          Right l -> pure . Right $ Left l
 
 instance (Monad m, FromValue a m) => FromValue [a] m where
   fromValue x = runExceptT $ do
@@ -598,29 +660,29 @@ instance Applicative m => ToNativeProcedure m (Value m) where
     pure (Right val)
   toNativeProcedure _ _ _ =
     pure . Left $
-      ArgumentError (Just "<native function>") Nothing (Just "end of arguments") (Just "value")
+      ArgumentError "<native function>" "<positional argument>" "end of arguments" "value"
 
 instance Applicative m => ToNativeProcedure m (m (Value m)) where
   toNativeProcedure action [] _ =
     Right <$> action
   toNativeProcedure _ _ _ =
     pure . Left $
-      ArgumentError (Just "<native function>") Nothing (Just "end of arguments") (Just "value")
+      ArgumentError "<native function>" "<positional argument>" "end of arguments" "value"
 
 instance Applicative m => ToNativeProcedure m (m (Either RuntimeError (Value m))) where
   toNativeProcedure action [] _ =
     action
   toNativeProcedure _ _ _ =
     pure . Left $
-      ArgumentError (Just "<native function>") Nothing (Just "end of arguments") (Just "value")
+      ArgumentError "<native function>" "<positional argument>" "end of arguments" "value"
 
 instance (Applicative m, ToNativeProcedure m a) => ToNativeProcedure m (Value m -> a) where
   toNativeProcedure _ [] _ =
     pure . Left $
-      ArgumentError (Just "<native function>") Nothing (Just "value") (Just "end of arguments")
+      ArgumentError "<native function>" "<positional argument>" "value" "end of arguments"
   toNativeProcedure _ ((Just _, _):_) _ =
     pure . Left $
-      ArgumentError (Just "<native function>") Nothing (Just "positional argument") (Just "named argument")
+      ArgumentError "<native function>" "<positional argument>" "positional argument" "named argument"
   toNativeProcedure f ((Nothing, v):xs) ctx =
     toNativeProcedure (f v) xs ctx
 
@@ -684,7 +746,7 @@ eitherExceptM :: (Monad m, MonadError e (t m), MonadTrans t)
               => m (Either e a) -> t m a
 eitherExceptM = (>>= eitherExcept) . lift
 
-resolveArgs :: Maybe Text
+resolveArgs :: Text
             -> [(Identifier, Maybe (Value m))]
             -> [(Maybe Identifier, Value m)]
             -> Either RuntimeError (Map Identifier (Value m))
@@ -705,9 +767,9 @@ resolveArgs context specs args =
                 (Left $
                   ArgumentError
                     context
-                    (Just $ identifierName argName)
-                    (Just "argument")
-                    (Just "end of arguments")
+                    (identifierName argName)
+                    "argument"
+                    "end of arguments"
                 )
                 -- Default exists, use it.
                 (\val ->
@@ -729,8 +791,8 @@ resolveArgs context specs args =
           ]
 
 leftNaN :: Double -> Either RuntimeError Double
-leftNaN c | isNaN c = Left $ NumericError Nothing (Just "not a number")
-leftNaN c | isInfinite c = Left $ NumericError Nothing (Just "infinity")
+leftNaN c | isNaN c = Left $ NumericError "<unknown>" "not a number"
+leftNaN c | isInfinite c = Left $ NumericError "<unknown>" "infinity"
 leftNaN c = Right c
 
 numericFunc :: Monad m
@@ -751,7 +813,7 @@ numericFuncCatch :: Monad m
                   -> Either RuntimeError (Value m)
 numericFuncCatch f _ (IntV a) = IntV <$> f a
 numericFuncCatch _ f (FloatV a) = FloatV <$> (leftNaN =<< f a)
-numericFuncCatch _ _ a = Left (TagError Nothing (Just "number") (Just . tagNameOf $ a))
+numericFuncCatch _ _ a = Left (TagError "<unknown>" "number" (tagNameOf a))
 
 asOptionalVal :: (Value m -> Either RuntimeError a) -> Value m -> Either RuntimeError (Maybe a)
 asOptionalVal _ NoneV = Right Nothing
@@ -759,35 +821,35 @@ asOptionalVal asVal x = Just <$> asVal x
 
 asIntVal :: Value m -> Either RuntimeError Integer
 asIntVal (IntV a) = Right a
-asIntVal x = Left $ TagError Nothing (Just "int") (Just . tagNameOf $ x)
+asIntVal x = Left $ TagError "conversion to int" "int" (tagNameOf x)
 
 asFloatVal :: Value m -> Either RuntimeError Double
 asFloatVal (FloatV a) = Right a
 asFloatVal (IntV a) = Right (fromInteger a)
-asFloatVal x = Left $ TagError Nothing (Just "float") (Just . tagNameOf $ x)
+asFloatVal x = Left $ TagError "conversion to float" "float" (tagNameOf x)
 
 asBoolVal :: Value m -> Either RuntimeError Bool
 asBoolVal (BoolV a) = Right a
 asBoolVal NoneV = Right False
-asBoolVal x = Left $ TagError Nothing (Just "bool") (Just . tagNameOf $ x)
+asBoolVal x = Left $ TagError "conversion to bool" "bool" (tagNameOf x)
 
 asListVal :: Monad m => Value m -> m (Either RuntimeError [Value m])
 asListVal (ListV a) = pure $ Right a
 asListVal (NativeV n) =
   maybe
-    (Left $ TagError Nothing (Just "list") (Just "non-list native object"))
+    (Left $ TagError "conversion to list" "list" "non-list native object")
     Right <$>
     nativeObjectAsList n
-asListVal x = pure . Left $ TagError Nothing (Just "list") (Just . tagNameOf $ x)
+asListVal x = pure . Left $ TagError "conversion to list" "list" (tagNameOf x)
 
 asDictVal :: Monad m => Value m -> m (Either RuntimeError (Map Scalar (Value m)))
 asDictVal (DictV a) = pure $ Right a
 asDictVal (NativeV n) =
   maybe
-    (Left $ TagError Nothing (Just "dict") (Just "non-dict native object"))
+    (Left $ TagError "conversion to dict" "dict" "non-dict native object")
     Right <$>
     nativeObjectAsDict n
-asDictVal x = pure . Left $ TagError Nothing (Just "dict") (Just . tagNameOf $ x)
+asDictVal x = pure . Left $ TagError "conversion to dict" "dict" (tagNameOf x)
 
 asTextVal :: Value m -> Either RuntimeError Text
 asTextVal (StringV a) = Right a
@@ -795,11 +857,11 @@ asTextVal (EncodedV (Encoded a)) = Right a
 asTextVal (IntV a) = Right (Text.show a)
 asTextVal (FloatV a) = Right (Text.show a)
 asTextVal NoneV = Right ""
-asTextVal x = Left $ TagError Nothing (Just "string") (Just . tagNameOf $ x)
+asTextVal x = Left $ TagError "conversion to string" "string" (tagNameOf x)
 
 asScalarVal :: Value m -> Either RuntimeError Scalar
 asScalarVal (ScalarV a) = Right a
-asScalarVal x = Left $ TagError Nothing (Just "scalar") (Just . tagNameOf $ x)
+asScalarVal x = Left $ TagError "conversion to scalar" "scalar" (tagNameOf x)
 
 intFunc :: (Monad m, ToValue a m)
          => (Integer -> Either RuntimeError a)
@@ -818,7 +880,7 @@ boolFunc :: (Monad m, ToValue a m)
          -> Value m
          -> Either RuntimeError (Value m)
 boolFunc f (BoolV a) = pure . toValue $ f a
-boolFunc _ a = Left (TagError Nothing (Just "bool") (Just . tagNameOf $ a))
+boolFunc _ a = Left (TagError "bool function" "bool" (tagNameOf a))
 
 textFunc :: (Monad m, ToValue a m)
          => (Text -> Either RuntimeError a)
@@ -829,7 +891,7 @@ textFunc f (EncodedV (Encoded a)) = toValue <$> f a
 textFunc f (IntV a) = toValue <$> f (Text.show a)
 textFunc f (FloatV a) = toValue <$> f (Text.show a)
 textFunc f NoneV = toValue <$> f ""
-textFunc _ a = Left (TagError Nothing (Just "int") (Just . tagNameOf $ a))
+textFunc _ a = Left (TagError "text function" "int" (tagNameOf a))
 
 numericFunc2 :: Monad m
              => (Integer -> Integer -> Integer)
@@ -853,9 +915,9 @@ numericFunc2Catch f _ (IntV a) (IntV b) = IntV <$> (a `f` b)
 numericFunc2Catch _ f (FloatV a) (FloatV b) = FloatV <$> (leftNaN =<< a `f` b)
 numericFunc2Catch _ f (IntV a) (FloatV b) = FloatV <$> (leftNaN =<< fromInteger a `f` b)
 numericFunc2Catch _ f (FloatV a) (IntV b) = FloatV <$> (leftNaN =<< a `f` fromInteger b)
-numericFunc2Catch _ _ (FloatV _) b = Left (TagError Nothing (Just "number") (Just . tagNameOf $ b))
-numericFunc2Catch _ _ (IntV _) b = Left (TagError Nothing (Just "number") (Just . tagNameOf $ b))
-numericFunc2Catch _ _ b _ = Left (TagError Nothing (Just "number") (Just . tagNameOf $ b))
+numericFunc2Catch _ _ (FloatV _) b = Left (TagError "numeric function" "number" (tagNameOf b))
+numericFunc2Catch _ _ (IntV _) b = Left (TagError "numeric function" "number" (tagNameOf b))
+numericFunc2Catch _ _ b _ = Left (TagError "numeric function" "number" (tagNameOf b))
 
 intFunc2 :: Monad m
          => (Integer -> Integer -> Either RuntimeError Integer)
@@ -875,8 +937,8 @@ floatFunc2 :: Monad m
 floatFunc2 f (IntV a) b = floatFunc2 f (FloatV $ fromIntegral a) b
 floatFunc2 f (FloatV a) (IntV b) = floatFunc2 f (FloatV a) (FloatV $ fromIntegral b)
 floatFunc2 f (FloatV a) (FloatV b) = FloatV <$> (a `f` b)
-floatFunc2 _ (FloatV _) b = Left (TagError Nothing (Just "float") (Just . tagNameOf $ b))
-floatFunc2 _ b _ = Left (TagError Nothing (Just "float") (Just . tagNameOf $ b))
+floatFunc2 _ (FloatV _) b = Left (TagError "floating-point function" "float" (tagNameOf b))
+floatFunc2 _ b _ = Left (TagError "floating-point function" "float" (tagNameOf b))
 
 boolFunc2 :: Monad m
          => (Bool -> Bool -> Bool)

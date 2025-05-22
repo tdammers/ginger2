@@ -28,10 +28,11 @@ import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
 import Data.Void (Void)
-import Text.Megaparsec
+import Text.Megaparsec as Megaparsec
 import Text.Megaparsec.Char
 
-import Language.Ginger.AST
+import Language.Ginger.AST as AST
+import Language.Ginger.SourcePosition as AST
 
 --------------------------------------------------------------------------------
 -- Parser Type
@@ -112,6 +113,19 @@ mapLeft _ (Right x) = Right x
 -- Primitives etc.
 --------------------------------------------------------------------------------
 
+positioned :: (SourcePosition -> a -> b) -> P a -> P b
+positioned setPos inner = do
+  pos <- convertSourcePos <$> getSourcePos
+  setPos pos <$> inner
+
+convertSourcePos :: SourcePos -> SourcePosition
+convertSourcePos sp =
+  SourcePosition
+    { AST.sourceFile = Text.pack $ Megaparsec.sourceName sp
+    , AST.sourceLine = unPos $ Megaparsec.sourceLine sp
+    , AST.sourceColumn = unPos $ Megaparsec.sourceColumn sp
+    }
+
 identifierChar :: P Char
 identifierChar = satisfy isIdentifierChar
 
@@ -128,7 +142,7 @@ isIdentifierInitialChar c =
 
 isOperatorChar :: Char -> Bool
 isOperatorChar c =
-  c `elem` ("&|%^*+-/~.=![]{}()," :: [Char])
+  c `elem` ("&|%^*+-/~.=!,)}]" :: [Char])
 
 operatorChar :: P Char
 operatorChar = satisfy isOperatorChar
@@ -208,15 +222,15 @@ intLit = do
   read <$> (intDigits <* space)
 
 intDigits :: P String
-intDigits = do
-  sign <- option "" $ "-" <$ char '-'
+intDigits = try $ do
+  sign <- try $ (option "" $ "-" <$ char '-') <* notFollowedBy operatorChar
   str <- some digit
   pure (sign ++ str)
 
 floatLit :: P Double
 floatLit = do
   m <- do
-    sign <- option "" $ "-" <$ char '-'
+    sign <- try $ (option "" $ "-" <$ char '-') <* notFollowedBy operatorChar
     intPart <- many digit
     void $ char '.'
     fracPart <- many digit
@@ -290,7 +304,7 @@ argSig =
 --------------------------------------------------------------------------------
 
 expr :: P Expr
-expr = ternaryExpr
+expr = positioned PositionedE ternaryExpr
 
 ternaryExpr :: P Expr
 ternaryExpr = do
@@ -460,7 +474,7 @@ simpleExpr = choice
   , DictE <$> dict
   , FloatLitE <$> try floatLit
   , IntLitE <$> try intLit
-  , chunk "-" *> space *> (NegateE <$> (parenthesized expr <|> (VarE <$> identifier)))
+  , try (operator "-") *> space *> (NegateE <$> (parenthesized expr <|> (VarE <$> identifier)))
   , BoolE True <$ (keyword "true" <|> keyword "True")
   , BoolE False <$ (keyword "false" <|> keyword "False")
   , NoneE <$ (keyword "none" <|> keyword "None")
@@ -561,12 +575,13 @@ statement =
 
 singleStatement :: P Statement
 singleStatement =
-  choice
-    [ commentStatement
-    , interpolationStatement
-    , controlStatement
-    , immediateStatement
-    ]
+  positioned PositionedS $
+    choice
+      [ commentStatement
+      , interpolationStatement
+      , controlStatement
+      , immediateStatement
+      ]
 
 immediateStatement :: P Statement
 immediateStatement =

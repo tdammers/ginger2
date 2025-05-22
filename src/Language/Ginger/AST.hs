@@ -16,6 +16,8 @@ import Data.Maybe (maybeToList)
 import Data.List (intercalate)
 import Data.Aeson (ToJSON (..), ToJSONKey (..), FromJSON (..), FromJSONKey (..))
 
+import Language.Ginger.SourcePosition
+
 newtype Identifier =
   Identifier { identifierName :: Text }
   deriving (Show, Eq, Ord, ToJSON, ToJSONKey, FromJSON, FromJSONKey)
@@ -69,7 +71,9 @@ data Block =
     deriving (Show, Eq)
 
 data Statement
-  = -- | Bare text written in the template, outside of any curly braces
+  = -- | Statement tagged with a source position
+    PositionedS !SourcePosition !Statement
+  | -- | Bare text written in the template, outside of any curly braces
     ImmediateS !Encoded
   | -- | An expression interpolation: @{{ expr }}@
     InterpolationS !Expr
@@ -165,6 +169,9 @@ escapeComment x = x
 
 instance Arbitrary Statement where
   arbitrary = arbitraryStatement mempty
+  shrink (PositionedS pos s) =
+    PositionedS pos <$> shrink s ++
+    [s]
   shrink (GroupS xs) = map GroupS $ shrink xs
   shrink (ImmediateS txt) = map ImmediateS $ shrink txt
   shrink (InterpolationS e) = map InterpolationS $ shrink e
@@ -322,7 +329,8 @@ instance Arbitrary Recursivity where
 type MacroArg = (Identifier, Maybe Expr)
 
 data Expr
-  = NoneE
+  = PositionedE !SourcePosition !Expr
+  | NoneE
   | BoolE !Bool
   | StringLitE !Text
   | IntLitE !Integer
@@ -357,6 +365,9 @@ pattern FalseE = BoolE False
 
 instance Arbitrary Expr where
   arbitrary = arbitraryExpr mempty
+  shrink (PositionedE pos e) =
+    PositionedE pos <$> shrink e ++
+    [e]
   shrink (StringLitE txt) = map (StringLitE . Text.pack) $ shrink $ Text.unpack txt
   shrink (IntLitE i) = IntLitE <$> shrink i
   shrink (FloatLitE i) = FloatLitE <$> shrink i

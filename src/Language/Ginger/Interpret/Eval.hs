@@ -70,17 +70,18 @@ loadTemplateMaybe name = do
       let result = parseGinger Parse.template (Text.unpack name) src
       case result of
         Left err ->
-          throwError $ TemplateParseError (Just name) (Just $ Text.pack err)
+          throwError $ TemplateParseError name (Text.pack err)
         Right t -> do
           parent <- forM (templateParent t) loadTemplate
           let body = templateBody t
           pure . Just $ LoadedTemplate parent body
 
 mapArgs :: forall m. Monad m
-        => [(Identifier, Maybe (Value m))]
+        => Text
+        -> [(Identifier, Maybe (Value m))]
         -> [(Maybe Identifier, Value m)]
         -> GingerT m (Map Identifier (Value m))
-mapArgs spec args =
+mapArgs context spec args =
   go spec posArgs kwArgs
   where
     posArgs = [ v | (Nothing, v) <- args ]
@@ -112,7 +113,7 @@ mapArgs spec args =
                   rest <- go specs ps kw
                   pure $ cur <> rest
                 Nothing ->
-                  throwError $ ArgumentError Nothing (Just $ identifierName name) (Just "argument") (Just "end of arguments")
+                  throwError $ ArgumentError context (identifierName name) "argument" "end of arguments"
     go [] _ _ =
       pure mempty
   
@@ -170,21 +171,21 @@ call callerMay callable posArgsExpr namedArgsExpr = do
     ProcedureV (GingerProcedure env argsSig f) -> do
       withEnv env $ do
         maybe (pure ()) (setVar "caller") callerMay
-        argDict <- mapArgs argsSig args
+        argDict <- mapArgs "macro" argsSig args
         scoped $ do
           setVars argDict
           evalE f
     DictV m -> do
       let callable' = Map.lookup "__call__" m
       case callable' of
-        Nothing -> throwError $ NonCallableObjectError (Just "dict")
+        Nothing -> throwError $ NonCallableObjectError "dict"
         Just c -> call callerMay c posArgsExpr namedArgsExpr
     NativeV obj -> do
       case nativeObjectCall obj of
         Just f -> native $ f obj args
-        Nothing -> throwError $ NonCallableObjectError (Just "native object")
+        Nothing -> throwError $ NonCallableObjectError "native object"
     x ->
-      throwError $ NonCallableObjectError (Just . tagNameOf $ x)
+      throwError $ NonCallableObjectError (tagNameOf x)
 
 class Eval m a where
   eval :: a -> GingerT m (Value m)
@@ -199,6 +200,8 @@ instance Monad m => Eval m Template where
   eval = evalT
 
 evalE :: Monad m => Expr -> GingerT m (Value m)
+evalE (PositionedE pos e) = do
+  evalE e `catchError` decorateError pos
 evalE NoneE = pure NoneV
 evalE (BoolE b) = pure (BoolV b)
 evalE (StringLitE s) = pure (StringV s)
@@ -223,7 +226,7 @@ evalE (DotE aExpr b) = do
       itemMay <- getItem a (StringV . identifierName $ b)
       case itemMay of
         Just item -> pure item
-        Nothing -> throwError $ NotInScopeError (Just $ Text.show a <> "." <> Text.show b)
+        Nothing -> throwError $ NotInScopeError (Text.show a <> "." <> Text.show b)
 evalE (SliceE sliceeE beginEMay endEMay) = do
   slicee <- evalE sliceeE
   beginMay <- mapM evalE beginEMay
@@ -253,7 +256,7 @@ evalKV (kExpr, vExpr) = do
   kVal <- evalE kExpr
   kScalar <- case kVal of
     ScalarV s -> pure s
-    x -> throwError $ TagError Nothing (Just "scalar") (Just . tagNameOf $ x)
+    x -> throwError $ TagError "dict key" "scalar" (tagNameOf x)
   vVal <- evalE vExpr
   return (kScalar, vVal)
 
@@ -321,7 +324,7 @@ sliceValue (EncodedV (Encoded xs)) startValMay endValMay = do
   pure . EncodedV . Encoded $ sliceText xs (fromIntegral <$> startMay) (fromIntegral <$> endMay)
 sliceValue x _ _ =
   throwError $
-    TagError (Just "slicee") (Just "list or string") (Just . tagNameOf $ x)
+    TagError "slicee" "list or string" (tagNameOf x)
 
 numericBinop :: Monad m
              => (Integer -> Integer -> Integer)
@@ -392,7 +395,7 @@ compareValues (IntV a) (FloatV b) = pure $ compare (fromInteger a) b
 compareValues (FloatV a) (IntV b) = pure $ compare a (fromInteger b)
 compareValues (StringV a) (StringV b) = pure $ compare a b
 compareValues (EncodedV a) (EncodedV b) = pure $ compare a b
-compareValues a b = throwError $ TagError (Just "comparison") (Just "comparable types") (Just $ tagNameOf a <> ", " <> tagNameOf b)
+compareValues a b = throwError $ TagError "comparison" "comparable types" (tagNameOf a <> ", " <> tagNameOf b)
 
 valueComparison :: Monad m => (Ordering -> Bool) -> Value m -> Value m -> GingerT m (Value m)
 valueComparison f a b = do
@@ -410,10 +413,10 @@ dictsEqual m1 m2 =
 
 evalUnary :: Monad m => UnaryOperator -> Value m -> GingerT m (Value m)
 evalUnary UnopNot (BoolV b) = pure (BoolV $ not b)
-evalUnary UnopNot x = throwError $ TagError (Just "not") (Just "boolean") (Just . tagNameOf $ x)
+evalUnary UnopNot x = throwError $ TagError "not" "boolean" (tagNameOf x)
 evalUnary UnopNegate (IntV x) = pure (IntV $ negate x)
 evalUnary UnopNegate (FloatV x) = pure (FloatV $ negate x)
-evalUnary UnopNegate x = throwError $ TagError (Just "unary -") (Just "number") (Just . tagNameOf $ x)
+evalUnary UnopNegate x = throwError $ TagError "unary -" "number" (tagNameOf x)
 
 evalBinary :: Monad m => BinaryOperator -> Value m -> Value m -> GingerT m (Value m)
 evalBinary BinopPlus a b = numericBinop (+) (+) a b
@@ -435,7 +438,7 @@ evalBinary BinopOr a b = boolBinop (||) a b
 evalBinary BinopIn a b = case b of
   DictV m -> case a of
     ScalarV k -> pure . BoolV $ k `Map.member` m
-    x -> throwError $ TagError (Just "in") (Just "scalar") (Just . tagNameOf $ x)
+    x -> throwError $ TagError "in" "scalar" (tagNameOf x)
   ListV [] -> pure . BoolV $ False
   ListV (x:xs) -> do
     found <- valuesEqual a x
@@ -443,7 +446,7 @@ evalBinary BinopIn a b = case b of
       pure . BoolV $ True
     else
       evalBinary BinopIn a (ListV xs)
-  x -> throwError $ TagError (Just "in") (Just "list or dict") (Just . tagNameOf $ x)
+  x -> throwError $ TagError "in" "list or dict" (tagNameOf x)
 evalBinary BinopIndex a b = do
   itemMay <- getItem a b
   case itemMay of
@@ -471,22 +474,22 @@ getAttr :: Monad m
 getAttr a b = native $ getAttrRaw a b
 
 safeIntPow :: Integer -> Integer -> Either RuntimeError Integer
-safeIntPow _ b | b < 0 = Left (NumericError (Just "**") (Just "negative exponent"))
+safeIntPow _ b | b < 0 = Left (NumericError "**" "negative exponent")
 safeIntPow a b = Right (a ^ b)
 
 safeIntDiv :: Integer -> Integer -> Either RuntimeError Integer
-safeIntDiv _ 0 = Left (NumericError (Just "//") (Just "division by zero"))
+safeIntDiv _ 0 = Left (NumericError "//" "division by zero")
 safeIntDiv a b = Right (a `div` b)
 
 safeIntMod :: Integer -> Integer -> Either RuntimeError Integer
-safeIntMod _ 0 = Left (NumericError (Just "%") (Just "modulo by zero"))
+safeIntMod _ 0 = Left (NumericError "%" "modulo by zero")
 safeIntMod a b = Right (a `mod` b)
 
 safeDiv :: Double -> Double -> Either RuntimeError Double
 safeDiv a b =
   case a / b of
-    c | isNaN c -> Left (NumericError (Just "/") (Just "not a number"))
-    c | isInfinite c -> Left (NumericError (Just "/") (Just $ "division by zero"))
+    c | isNaN c -> Left (NumericError "/" "not a number")
+    c | isInfinite c -> Left (NumericError "/" ("division by zero"))
     c -> Right c
   
 
@@ -535,6 +538,8 @@ evalLT t = do
       evalLT parent
 
 evalS :: Monad m => Statement -> GingerT m (Value m)
+evalS (PositionedS pos s) = do
+  evalS s `catchError` decorateError pos
 evalS (ImmediateS enc) = pure (EncodedV enc)
 evalS (InterpolationS expr) = whenOutputPolicy $ do
   evalE expr
@@ -681,7 +686,7 @@ makeSuper (Just lblock) = do
 asBool :: Monad m => Text -> Value m -> GingerT m Bool
 asBool _ (BoolV b) = pure b
 asBool _ NoneV = pure False
-asBool context x = throwError $ TagError (Just context) (Just "boolean") (Just . tagNameOf $ x)
+asBool context x = throwError $ TagError context "boolean" (tagNameOf x)
 
 evalLoop :: forall m. Monad m
          => Maybe Identifier
@@ -700,7 +705,7 @@ evalLoop loopKeyMay loopName iteree loopCondMay recursivity bodyS elseSMay recur
     ListV items -> pure (zip (map IntV [0..]) items)
     DictV dict -> pure [ (ScalarV k, v) | (k, v) <- Map.toList dict ]
     NoneV -> pure []
-    x -> throwError $ TagError (Just "iteree") (Just "list or dict") (Just . tagNameOf $ x)
+    x -> throwError $ TagError "iteree" "list or dict" (tagNameOf x)
 
   filtered <- maybe (pure itemPairs) (goFilter itemPairs) loopCondMay
 
@@ -777,9 +782,9 @@ evalLoop loopKeyMay loopName iteree loopCondMay recursivity bodyS elseSMay recur
             ctx
             env
         [] -> pure . Left $
-                ArgumentError (Just "loop()") (Just "1") (Just "argument") (Just "end of arguments")
+                ArgumentError "loop()" "1" "argument" "end of arguments"
         _ -> pure . Left $
-                ArgumentError (Just "loop()") (Just "2") (Just "end of arguments") (Just "argument")
+                ArgumentError "loop()" "2" "end of arguments" "argument"
       
 
     cycleFunc :: Int -> Value m -> Value m

@@ -15,8 +15,10 @@ where
 
 import Language.Ginger.AST
 import Language.Ginger.RuntimeError
+import Language.Ginger.SourcePosition
 import Language.Ginger.Value
 
+import Control.Applicative ((<|>))
 import Control.Monad (forM)
 import Control.Monad.Except
   ( ExceptT (..)
@@ -52,6 +54,7 @@ data EvalState m =
     { evalEnv :: !(Env m)
     , evalLoadedTemplates :: !(Map Text CachedTemplate)
     , evalBlocks :: !(Map Identifier LoadedBlock)
+    , evalSourcePosition :: !(Maybe SourcePosition)
     }
 
 data LoadedBlock =
@@ -67,6 +70,7 @@ instance Semigroup (EvalState m) where
       { evalEnv = evalEnv a <> evalEnv b
       , evalLoadedTemplates = evalLoadedTemplates a <> evalLoadedTemplates b
       , evalBlocks = evalBlocks a <> evalBlocks b
+      , evalSourcePosition = evalSourcePosition a <|> evalSourcePosition b
       }
 
 data CachedTemplate
@@ -81,7 +85,18 @@ data LoadedTemplate =
 
 runGingerT :: Monad m => GingerT m a -> Context m -> Env m -> m (Either RuntimeError a)
 runGingerT g ctx env =
-  runExceptT (evalStateT (runReaderT (unGingerT g) ctx) (EvalState env mempty mempty))
+  runExceptT
+    (evalStateT
+      (runReaderT (unGingerT g) ctx)
+      (EvalState env mempty mempty Nothing)
+    )
+
+decorateError :: Monad m
+              => SourcePosition
+              -> RuntimeError
+              -> GingerT m a
+decorateError pos err =
+  throwError (PositionedError pos err)
 
 deriving instance Monad m => MonadState (EvalState m) (GingerT m)
 deriving instance Monad m => MonadReader (Context m) (GingerT m)
@@ -94,7 +109,7 @@ lookupVar :: Monad m
           => Identifier
           -> GingerT m (Value m)
 lookupVar name =
-  lookupVarMaybe name >>= maybe (throwError $ NotInScopeError (Just $ identifierName name)) pure
+  lookupVarMaybe name >>= maybe (throwError $ NotInScopeError (identifierName name)) pure
 
 lookupVarMaybe :: Monad m
                => Identifier
@@ -135,6 +150,18 @@ setBlock name block = do
       lblock' = maybe lblock (appendLoadedBlock lblock) mparent
   modify (\s -> s { evalBlocks = Map.insert name lblock' (evalBlocks s) })
   pure lblock'
+
+setSourcePosition :: Monad m
+                  => SourcePosition
+                  -> GingerT m ()
+setSourcePosition pos = do
+  modify (\s -> s { evalSourcePosition = Just pos })
+
+clearSourcePosition :: Monad m
+                    => GingerT m ()
+clearSourcePosition =
+  modify (\s -> s { evalSourcePosition = Nothing })
+
 
 appendLoadedBlock :: LoadedBlock -> LoadedBlock -> LoadedBlock
 appendLoadedBlock t h =
@@ -206,8 +233,8 @@ scopify name = do
         k' <- scalarToIdentifier k
         pure (k', v)
       setVars $ Map.fromList items'
-    x -> throwError $ TagError (Just "liftScope") (Just "dict") (Just . tagNameOf $ x)
+    x -> throwError $ TagError "liftScope" "dict" (tagNameOf x)
   where
     scalarToIdentifier :: Scalar -> GingerT m Identifier
     scalarToIdentifier (StringScalar txt) = pure $ Identifier txt
-    scalarToIdentifier x = throwError $ TagError (Just "liftScope") (Just "string") (Just . tagNameOf $ ScalarV x)
+    scalarToIdentifier x = throwError $ TagError "liftScope" "string" (tagNameOf $ ScalarV x)

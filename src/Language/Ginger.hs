@@ -14,6 +14,7 @@ module Language.Ginger
 , Eval (..)
 , Encoded (..)
 , RuntimeError (..)
+, Identifier (..)
 , module M
 )
 where

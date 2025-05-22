@@ -1,5 +1,15 @@
 This is a test template.
 
-{% for i in [99, 98, 97] %}
-    {{ '<' }}{{ i }}{{ '>' }} bottles of beer on the wall...
+{% for i in numbers %}
+    {%- if i == 1 %}
+1 bottle of beer on the wall...
+    {%- else %}
+        {%- if i == 0 %}
+no bottles of beer on the wall...
+        {%- else %}
+{{ i }} bottles of beer on the wall...
+        {%- endif %}
+    {%- endif %}
 {% endfor %}
+
+Hello, {{ user.name }}!

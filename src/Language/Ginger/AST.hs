@@ -14,12 +14,11 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Maybe (maybeToList)
 import Data.List (intercalate)
-
-import Debug.Trace
+import Data.Aeson (ToJSON (..), ToJSONKey (..), FromJSON (..), FromJSONKey (..))
 
 newtype Identifier =
   Identifier { identifierName :: Text }
-  deriving (Show, Eq, Ord)
+  deriving (Show, Eq, Ord, ToJSON, ToJSONKey, FromJSON, FromJSONKey)
 
 instance IsString Identifier where
   fromString = Identifier . Text.pack
@@ -563,7 +562,6 @@ instance Arbitrary BinaryOperator where
 fuelledList :: QC.Gen a -> QC.Gen [a]
 fuelledList subGen = do
   fuel <- QC.getSize
-  traceM $ "fuelledList, fuel = " ++ show fuel
   if fuel < 1 then
     pure []
   else do

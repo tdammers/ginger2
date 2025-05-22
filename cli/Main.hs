@@ -5,12 +5,16 @@
 module Main where
 
 import Language.Ginger
+
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
 import System.FilePath (takeDirectory, takeFileName, takeExtension, (</>) )
 import System.Directory (getCurrentDirectory)
 import System.IO (hPrint, stderr)
 import Options.Applicative
+import Data.Map.Strict (Map)
+
+import qualified Data.Yaml as YAML
 
 data EncoderChoice
   = HtmlEncoder
@@ -20,7 +24,8 @@ data EncoderChoice
 
 data ProgramOptions =
   ProgramOptions
-    { poSourceFile :: Maybe FilePath
+    { poDataFiles :: [FilePath]
+    , poSourceFile :: Maybe FilePath
     , poOutputFile :: Maybe FilePath
     , poTrimBlocks :: BlockTrimming
     , poStripBlocks :: BlockStripping
@@ -31,7 +36,8 @@ data ProgramOptions =
 defProgramOptions :: ProgramOptions
 defProgramOptions =
   ProgramOptions
-    { poSourceFile = Nothing
+    { poDataFiles = []
+    , poSourceFile = Nothing
     , poOutputFile = Nothing
     , poTrimBlocks = pstateTrimBlocks defPOptions
     , poStripBlocks = pstateStripBlocks defPOptions
@@ -41,16 +47,25 @@ defProgramOptions =
 programOptions :: Parser ProgramOptions
 programOptions =
   ProgramOptions
-    <$> argument (Just <$> str)
-          ( metavar "TEMPLATE"
+    <$> some
+          (
+            argument str
+              ( metavar "DATAFILE"
+              <> help "JSON or YAML data file"
+              )
+          )
+    <*> option (Just <$> str)
+          ( long "template"
+          <> short 't'
+          <> metavar "TEMPLATE"
+          <> help "Template file (STDIN if not provided)"
           <> value Nothing
-          <> help "Template source file"
           )
     <*> option (Just <$> str)
           ( long "output"
           <> short 'o'
           <> metavar "OUTFILE"
-          <> help "Output file"
+          <> help "Output file (STDOUT if not provided)"
           <> value Nothing
           )
     <*> ( flag' TrimBlocks
@@ -109,11 +124,16 @@ textEncoder :: Encoder IO
 textEncoder txt = do
   pure $ Encoded txt
 
+loadDataFile :: FilePath -> IO (Map Identifier (Value IO))
+loadDataFile path = do
+  YAML.decodeFileThrow path
+
 runWithOptions :: ProgramOptions -> IO ()
 runWithOptions po = do
   (baseDir, templateName) <- case poSourceFile po of
     Nothing -> (,) <$> getCurrentDirectory <*> pure ""
     Just path -> pure (takeDirectory path, Text.pack $ takeFileName path)
+  vars <- mconcat <$> mapM loadDataFile (poDataFiles po)
   let encoder = case poEncoder po of
         HtmlEncoder -> htmlEncoder
         TextEncoder -> textEncoder
@@ -134,7 +154,7 @@ runWithOptions po = do
       }
     encoder
     templateName
-    mempty >>= printResultTo (poOutputFile po)
+    vars >>= printResultTo (poOutputFile po)
 
 printResult :: Either RuntimeError Encoded -> IO ()
 printResult = printResultTo Nothing

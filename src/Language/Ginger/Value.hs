@@ -31,6 +31,10 @@ import Data.Word
 import GHC.Float (float2Double)
 import Test.Tasty.QuickCheck (Arbitrary (..))
 import qualified Test.Tasty.QuickCheck as QC
+import Data.Aeson (FromJSON (..), FromJSONKey (..), ToJSON (..), FromJSONKeyFunction (..))
+import qualified Data.Aeson as JSON
+import qualified Data.Aeson.Types as JSON
+import Data.Scientific (floatingOrInteger)
 
 import Language.Ginger.AST
 import Language.Ginger.RuntimeError
@@ -97,6 +101,37 @@ data Scalar
   | FloatScalar !Double
   deriving (Show, Eq, Ord)
 
+instance FromJSON Scalar where
+  parseJSON JSON.Null =
+    pure NoneScalar
+  parseJSON (JSON.Bool b) =
+    pure $ BoolScalar b
+  parseJSON (JSON.String s) =
+    pure $ StringScalar s
+  parseJSON (JSON.Number i) =
+    pure $ either FloatScalar IntScalar $ floatingOrInteger i
+  parseJSON x = JSON.unexpected x
+
+instance ToJSON Scalar where
+  toJSON NoneScalar = JSON.Null
+  toJSON (BoolScalar b) = JSON.Bool b
+  toJSON (StringScalar s) = toJSON s
+  toJSON (EncodedScalar (Encoded e)) =
+    JSON.object
+      [ ("@type", JSON.String "encoded")
+      , ("@data", JSON.String e)
+      ]
+  toJSON (BytesScalar bs) =
+    JSON.object
+      [ ("@type", JSON.String "bytes")
+      , ("@data", toJSON (BS.unpack bs))
+      ]
+  toJSON (IntScalar i) = toJSON i
+  toJSON (FloatScalar f) = toJSON f
+
+instance FromJSONKey Scalar where
+  fromJSONKey = FromJSONKeyText StringScalar
+
 data Value m
   = ScalarV !Scalar
   | ListV ![Value m]
@@ -105,6 +140,11 @@ data Value m
   | ProcedureV !(Procedure m)
   | TestV !(Test m)
   | FilterV !(Filter m)
+
+instance FromJSON (Value m) where
+  parseJSON v@JSON.Object {} = DictV <$> parseJSON v
+  parseJSON v@JSON.Array {} = ListV <$> parseJSON v
+  parseJSON v = ScalarV <$> parseJSON v
 
 traverseValue :: Monoid a => (Value m -> a) -> Value m -> a
 traverseValue p v@(ListV xs) =

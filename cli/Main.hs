@@ -53,6 +53,13 @@ programOptions =
               ( metavar "DATAFILE"
               <> help "JSON or YAML data file"
               )
+          <|>
+            strOption
+              ( metavar "DATAFILE"
+              <> short 'd'
+              <> long "data-file"
+              <> help "JSON or YAML data file"
+              )
           )
     <*> option (Just <$> str)
           ( long "template"
@@ -70,30 +77,33 @@ programOptions =
           )
     <*> ( flag' TrimBlocks
             ( long "trim-blocks"
-            <> help "enable block trimming"
+            <> help "Enable block trimming"
             )
           <|>
           flag' NoTrimBlocks
             ( long "no-trim-blocks"
-            <> help "disable block trimming"
+            <> help "Disable block trimming"
             )
           <|> pure (pstateTrimBlocks defPOptions)
         )
     <*> ( flag' StripBlocks
             ( long "strip-blocks"
-            <> help "enable block stripping"
+            <> help "Enable block stripping"
             )
           <|>
           flag' NoStripBlocks
             ( long "no-strip-blocks"
-            <> help "disable block stripping"
+            <> help "Disable block stripping"
             )
           <|> pure (pstateStripBlocks defPOptions)
         )
     <*> option encoderReader
           ( long "encoder"
           <> metavar "ENCODER"
-          <> help "output encoding ('html', 'text', or 'auto')"
+          <> help
+              ( "Output encoding ('html', 'text', or 'auto'). " ++
+                "'auto' will guess encoding from output file extension, then " ++
+                "template file extension, then default to 'html'")
           <> value AutoEncoder
           )
 

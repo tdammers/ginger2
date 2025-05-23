@@ -167,7 +167,7 @@ call :: Monad m => Maybe (Value m) -> Value m -> [Expr] -> [(Identifier, Expr)] 
 call callerMay callable posArgsExpr namedArgsExpr = do
   args <- evalCallArgs posArgsExpr namedArgsExpr
   case callable of
-    ProcedureV (NativeProcedure f) ->
+    ProcedureV (NativeProcedure _ f) ->
       withEnv mempty $ do
         ctx <- ask
         native $ f args ctx
@@ -386,7 +386,7 @@ valuesEqual (ListV a) (ListV b)
 valuesEqual (DictV a) (DictV b) = dictsEqual a b
 valuesEqual (NativeV a) (NativeV b) =
   native $ a --> nativeObjectEq b
-valuesEqual _ _ = pure False
+valuesEqual a b = pure (a == b)
 
 compareValues :: Monad m => Value m -> Value m -> GingerT m Ordering
 compareValues NoneV NoneV = pure $ EQ
@@ -567,9 +567,11 @@ evalS (MacroS name argsSig body) = do
 evalS (CallS name posArgsExpr namedArgsExpr bodyS) = whenOutputPolicy $ do
   callee <- lookupVar name
   callerVal <- eval bodyS
+  srcPosMay <- gets evalSourcePosition
+  let callerID = ObjectID $ "caller:" <> maybe (Text.show callerVal) Text.show srcPosMay
   let caller =
         ProcedureV $
-          NativeProcedure (const . const . pure . Right $ callerVal)
+          NativeProcedure callerID (const . const . pure . Right $ callerVal)
   call (Just caller) callee posArgsExpr namedArgsExpr
 evalS (FilterS name posArgsExpr namedArgsExpr bodyS) = whenOutputPolicy $ do
   callee <- lookupVar name
@@ -747,6 +749,11 @@ evalLoop loopKeyMay loopName iteree loopCondMay recursivity bodyS elseSMay recur
             maybe (pure ()) (\loopKey -> setVar loopKey k) loopKeyMay
             setVar loopName v
             env <- gets evalEnv
+            srcPosMay <- gets evalSourcePosition
+            let recurFuncID =
+                  ObjectID $ "loop.recur:" <> maybe (Text.show bodyS) Text.show srcPosMay
+            let cycleFuncID =
+                  ObjectID $ "loop.cycle:" <> maybe (Text.show bodyS) Text.show srcPosMay
             setVar "loop" $
               dictV
                 [ "index" .= (n + 1)
@@ -756,13 +763,13 @@ evalLoop loopKeyMay loopName iteree loopCondMay recursivity bodyS elseSMay recur
                 , "first" .= (n == 0)
                 , "last" .= (n == num - 1)
                 , "length" .= num
-                , "cycle" .= cycleFunc n
+                , "cycle" .= cycleFunc cycleFuncID n
                 , "depth" .= (recursionLevel + 1)
                 , "depth0" .= recursionLevel
                 , "previtem" .= prevVal
                 , "nextitem" .= (snd <$> xs V.!? 0)
                 , "changed" .= changedFunc env v
-                , "__call__" .= if is recursivity then Just (recurFunc env) else Nothing
+                , "__call__" .= if is recursivity then Just (recurFunc recurFuncID env) else Nothing
                 ]
             body <- evalS bodyS
             pure (Just v, body)
@@ -774,8 +781,8 @@ evalLoop loopKeyMay loopName iteree loopCondMay recursivity bodyS elseSMay recur
     changedFunc env v = ProcedureV $ GingerProcedure env [("val", Just v)] $
       EqualE (IndexE (VarE "loop") (StringLitE "previtem")) (VarE "val")
 
-    recurFunc :: Env m -> Value m
-    recurFunc env = ProcedureV . NativeProcedure $ \args ctx -> do
+    recurFunc :: ObjectID -> Env m -> Value m
+    recurFunc oid env = ProcedureV . NativeProcedure oid $ \args ctx -> do
       case args of
         [(_, iteree')] ->
           runGingerT
@@ -796,16 +803,20 @@ evalLoop loopKeyMay loopName iteree loopCondMay recursivity bodyS elseSMay recur
                 ArgumentError "loop()" "2" "end of arguments" "argument"
       
 
-    cycleFunc :: Int -> Value m -> Value m
-    cycleFunc n items =
-      case items of
-        ListV [] ->
-          NoneV
-        ListV xs -> do
-          let n' = n `mod` V.length xs
-          toValue $ xs V.!? n'
-        _ ->
-          NoneV
+    cycleFunc :: ObjectID -> Int -> Value m
+    cycleFunc oid n = ProcedureV . NativeProcedure oid $ \args _ctx -> do
+      case args of
+        [(_, items)] ->
+          case items of
+            ListV [] ->
+              pure . Right $ NoneV
+            ListV xs -> do
+              let n' = n `mod` V.length xs
+              pure . Right . toValue $ xs V.!? n'
+            _ ->
+              pure . Right $ NoneV
+        _ -> pure . Left $
+                ArgumentError "cycle()" "1" "end of arguments" "argument"
 
 
 evalSs :: Monad m => [Statement] -> GingerT m (Value m)

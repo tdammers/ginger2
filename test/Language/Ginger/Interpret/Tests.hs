@@ -1354,7 +1354,7 @@ prop_varNeg name1 val1 name2 =
 
 prop_nativeNullary :: Identifier -> Integer -> Property
 prop_nativeNullary varName constVal =
-  let fVal = ProcedureV . NativeProcedure $
+  let fVal = ProcedureV . NativeProcedure "testsuite:nativeNullary" $
               const . const . pure @Identity . Right . toValue $ constVal
       expr = CallE (VarE varName) [] []
       result = runGingerIdentity (setVar varName fVal >> eval expr)
@@ -1363,7 +1363,7 @@ prop_nativeNullary varName constVal =
 
 prop_nativeIdentity :: Identifier -> Identifier -> Integer -> Property
 prop_nativeIdentity varName argVarName arg =
-  let fVal = toValue (id :: Value Identity -> Value Identity)
+  let fVal = fnToValue "testsuite:nativeIdentity" (id :: Value Identity -> Value Identity)
       argVal = toValue arg
       expr = CallE (VarE varName) [VarE argVarName] []
       result = runGingerIdentity $ do
@@ -1636,7 +1636,7 @@ prop_callIdentity body =
       resultDirect = runGingerIdentityEither $
                       eval body'
       resultCall = runGingerIdentityEither $ do
-                      setVar "f" $ toValue (id :: Value Identity -> Value Identity)
+                      setVar "f" $ fnToValue "testsuite:callIdentity" (id :: Value Identity -> Value Identity)
                       eval $ CallS "f" [body'] [] (InterpolationS NoneE)
       cat = case resultDirect of
               Right {} -> "OK"

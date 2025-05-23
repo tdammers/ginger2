@@ -19,6 +19,7 @@ import Language.Ginger.RuntimeError
 import Language.Ginger.Value
 import Language.Ginger.Interpret.Type
 
+import Control.Monad (filterM)
 import Control.Monad.Except
 import Control.Monad.Trans (lift)
 import Data.Map.Strict (Map)
@@ -106,7 +107,7 @@ builtinGlobals evalE = Map.fromList $
   , ("round", ProcedureV fnRound)
   -- , ("safe", undefined)
   -- , ("selectattr", undefined)
-  -- , ("select", undefined)
+  , ("select", FilterV . NativeFilter $ fnSelect evalE)
   -- , ("slice", undefined)
   , ("sort", ProcedureV fnSort)
   , ("split", ProcedureV fnStrSplit)
@@ -454,6 +455,123 @@ fnDictsort = mkFn4 "dictsort"
         itemsRaw = Map.toList value
     items' <- mapM proj itemsRaw
     pure $ map snd $ sortBy cmp' items'
+
+fnSelect :: forall m. Monad m
+         => (Expr -> GingerT m (Value m))
+         -> FilterFunc m
+fnSelect evalE scrutineeE args ctx env = runExceptT $ do
+  -- This one is quite a monster, because it accepts arguments in so many
+  -- different ways.
+  -- Specifically:
+  --
+  -- @scrutinee|map('foobar', args...)@ - interpret the string @'foobar'@ as
+  -- the name of a filter (or procedure), and pass @args...@ on to that filter.
+  --
+  -- @scrutinee|map(foobar, args...)@ - interpret @foobar@ as a filter (or a
+  -- procedure), and pass @args...@ on to that filter.
+  --
+  -- @scrutinee|map(attribute='foobar', {default=value})@ - interpret @'foobar'
+  -- as the name of an attribute in each list element, extract that list
+  -- element, use the @default=@ value if the attribute is absent.
+  let funcName = "select"
+  argValues <- eitherExcept $
+    resolveArgs
+      funcName
+      []
+      args
+  varargs <- fnArg funcName "varargs" argValues
+  (kwargs :: Map Scalar (Value m)) <- fnArg funcName "kwargs" argValues
+  (scrutinee :: Value m) <- eitherExceptM $ runGingerT (evalE scrutineeE) ctx env
+  (xs :: [Value m]) <- eitherExceptM $ fromValue scrutinee
+
+  case varargs of
+    [] ->
+      -- No argument = error.
+      throwError $
+        ArgumentError
+          funcName
+          "attribute/callee"
+          "attribute=identifier or callable"
+          "no argument"
+    (test:varargs') -> do
+      -- Re-pack the remaining arguments
+      let args' = zip (repeat Nothing) varargs' ++
+                  Map.toList (Map.mapKeys toIdentifier kwargs)
+
+      -- Determine how to handle each list element.
+      let apply' testV x =
+            case testV of
+              StringV name -> do
+                -- If it's a string, we interpret it as a filter name, and
+                -- try to look up the corresponding filter in the current
+                -- scope.
+                testV' <- eitherExceptM $
+                  runGingerT
+                    (scoped $ do
+                        scopify "jinja-tests"
+                        evalE (VarE $ Identifier name)
+                    )
+                    ctx env
+                apply' testV' x
+              DictV m -> do
+                -- If it's a dict, try to find a @"__call__"@ item.
+                case Map.lookup "__call__" m of
+                  Nothing -> throwError $
+                                NonCallableObjectError
+                                  (tagNameOf test <> " " <> Text.show testV)
+                  Just v -> apply' v x
+              NativeV obj -> do
+                -- If it's a native object, use its @nativeObjectCall@
+                -- method, if available.
+                case nativeObjectCall obj of
+                  Nothing -> throwError $
+                                NonCallableObjectError
+                                  "non-callable native object"
+                  Just f -> eitherExceptM (f obj args') >>=
+                            eitherExcept . asBoolVal
+              TestV f -> do
+                -- If it's a test, we apply it as such, mapping the
+                -- current list element to the variable "@" (which cannot
+                -- be used as a normal identifier, because the syntax
+                -- doesn't allow it). We need to bind it, because
+                -- 'runFilter' takes an unevaluated expression as its
+                -- scrutinee argument, but we have an already-evaluated
+                -- value.
+                let env' = env { envVars = Map.insert "@" x $ envVars env }
+                eitherExceptM $ runTest f (VarE "@") args' ctx env'
+              ProcedureV (NativeProcedure f) -> do
+                -- If it's a native procedure, we can just call it without
+                -- binding anything.
+                eitherExceptM (f ((Nothing, x):args') ctx) >>=
+                  eitherExcept . asBoolVal
+              ProcedureV (GingerProcedure env' argSpecs body) -> do
+                -- If it's a ginger procedure, we need to prepend the
+                -- current list element to the argument list (so it becomes
+                -- the first positional argument), and then resolve and
+                -- bind all the arguments into the environment where we
+                -- then run the ginger procedure.
+                args'' <- eitherExcept $
+                            resolveArgs
+                              "map callback"
+                              argSpecs
+                              ((Nothing, x):args')
+                eitherExceptM (runGingerT (setVars args'' >> evalE body) ctx env') >>=
+                    eitherExcept . asBoolVal
+              _ ->
+                -- Not something we can call.
+                  throwError $
+                    NonCallableObjectError
+                      (tagNameOf test <> " " <> Text.show testV)
+
+          apply = apply' test
+
+      ListV <$> filterM apply xs
+  where
+    toIdentifier :: Scalar -> Maybe Identifier
+    toIdentifier (StringScalar s) = Just $ Identifier s
+    toIdentifier (IntScalar i) = Just $ Identifier (Text.show i)
+    toIdentifier (FloatScalar f) = Just $ Identifier (Text.show f) -- dubious
+    toIdentifier _ = Nothing
 
 fnMap :: forall m. Monad m
       => (Expr -> GingerT m (Value m))

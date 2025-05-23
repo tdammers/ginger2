@@ -1274,7 +1274,7 @@ prop_intDivByZero i =
                   eval (BinaryE BinopIntDiv (IntLitE i) (IntLitE 0))
   in
     i /= 0 ==>
-    result === leftPRE (NumericError (Just "//") (Just "division by zero"))
+    result === leftPRE (NumericError "//" "division by zero")
 
 prop_divByZero :: Double -> Property
 prop_divByZero d =
@@ -1283,14 +1283,14 @@ prop_divByZero d =
                   eval (BinaryE BinopDiv (FloatLitE d) (FloatLitE 0))
   in
     d /= 0 ==>
-    result === leftPRE (NumericError (Just "/") (Just "division by zero"))
+    result === leftPRE (NumericError "/" "division by zero")
 
 prop_divToNaN :: Property
 prop_divToNaN =
   let result = runGingerIdentityEither $ do
                   eval (BinaryE BinopDiv (FloatLitE 0) (FloatLitE 0))
   in
-    result === leftPRE (NumericError (Just "/") (Just "not a number"))
+    result === leftPRE (NumericError "/" "not a number")
 
 prop_literal :: ToValue a Identity => (a -> Expr) -> a -> Property
 prop_literal = prop_literalWith id
@@ -1323,7 +1323,7 @@ prop_varNeg name1 val1 name2 =
       resultG = runGingerIdentityEither (setVar name1 (toValue val1) >> eval expr)
   in
     name1 /= name2 ==>
-    resultG === leftPRE (NotInScopeError (Just $ identifierName name2))
+    resultG === leftPRE (NotInScopeError (identifierName name2))
 
 prop_nativeNullary :: Identifier -> Integer -> Property
 prop_nativeNullary varName constVal =
@@ -1679,10 +1679,13 @@ prop_include (ArbitraryText name) body =
       resultDirect = runGingerIdentityEither $
                       eval body
       loader = mockLoader [(name, bodySrc)]
+      includeS = IncludeS (StringLitE name) RequireMissing WithContext
+      includeSrc = renderSyntaxText includeS
       resultInclude = runGingerIdentityEitherWithLoader loader $
-                        eval (IncludeS (StringLitE name) RequireMissing WithContext)
+                        eval includeS
   in
-    counterexample ("SOURCE:\n" ++ Text.unpack bodySrc) $
+    counterexample ("BODY:\n" ++ Text.unpack bodySrc) $
+    counterexample ("INCLUDER:\n" ++ Text.unpack includeSrc) $
     resultInclude === resultDirect
 
 prop_includeInto :: ArbitraryText -> Statement -> Statement -> Property
@@ -1726,15 +1729,17 @@ prop_includeMacroWithoutContext (ArbitraryText name) macroName body =
       resultDirect = runGingerIdentityEither $
                       eval body
       loader = mockLoader [(name, bodySrc)]
+      
+      includeS = GroupS
+                    [ IncludeS (StringLitE name) RequireMissing WithoutContext
+                    , CallS macroName [] [] (InterpolationS NoneE)
+                    ]
+      includeSrc = renderSyntaxText includeS
       resultInclude = runGingerIdentityEitherWithLoader loader $
-                        eval (
-                          GroupS
-                            [ IncludeS (StringLitE name) RequireMissing WithoutContext
-                            , CallS macroName [] [] (InterpolationS NoneE)
-                            ]
-                        )
+                        eval includeS
   in
-    counterexample ("SOURCE:\n" ++ Text.unpack bodySrc) $
+    counterexample ("BODY:\n" ++ Text.unpack bodySrc) $
+    counterexample ("INCLUDER:\n" ++ Text.unpack includeSrc) $
     name /= identifierName macroName ==>
     resultInclude === resultDirect
 
@@ -1763,15 +1768,16 @@ prop_includeWithContext (ArbitraryText name) varName (ArbitraryText varValue) =
       resultDirect = runGingerIdentityEither $
                       eval (StringLitE varValue)
       loader = mockLoader [(name, bodySrc)]
+      includeS = GroupS
+                  [ SetS varName (StringLitE varValue)
+                  , IncludeS (StringLitE name) RequireMissing WithContext
+                  ]
+      includeSrc = renderSyntaxText includeS
       resultInclude = runGingerIdentityEitherWithLoader loader $
-                        eval (
-                          GroupS
-                            [ SetS varName (StringLitE varValue)
-                            , IncludeS (StringLitE name) RequireMissing WithContext
-                            ]
-                        )
+                        eval includeS
   in
-    counterexample ("SOURCE:\n" ++ Text.unpack bodySrc) $
+    counterexample ("BODY:\n" ++ Text.unpack bodySrc) $
+    counterexample ("INCLUDER:\n" ++ Text.unpack includeSrc) $
     resultInclude === resultDirect
 
 prop_includeWithoutContext :: ArbitraryText -> Identifier -> ArbitraryText -> Property
@@ -1779,16 +1785,17 @@ prop_includeWithoutContext (ArbitraryText name) varName (ArbitraryText varValue)
   let bodySrc = renderSyntaxText $
                   InterpolationS (VarE varName)
       loader = mockLoader [(name, bodySrc)]
+      includeS = GroupS
+                    [ SetS varName (StringLitE varValue)
+                    , IncludeS (StringLitE name) RequireMissing WithoutContext
+                    ]
+      includeSrc = renderSyntaxText includeS
       resultInclude = runGingerIdentityEitherWithLoader loader $
-                        eval (
-                          GroupS
-                            [ SetS varName (StringLitE varValue)
-                            , IncludeS (StringLitE name) RequireMissing WithoutContext
-                            ]
-                        )
-      expected = Left . PrettyRuntimeError $ NotInScopeError (Just $ identifierName varName)
+                        eval includeS
+      expected = Left . PrettyRuntimeError $ NotInScopeError (identifierName varName)
   in
-    counterexample ("SOURCE:\n" ++ Text.unpack bodySrc) $
+    counterexample ("BODY:\n" ++ Text.unpack bodySrc) $
+    counterexample ("INCLUDER:\n" ++ Text.unpack includeSrc) $
     resultInclude === expected
 
 prop_importValue :: ArbitraryText -> Identifier -> Expr -> Property
@@ -1844,7 +1851,7 @@ prop_importWithoutContext (ArbitraryText name) macroName varName bodyE =
                         (VarE varName)))
       resultDirect = runGingerIdentityEither $ do
                       void $ eval bodyE
-                      throwError $ NotInScopeError (Just $ identifierName varName)
+                      throwError $ NotInScopeError (identifierName varName)
       loader = mockLoader [(name, bodySrc)]
       resultImport = runGingerIdentityEitherWithLoader loader . eval $
                         GroupS
@@ -2081,7 +2088,7 @@ prop_extendWithoutContext (NonEmptyText parentName) blockName varName varExpr du
       resultExtends = runGingerIdentityEitherWithLoader loader $ do
         evalT childT
       cat = case resultDirect of
-              Left (PrettyRuntimeError (NotInScopeError (Just n))) | Identifier n == varName -> "OK (NotInScope, expected)"
+              Left (PrettyRuntimeError (NotInScopeError n)) | Identifier n == varName -> "OK (NotInScope, expected)"
               Left err -> unwords . take 1 . words $ show err
               Right _ -> "Unexpected success"
   in

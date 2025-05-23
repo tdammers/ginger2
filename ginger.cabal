@@ -79,6 +79,7 @@ test-suite ginger-test
                  , Language.Ginger.AST.Tests
                  , Language.Ginger.Interpret.Tests
                  , Language.Ginger.Parse.Tests
+                 , Language.Ginger.TestUtils
     build-depends: base >=4.14.0.0 && <5
                  , ginger
                  , base64-bytestring >=1.2.1.0 && <1.3

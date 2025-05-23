@@ -196,6 +196,10 @@ withoutContext action = do
   modifyEnv $ const (e' <> e)
   return retval
 
+bumpEnv :: Monad m
+        => GingerT m ()
+bumpEnv = modifyEnv (\e -> e { envRootMay = Just (envRoot e) })
+
 withEnv :: Monad m
         => Env m
         -> GingerT m a
@@ -203,17 +207,6 @@ withEnv :: Monad m
 withEnv env action = do
   s <- get
   modifyEnv (const env)
-  retval <- action
-  modifyEnv (const $ evalEnv s)
-  return retval
-
-withExtEnv :: Monad m
-        => Env m
-        -> GingerT m a
-        -> GingerT m a
-withExtEnv env action = do
-  s <- get
-  modifyEnv (<> env)
   retval <- action
   modifyEnv (const $ evalEnv s)
   return retval

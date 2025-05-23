@@ -580,3 +580,87 @@ fuelledList subGen = do
     x <- QC.resize s subGen
     xs <- QC.resize (max 0 $ fuel - s - 10) (fuelledList subGen)
     pure $ x : xs
+
+
+traverseS :: (Statement -> Statement) -> (Expr -> Expr) -> Statement -> Statement
+traverseS fS fE stmt = go (fS stmt)
+  where
+    go (PositionedS pos s) = PositionedS pos $ traverseS fS fE s
+    go (GroupS xs) = GroupS (map (traverseS fS fE) xs)
+    go (InterpolationS e) = InterpolationS (traverseE fE fS e)
+    go (ForS k v i condMay rec body elseMay) =
+      ForS
+        k v
+        (traverseE fE fS i)
+        (traverseE fE fS <$> condMay)
+        rec
+        (traverseS fS fE body)
+        (traverseS fS fE <$> elseMay)
+    go (IfS cond yes noMay) =
+      IfS (traverseE fE fS cond) (traverseS fS fE yes) (traverseS fS fE <$> noMay)
+    go (MacroS name args body) =
+      MacroS name [(n, traverseE fE fS <$> d) | (n, d) <- args] (traverseS fS fE body)
+    go (CallS name args kwargs body) =
+      CallS
+        name
+        (traverseE fE fS <$> args)
+        [(n, traverseE fE fS v) | (n, v) <- kwargs]
+        (traverseS fS fE body)
+    go (FilterS name args kwargs body) =
+      FilterS
+        name
+        (traverseE fE fS <$> args)
+        [(n, traverseE fE fS v) | (n, v) <- kwargs]
+        (traverseS fS fE body)
+    go (SetS name val) =
+      SetS name (traverseE fE fS val)
+    go (SetBlockS name body filterMay) =
+      SetBlockS name (traverseS fS fE body) (traverseE fE fS <$> filterMay)
+    go (IncludeS includee mp cp) =
+      IncludeS (traverseE fE fS includee) mp cp
+    go (ImportS importee lname imports mp cp) =
+      ImportS (traverseE fE fS importee) lname imports mp cp
+    go (BlockS name (Block body s r)) =
+      BlockS name (Block (traverseS fS fE body) s r)
+    go (WithS defs body) =
+      WithS [ (n, traverseE fE fS e) | (n, e) <- defs ] (traverseS fS fE body)
+    go s = s
+
+traverseE :: (Expr -> Expr) -> (Statement -> Statement) -> Expr -> Expr
+traverseE fE fS expr = go (fE expr)
+  where
+    go (StatementE s) = StatementE (traverseS fS fE s)
+    go (ListE xs) = ListE (map (traverseE fE fS) xs)
+    go (DictE items) =
+      DictE [ (traverseE fE fS k, traverseE fE fS v) | (k, v) <- items ]
+    go (UnaryE op e) = UnaryE op (traverseE fE fS e)
+    go (BinaryE op a b) = BinaryE op (traverseE fE fS a) (traverseE fE fS b)
+    go (SliceE slicee startMay lengthMay) =
+      SliceE
+        (traverseE fE fS slicee)
+        (traverseE fE fS <$> startMay)
+        (traverseE fE fS <$> lengthMay)
+    go (DotE e i) = DotE (traverseE fE fS e) i
+    go (IsE scrutinee test args kwargs) =
+      IsE
+        (traverseE fE fS scrutinee)
+        (traverseE fE fS test)
+        (traverseE fE fS <$> args)
+        [ (n, traverseE fE fS e) | (n, e) <- kwargs ]
+    go (CallE callee args kwargs) =
+      CallE
+        (traverseE fE fS callee)
+        (traverseE fE fS <$> args)
+        [ (n, traverseE fE fS e) | (n, e) <- kwargs ]
+    go (FilterE arg0 f args kwargs) =
+      FilterE
+        (traverseE fE fS arg0)
+        (traverseE fE fS f)
+        (traverseE fE fS <$> args)
+        [ (n, traverseE fE fS e) | (n, e) <- kwargs ]
+    go (TernaryE cond yes no) =
+      TernaryE
+        (traverseE fE fS cond)
+        (traverseE fE fS yes)
+        (traverseE fE fS no)
+    go e = e

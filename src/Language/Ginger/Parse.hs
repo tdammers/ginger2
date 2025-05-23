@@ -11,11 +11,11 @@ module Language.Ginger.Parse
 , parseGingerFile
 , parseGingerWith
 , parseGingerFileWith
-, mapLeft
 , POptions (..)
 , defPOptions
 , BlockTrimming (..)
 , BlockStripping (..)
+, simplifyS
 )
 where
 
@@ -561,17 +561,30 @@ extends =
   optional . flow "extends" $ do
     stringLit <* space
 
+simplifyS :: Statement -> Statement
+simplifyS = traverseS simplifyOne id
+  where
+    simplifyOne (GroupS xs) = wrap xs
+    simplifyOne s = s
+
 statement :: P Statement
 statement =
-  wrap . joinImmediates <$> many singleStatement
-  where
-    joinImmediates (ImmediateS a : ImmediateS b : xs) =
-      joinImmediates (ImmediateS (a <> b) : xs)
-    joinImmediates (x:xs) = x : joinImmediates xs
-    joinImmediates [] = []
-    wrap [] = ImmediateS mempty
-    wrap [x] = x
-    wrap xs = GroupS xs
+  wrap <$> many singleStatement
+
+joinImmediates :: [Statement] -> [Statement]
+joinImmediates (ImmediateS a : ImmediateS b : xs) =
+  joinImmediates (ImmediateS (a <> b) : xs)
+joinImmediates (PositionedS pos (ImmediateS a) : PositionedS _ (ImmediateS b) : xs) =
+  joinImmediates (PositionedS pos (ImmediateS (a <> b)) : xs)
+joinImmediates (PositionedS pos (ImmediateS a) : ImmediateS b : xs) =
+  joinImmediates (PositionedS pos (ImmediateS (a <> b)) : xs)
+joinImmediates (x:xs) = x : joinImmediates xs
+joinImmediates [] = []
+
+wrap :: [Statement] -> Statement
+wrap [] = ImmediateS mempty
+wrap [x] = x
+wrap xs = GroupS (joinImmediates xs)
 
 singleStatement :: P Statement
 singleStatement =

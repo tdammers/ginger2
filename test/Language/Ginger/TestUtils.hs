@@ -15,6 +15,7 @@ import Test.Tasty.QuickCheck
 
 import Language.Ginger.Interpret
 import Language.Ginger.Value
+import Language.Ginger.AST
 
 newtype ArbitraryText = ArbitraryText Text
   deriving (Eq, Ord)
@@ -85,11 +86,15 @@ mapLeft :: (a -> b) -> Either a c -> Either b c
 mapLeft f (Left x) = Left (f x)
 mapLeft _ (Right x) = Right x
 
+mapRight :: (b -> c) -> Either a b -> Either a c
+mapRight _ (Left x) = Left x
+mapRight f (Right x) = Right (f x)
+
 newtype PrettyRuntimeError = PrettyRuntimeError RuntimeError
   deriving (Eq)
 
 instance Show PrettyRuntimeError where
-  show (PrettyRuntimeError (TemplateParseError _ (Just err))) = Text.unpack err
+  show (PrettyRuntimeError (TemplateParseError _ err)) = Text.unpack err
   show (PrettyRuntimeError e) = show e
 
 runGingerIdentity :: GingerT Identity a -> a
@@ -98,19 +103,21 @@ runGingerIdentity action =
 
 runGingerIdentityEither :: GingerT Identity a -> Either PrettyRuntimeError a
 runGingerIdentityEither action =
-  mapLeft PrettyRuntimeError $ runIdentity (runGingerT action defContext defEnv)
+  mapLeft (PrettyRuntimeError . unPositionedError) $
+    runIdentity (runGingerT (bumpEnv >> action) defContext defEnv)
 
 runGingerIdentityWithLoader :: TemplateLoader Identity
                                   -> GingerT Identity a
                                   -> a
 runGingerIdentityWithLoader loader action =
-  either (error . show) id $ runGingerIdentityEitherWithLoader loader action
+  either (error . show) id $ runGingerIdentityEitherWithLoader loader (bumpEnv >> action)
 
 runGingerIdentityEitherWithLoader :: TemplateLoader Identity
                                   -> GingerT Identity a
                                   -> Either PrettyRuntimeError a
 runGingerIdentityEitherWithLoader loader action =
-  mapLeft PrettyRuntimeError $ runIdentity (runGingerT action defContext { contextLoadTemplateFile = loader } defEnv)
+  mapLeft (PrettyRuntimeError . unPositionedError) $
+    runIdentity (runGingerT action defContext { contextLoadTemplateFile = loader } defEnv)
 
 mockLoader :: [(Text, Text)] -> TemplateLoader Identity
 mockLoader entries name =
@@ -118,3 +125,18 @@ mockLoader entries name =
   where
     tpls = Map.fromList entries
 
+unPositionedS :: Statement -> Statement
+unPositionedS = traverseS go unPositionedE
+  where
+    go (PositionedS _ s) = unPositionedS s
+    go s = s
+
+unPositionedE :: Expr -> Expr
+unPositionedE = traverseE go unPositionedS
+  where
+    go (PositionedE _ e) = unPositionedE e
+    go e = e
+
+unPositionedError :: RuntimeError -> RuntimeError
+unPositionedError (PositionedError _ e) = unPositionedError e
+unPositionedError e = e

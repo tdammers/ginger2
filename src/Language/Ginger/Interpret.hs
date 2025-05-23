@@ -27,6 +27,7 @@ module Language.Ginger.Interpret
  ,bind
 , valuesEqual
 , RuntimeError (..)
+, bumpEnv
 )
 where
 

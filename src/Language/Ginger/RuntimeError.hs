@@ -40,6 +40,8 @@ data RuntimeError
 
 instance Exception RuntimeError where
 
+-- | Pretty-print a 'RuntimeError'. The output is meant to be useful as a
+-- user-facing error message.
 prettyRuntimeError :: RuntimeError -> String
 prettyRuntimeError (NotImplementedError what) =
   printf "Not implemented: %s"

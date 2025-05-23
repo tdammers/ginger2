@@ -197,6 +197,8 @@ call callerMay callable posArgsExpr namedArgsExpr = do
     x ->
       throwError $ NonCallableObjectError (tagNameOf x)
 
+-- | 'Eval' represents types that can be evaluated in some 'GingerT m' monadic
+-- context.
 class Eval m a where
   eval :: a -> GingerT m (Value m)
 

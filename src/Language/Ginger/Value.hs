@@ -155,6 +155,7 @@ scalarToText (EncodedScalar (Encoded e)) = e
 scalarToText (IntScalar i) = Text.show i
 scalarToText (FloatScalar f) = Text.show f
 
+-- | A value, as using by the interpreter.
 data Value m
   = ScalarV !Scalar
   | ListV !(Vector (Value m))

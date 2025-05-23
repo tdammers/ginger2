@@ -45,10 +45,15 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 
+-- | The Ginger interpreter monad. Provides error reporting / handling via
+-- 'MonadError', an execution context ('Context'), and an evaluation state
+-- ('EvalState').
 newtype GingerT m a =
   GingerT { unGingerT :: ReaderT (Context m) (StateT (EvalState m) (ExceptT RuntimeError m)) a }
   deriving (Functor, Applicative, Monad)
 
+-- | Evaluation state. This keeps track of variables in scope, as well as
+-- loaded templates and blocks, and the current source position.
 data EvalState m =
   EvalState
     { evalEnv :: !(Env m)

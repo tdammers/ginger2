@@ -1,26 +1,43 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 module Language.Ginger
-( Statement (..)
+( -- * AST
+  Statement (..)
 , Expr (..)
-, Value (..)
 , Template (..)
+, Block (..)
+  -- * Representing Values
+, Value (..)
+, Scalar (..)
+, Encoded (..)
+, prettyRuntimeError
+, Identifier (..)
+  -- * Interpreting Templates
 , ginger
+, GingerT
+, Eval (..)
+, RuntimeError (..)
 , Context (..)
 , defContext
-, Encoder
-, TemplateLoader
 , Env (..)
 , emptyEnv
 , defEnv
-, Eval (..)
-, Encoded (..)
-, RuntimeError (..)
-, prettyRuntimeError
-, Identifier (..)
+, defVars
+, defVarsCompat
+  -- * Configuration
+, Encoder
+, htmlEncoder
 , JinjaDialect (..)
-, module M
+  -- * Parser and Parser Options
+, POptions (..)
+, defPOptions
+, BlockTrimming (..)
+, BlockStripping (..)
+  -- * Template Loaders
+, TemplateLoader
+, fileLoader
 )
 where
 
@@ -28,17 +45,17 @@ import Language.Ginger.AST
 import Language.Ginger.Value
 import Language.Ginger.Interpret
 import Language.Ginger.RuntimeError (prettyRuntimeError)
-import Language.Ginger.FileLoader as M
+import Language.Ginger.FileLoader
         ( fileLoader
         )
-import Language.Ginger.Parse as M
+import Language.Ginger.Parse
         ( POptions (..)
         , defPOptions
         , BlockTrimming (..)
         , BlockStripping (..)
         )
 import qualified Language.Ginger.Parse as P
-import Language.Ginger.Interpret.DefEnv as M
+import Language.Ginger.Interpret.DefEnv
         ( htmlEncoder
         , defVars
         , defVarsCompat
@@ -55,13 +72,26 @@ data JinjaDialect
   | DialectJinja2
   deriving (Show, Eq, Ord, Enum, Bounded)
 
+-- | One-stop function for parsing and interpreting a template.
 ginger :: forall m. Monad m
        => TemplateLoader m
+          -- ^ Template loader to use for loading the initial template and
+          -- any included templates. For most use cases, 'fileLoader' should
+          -- be appropriate.
        -> POptions
+          -- ^ Parser options, determining parser behavior.
        -> JinjaDialect
+          -- ^ Jinja dialect; currently determines which built-in globals to
+          -- load into the initial namespace.
        -> Encoder m
+          -- ^ Encoder to use for automatic encoding. Use 'htmlEncoder' for
+          -- HTML templates.
        -> Text
+          -- ^ Name of the initial template to load. For the 'fileLoader', this
+          -- should be a filename, but for other loaders, it can be whatever
+          -- the loader expects.
        -> Map Identifier (Value m)
+          -- ^ Variables defined in the initial namespace.
        -> m (Either RuntimeError Encoded)
 ginger loader parserOptions dialect encoder templateName vars = runExceptT $ do
   templateSrc <- maybe

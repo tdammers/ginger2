@@ -20,6 +20,7 @@ import qualified Test.Tasty.QuickCheck as QC
 
 import Language.Ginger.SourcePosition
 
+-- | Identifiers are used to represent variable names and object fields.
 newtype Identifier =
   Identifier { identifierName :: Text }
   deriving (Show, Eq, Ord, ToJSON, ToJSONKey, FromJSON, FromJSONKey)
@@ -48,6 +49,8 @@ identifierChars :: [Char]
 identifierChars =
   identifierLeadChars ++ ['0' .. '9']
 
+-- | Represents an encoded string value, as opposed to a raw (unencoded) string,
+-- which we represent as a plain 'Text'.
 newtype Encoded =
   Encoded { encoded :: Text }
   deriving (Show, Eq, Ord, Semigroup, Monoid)
@@ -57,6 +60,8 @@ instance Arbitrary Encoded where
   shrink (Encoded e) =
     map (Encoded . Text.pack) . filter (not . null) $ shrink $ Text.unpack e
 
+-- | A template consists of an optional parent template (specified in the
+-- source using the @{% extends %}@ construct), and a body statement.
 data Template =
   Template
     { templateParent :: !(Maybe Text)
@@ -64,6 +69,8 @@ data Template =
     }
     deriving (Show, Eq)
 
+-- | A block represents a section of a template that can be overridden in
+-- derived templates ("template inheritance").
 data Block =
   Block
     { blockBody :: !Statement
@@ -72,6 +79,7 @@ data Block =
     }
     deriving (Show, Eq)
 
+-- | A statement in the template language.
 data Statement
   = -- | Statement tagged with a source position
     PositionedS !SourcePosition !Statement
@@ -330,6 +338,8 @@ instance Arbitrary Recursivity where
 
 type MacroArg = (Identifier, Maybe Expr)
 
+-- | An expression. Expressions can occur in interpolations (@{{ ... }}@), and
+-- in various places inside statements.
 data Expr
   = PositionedE !SourcePosition !Expr
   | NoneE

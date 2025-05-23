@@ -508,6 +508,20 @@ tests = testGroup "Language.Ginger.Parse"
           "{% set foo = bar -%} \t \r\n\t {%- set baz = quux %}"
           (GroupS [SetS "foo" (VarE "bar"), SetS "baz" (VarE "quux")])
     ]
+    , testGroup "Regressions"
+      [ testCase "-%} after test" $
+        test_parser statementUP
+          "{%- for a in b if a -%}\na{%- endfor -%}"
+          ( ForS
+              Nothing
+              "a"
+              (VarE "b")
+              (Just (VarE "a"))
+              NotRecursive
+              (ImmediateS (Encoded "a"))
+              Nothing
+          )
+      ]
   ]
 
 statementUP :: P Statement

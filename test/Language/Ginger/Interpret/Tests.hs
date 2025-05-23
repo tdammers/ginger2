@@ -2044,6 +2044,7 @@ prop_extendSuper (NonEmptyText parentName) blockName body body' =
     counterexample ("PARENT SOURCE:\n" ++ Text.unpack parentSrc) $
     counterexample ("CHILD SOURCE:\n" ++ Text.unpack mainSrc) $
     counterexample ("DIRECT SOURCE:\n" ++ Text.unpack directSrc) $
+    isRight resultDirect ==>
     resultExtends === resultDirect
 
 prop_extendWithContext :: NonEmptyText

@@ -1695,6 +1695,7 @@ prop_include (ArbitraryText name) body =
   in
     counterexample ("BODY:\n" ++ Text.unpack bodySrc) $
     counterexample ("INCLUDER:\n" ++ Text.unpack includeSrc) $
+    isRight resultDirect ==>
     resultInclude === resultDirect
 
 prop_includeInto :: ArbitraryText -> Statement -> Statement -> Property
@@ -1711,6 +1712,7 @@ prop_includeInto (ArbitraryText name) body parent =
                             ])
   in
     counterexample ("SOURCE:\n" ++ Text.unpack bodySrc) $
+    isRight resultDirect ==>
     resultInclude === resultDirect
 
 prop_includeMacro :: ArbitraryText -> Identifier -> Statement -> Property
@@ -1720,15 +1722,17 @@ prop_includeMacro (ArbitraryText name) macroName body =
       resultDirect = runGingerIdentityEither $
                       eval body
       loader = mockLoader [(name, bodySrc)]
+      includeS = GroupS
+                  [ IncludeS (StringLitE name) RequireMissing WithContext
+                  , CallS macroName [] [] (InterpolationS NoneE)
+                  ]
+      includeSrc = renderSyntaxText includeS
       resultInclude = runGingerIdentityEitherWithLoader loader $
-                        eval (
-                          GroupS
-                            [ IncludeS (StringLitE name) RequireMissing WithContext
-                            , CallS macroName [] [] (InterpolationS NoneE)
-                            ]
-                        )
+                        eval includeS
   in
-    counterexample ("SOURCE:\n" ++ Text.unpack bodySrc) $
+    counterexample ("BODY:\n" ++ Text.unpack bodySrc) $
+    counterexample ("INCLUDER:\n" ++ Text.unpack includeSrc) $
+    isRight resultDirect ==>
     resultInclude === resultDirect
 
 prop_includeMacroWithoutContext :: ArbitraryText -> Identifier -> Statement -> Property
@@ -1750,6 +1754,7 @@ prop_includeMacroWithoutContext (ArbitraryText name) macroName body =
     counterexample ("BODY:\n" ++ Text.unpack bodySrc) $
     counterexample ("INCLUDER:\n" ++ Text.unpack includeSrc) $
     name /= identifierName macroName ==>
+    isRight resultDirect ==>
     resultInclude === resultDirect
 
 prop_includeSet :: ArbitraryText -> Identifier -> ArbitraryText -> Property
@@ -1836,6 +1841,7 @@ prop_importValueAlias (ArbitraryText name) alias varName valE =
                           ]
   in
     counterexample ("SOURCE:\n" ++ Text.unpack bodySrc) $
+    isRight resultDirect ==>
     resultImport === resultDirect
 
 prop_importMacro :: ArbitraryText -> Identifier -> Statement -> Property
@@ -1843,13 +1849,16 @@ prop_importMacro (ArbitraryText name) varName bodyS =
   let bodySrc = renderSyntaxText (MacroS varName [] bodyS)
       resultDirect = runGingerIdentityEither $ eval bodyS
       loader = mockLoader [(name, bodySrc)]
-      resultImport = runGingerIdentityEitherWithLoader loader . eval $
-                        GroupS
-                          [ ImportS (StringLitE name) Nothing Nothing RequireMissing WithoutContext
-                          , CallS varName [] [] (InterpolationS NoneE)
-                          ]
+      importS = GroupS
+                  [ ImportS (StringLitE name) Nothing Nothing RequireMissing WithoutContext
+                  , CallS varName [] [] (InterpolationS NoneE)
+                  ]
+      importSrc = renderSyntaxText importS
+      resultImport = runGingerIdentityEitherWithLoader loader . eval $ importS
   in
-    counterexample ("SOURCE:\n" ++ Text.unpack bodySrc) $
+    counterexample ("BODY:\n" ++ Text.unpack bodySrc) $
+    counterexample ("IMPORTER:\n" ++ Text.unpack importSrc) $
+    isRight resultDirect ==>
     resultImport === resultDirect
 
 prop_importWithoutContext :: ArbitraryText -> Identifier -> Identifier -> Expr -> Property

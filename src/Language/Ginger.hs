@@ -19,6 +19,7 @@ module Language.Ginger
 , RuntimeError (..)
 , prettyRuntimeError
 , Identifier (..)
+, JinjaDialect (..)
 , module M
 )
 where
@@ -39,6 +40,8 @@ import Language.Ginger.Parse as M
 import qualified Language.Ginger.Parse as P
 import Language.Ginger.Interpret.DefEnv as M
         ( htmlEncoder
+        , defVars
+        , defVarsCompat
         )
 
 import Control.Monad.Trans (MonadTrans (..))
@@ -47,14 +50,20 @@ import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Map.Strict (Map)
 
+data JinjaDialect
+  = DialectGinger2
+  | DialectJinja2
+  deriving (Show, Eq, Ord, Enum, Bounded)
+
 ginger :: forall m. Monad m
        => TemplateLoader m
        -> POptions
+       -> JinjaDialect
        -> Encoder m
        -> Text
        -> Map Identifier (Value m)
        -> m (Either RuntimeError Encoded)
-ginger loader parserOptions encoder templateName vars = runExceptT $ do
+ginger loader parserOptions dialect encoder templateName vars = runExceptT $ do
   templateSrc <- maybe
                   (throwError $ TemplateFileNotFoundError templateName)
                   pure
@@ -72,8 +81,11 @@ ginger loader parserOptions encoder templateName vars = runExceptT $ do
               { contextEncode = encoder
               , contextLoadTemplateFile = loader
               }
+      defVars' = case dialect of
+                    DialectGinger2 -> defVars
+                    DialectJinja2 -> defVarsCompat
       env = defEnv
-              { envVars = envVars defEnv <> vars
+              { envVars = defVars' <> vars
               }
   eitherExceptM $ runGingerT
     (evalT template >>= encode)

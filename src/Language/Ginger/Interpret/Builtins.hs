@@ -74,7 +74,6 @@ builtinGlobals evalE = Map.fromList $
   , ("center", ProcedureV fnCenter)
   , ("count", ProcedureV fnLength)
   , ("date", ProcedureV fnDateFormat)
-  , ("dateformat", ProcedureV fnDateFormat)
   , ("dictsort", ProcedureV fnDictsort)
   , ("escape", ProcedureV fnEscape)
   , ("even", intBuiltin even)
@@ -99,7 +98,6 @@ builtinGlobals evalE = Map.fromList $
   , ("odd", intBuiltin odd)
   -- , ("pprint", undefined)
   -- , ("random", undefined)
-  , ("regex", regexModule)
   -- , ("rejectattr", undefined)
   -- , ("reject", undefined)
   , ("replace", ProcedureV fnStrReplace)
@@ -112,7 +110,6 @@ builtinGlobals evalE = Map.fromList $
   , ("sort", ProcedureV fnSort)
   , ("split", ProcedureV fnStrSplit)
   , ("string", ProcedureV fnToString)
-  , ("strip", ProcedureV fnStrStrip)
   -- , ("striptags", undefined)
   -- , ("sum", undefined)
   , ("title", textBuiltin Text.toTitle)
@@ -126,6 +123,15 @@ builtinGlobals evalE = Map.fromList $
   , ("wordcount", textBuiltin (length . Text.words))
   -- , ("wordwrap", undefined)
   -- , ("xmlattr", undefined)
+  ]
+
+builtinGlobalsNonJinja :: forall m. Monad m
+                       => (Expr -> GingerT m (Value m))
+                       -> Map Identifier (Value m)
+builtinGlobalsNonJinja _evalE = Map.fromList $
+  [ ("strip", ProcedureV fnStrStrip)
+  , ("regex", regexModule)
+  , ("dateformat", ProcedureV fnDateFormat)
   ]
 
 builtinIntAttribs :: forall m. Monad m => BuiltinAttribs Integer m

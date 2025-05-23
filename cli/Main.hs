@@ -30,6 +30,7 @@ data ProgramOptions =
     , poTrimBlocks :: BlockTrimming
     , poStripBlocks :: BlockStripping
     , poEncoder :: EncoderChoice
+    , poDialect :: JinjaDialect
     }
     deriving (Show, Eq)
 
@@ -42,6 +43,7 @@ defProgramOptions =
     , poTrimBlocks = pstateTrimBlocks defPOptions
     , poStripBlocks = pstateStripBlocks defPOptions
     , poEncoder = HtmlEncoder
+    , poDialect = DialectGinger2
     }
 
 programOptions :: Parser ProgramOptions
@@ -106,14 +108,35 @@ programOptions =
                 "template file extension, then default to 'html'")
           <> value AutoEncoder
           )
+    <*> option dialectReader
+          ( long "dialect"
+          <> metavar "DIALECT"
+          <> help
+              ( "Jinja dialect. Valid options: " ++
+                "'jinja' (compatibility mode), " ++
+                "'ginger' (ginger2-specific extensions, default)"
+              )
+          <> value DialectGinger2
+          )
 
 encoderReader :: ReadM EncoderChoice
 encoderReader = eitherReader $ \case
   "html" -> Right HtmlEncoder
   "text" -> Right TextEncoder
   "auto" -> Right AutoEncoder
-  s -> Left $ "Invalid reader: " ++ show s
+  s -> Left $ "Invalid encoder: " ++ show s
         
+dialectReader :: ReadM JinjaDialect
+dialectReader = eitherReader $ \case
+  "ginger" -> Right DialectGinger2
+  "ginger2" -> Right DialectGinger2
+
+  "jinja" -> Right DialectJinja2
+  "jinja2" -> Right DialectJinja2
+  "compat" -> Right DialectJinja2
+  s -> Left $ "Invalid dialect: " ++ show s
+        
+
 
 main :: IO ()
 main = do
@@ -162,6 +185,7 @@ runWithOptions po = do
       { pstateTrimBlocks = poTrimBlocks po
       , pstateStripBlocks = poStripBlocks po
       }
+    (poDialect po)
     encoder
     templateName
     vars >>= printResultTo (poOutputFile po)

@@ -62,8 +62,9 @@ htmlEncode txt =
     encodeChar '\'' = "&apos;"
     encodeChar c = Builder.singleton c
 
-defVars :: forall m. Monad m => Map Identifier (Value m)
-defVars = Map.fromList
+defVarsCommon :: forall m. Monad m
+              => Map Identifier (Value m)
+defVarsCommon = Map.fromList
   [ ( "jinja-tests"
     , dictV
         [ ("defined", TestV $ NativeTest isDefined)
@@ -102,6 +103,15 @@ defVars = Map.fromList
     )
   ]
   <> builtinGlobals evalE
+
+defVarsCompat :: forall m. Monad m
+              => Map Identifier (Value m)
+defVarsCompat = defVarsCommon
+
+defVars :: forall m. Monad m
+        => Map Identifier (Value m)
+defVars = defVarsCommon
+        <> builtinGlobalsNonJinja evalE
 
 isCallable' :: Monad m => Value m -> Bool
 isCallable' (ProcedureV {}) = True

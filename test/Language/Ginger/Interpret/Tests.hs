@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedLists #-}
 
 module Language.Ginger.Interpret.Tests
 where
@@ -27,9 +28,12 @@ import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
+import Data.Vector (Vector)
+import qualified Data.Vector as V
 import Data.Word (Word8, Word16, Word32, Word64)
 import Test.Tasty
 import Test.Tasty.QuickCheck hiding ((.&.))
+import Test.QuickCheck.Instances ()
 
 import Language.Ginger.AST
 import Language.Ginger.Interpret
@@ -72,7 +76,7 @@ tests = testGroup "Language.Ginger.Interpret"
       , testProperty "Integer literal" (prop_literal IntLitE)
       , testProperty "Double literal" (prop_literal FloatLitE)
       , testProperty "String literal" (prop_literalWith Text.pack StringLitE)
-      , testProperty "List literal" (prop_literal (ListE . map IntLitE))
+      , testProperty "List literal" (prop_literal (ListE . fmap IntLitE))
       , testProperty "Dict literal" (prop_literal (DictE . map (\(k, v) -> (IntLitE k, IntLitE v)) . Map.toList))
       ]
     , testGroup "UnaryE"
@@ -186,14 +190,14 @@ tests = testGroup "Language.Ginger.Interpret"
             prop_eval (\i -> FilterE (FloatLitE i) (VarE "float") [] [])
                       FloatV
         , testProperty "list from list" $
-            prop_eval (\xs -> FilterE (ListE $ map IntLitE xs) (VarE "list") [] [])
-                      (ListV . map IntV)
+            prop_eval (\xs -> FilterE (ListE $ fmap IntLitE xs) (VarE "list") [] [])
+                      (ListV . fmap IntV)
         , testProperty "list from string" $
             prop_eval (\(ArbitraryText txt) ->
                         FilterE (StringLitE txt) (VarE "list") [] []
                       )
                       (\(ArbitraryText txt) ->
-                        ListV . map (StringV . Text.singleton) . Text.unpack $ txt
+                        ListV . V.fromList . map (StringV . Text.singleton) . Text.unpack $ txt
                       )
         , testGroup "filesizeformat"
             [ testProperty "bytes" $
@@ -266,7 +270,7 @@ tests = testGroup "Language.Ginger.Interpret"
         , testProperty "length (list)" $
             prop_eval
               (\(PositiveInt i) ->
-                  FilterE (ListE $ replicate i NoneE) (VarE "length") [] []
+                  FilterE (ListE $ V.replicate i NoneE) (VarE "length") [] []
               )
               (\(PositiveInt i) -> toValue i)
         , testProperty "length (dict)" $
@@ -303,7 +307,7 @@ tests = testGroup "Language.Ginger.Interpret"
             [ testProperty "list" $
                 prop_eval
                   (\(x, xs) ->
-                    FilterE (ListE (IntLitE x : map IntLitE xs)) (VarE "first") [] []
+                    FilterE (ListE (IntLitE x `V.cons` fmap IntLitE xs)) (VarE "first") [] []
                   )
                   (\(x, _) ->
                       IntV x
@@ -311,7 +315,7 @@ tests = testGroup "Language.Ginger.Interpret"
             , testProperty "empty list" $
                 prop_eval
                   (\() ->
-                    FilterE (ListE []) (VarE "first") [] []
+                    FilterE (ListE mempty) (VarE "first") [] []
                   )
                   (\() ->
                       NoneV
@@ -338,7 +342,7 @@ tests = testGroup "Language.Ginger.Interpret"
             [ testProperty "list" $
                 prop_eval
                   (\(x, xs) ->
-                    FilterE (ListE (map IntLitE (xs ++ [x]))) (VarE "last") [] []
+                    FilterE (ListE (fmap IntLitE (xs `V.snoc` x))) (VarE "last") [] []
                   )
                   (\(x, _) ->
                       IntV x
@@ -346,7 +350,7 @@ tests = testGroup "Language.Ginger.Interpret"
             , testProperty "empty list" $
                 prop_eval
                   (\() ->
-                    FilterE (ListE []) (VarE "last") [] []
+                    FilterE (ListE mempty) (VarE "last") [] []
                   )
                   (\() ->
                       NoneV
@@ -397,92 +401,96 @@ tests = testGroup "Language.Ginger.Interpret"
                 prop_eval
                   (\xs ->
                     FilterE
-                      (ListE (map IntLitE xs))
+                      (ListE (fmap IntLitE xs))
                       (VarE "map")
                       [VarE "string"]
                       []
                   )
                   (\xs ->
-                      ListV (map (StringV . Text.show) xs)
+                      ListV (fmap (StringV . Text.show) xs)
                   )
             , testProperty "map('string')" $
                 prop_eval
                   (\xs ->
                     FilterE
-                      (ListE (map IntLitE xs))
+                      (ListE (fmap IntLitE xs))
                       (VarE "map")
                       [StringLitE "string"]
                       []
                   )
                   (\xs ->
-                      ListV (map (StringV . Text.show) xs)
+                      ListV (fmap (StringV . Text.show) xs)
                   )
             , testProperty "map(center, width)" $
                 prop_eval
                   (\(xs, PositiveInt n) ->
                     FilterE
-                      (ListE [ StringLitE x | ArbitraryText x <- xs ])
+                      (ListE $ fmap (StringLitE . unArbitraryText) xs)
                       (VarE "map")
                       [VarE "center"]
                       [("width", IntLitE n)]
                   )
-                  (\(xs, PositiveInt n) ->
+                  (\(xs :: Vector ArbitraryText, PositiveInt n) ->
                       let w = fromInteger n
                       in
-                        ListV
-                          [ if Text.length t >= w then
+                        ListV $ V.map (\(ArbitraryText t) ->
+                            if Text.length t >= w then
                               StringV t
                             else
                               let p = w - Text.length t
                                   pL = p `div` 2
                                   pR = p - pL
-                              in StringV $ Text.replicate pL " " <> t <> Text.replicate pR " "
-                          | ArbitraryText t <- xs
-                          ]
+                              in StringV (Text.replicate pL " " <> t <> Text.replicate pR " ")
+                            ) xs
                   )
             , testProperty "map('center', width)" $
                 prop_eval
                   (\(xs, PositiveInt n) ->
                     FilterE
-                      (ListE [ StringLitE x | ArbitraryText x <- xs ])
+                      (ListE $ fmap (StringLitE . unArbitraryText) xs)
                       (VarE "map")
                       [StringLitE "center"]
                       [("width", IntLitE n)]
                   )
-                  (\(xs, PositiveInt n) ->
+                  (\(xs :: Vector ArbitraryText, PositiveInt n) ->
                       let w = fromInteger n
                       in
-                        ListV
-                          [ if Text.length t >= w then
+                        ListV $ V.map (\(ArbitraryText t) ->
+                            if Text.length t >= w then
                               StringV t
                             else
                               let p = w - Text.length t
                                   pL = p `div` 2
                                   pR = p - pL
-                              in StringV $ Text.replicate pL " " <> t <> Text.replicate pR " "
-                          | ArbitraryText t <- xs
-                          ]
+                              in StringV (Text.replicate pL " " <> t <> Text.replicate pR " ")
+                            ) xs
                   )
             , testProperty "map(attribute=)" $
                 prop_eval
                   (\(xs, name) ->
                     FilterE
-                      (ListE [ DictE [(StringLitE $ identifierName name, IntLitE x)] | x <- xs ])
+                      (ListE $
+                          fmap
+                            (\x ->
+                              DictE
+                                [(StringLitE $ identifierName name, IntLitE x)])
+                            xs
+                      )
                       (VarE "map")
                       []
                       [("attribute", StringLitE $ identifierName name)]
                   )
                   (\(xs, _) ->
-                      ListV (map IntV xs)
+                      ListV (fmap IntV xs)
                   )
             , testProperty "map(attribute=x, default=y)" $
                 prop_eval
                   (\(xs, name, otherName, ArbitraryText dummyVal, ArbitraryText defval) ->
                     FilterE
-                      (ListE $ intersperse
+                      (ListE . V.fromList $ intersperse
                         (DictE [(StringLitE $ identifierName otherName, StringLitE dummyVal)])
                         [ DictE [(StringLitE $ identifierName name, IntLitE x)]
-                        | x <- xs
+                        | x <- V.toList xs
                         ])
                       (VarE "map")
                       []
@@ -491,7 +499,7 @@ tests = testGroup "Language.Ginger.Interpret"
                       ]
                   )
                   (\(xs, _, _, _, ArbitraryText defval) ->
-                      ListV $ intersperse (StringV defval) (map IntV xs)
+                      ListV . V.fromList $ intersperse (StringV defval) (V.toList $ fmap IntV xs)
                   )
             ]
 
@@ -500,20 +508,20 @@ tests = testGroup "Language.Ginger.Interpret"
                 prop_eval
                   (\xs ->
                       FilterE
-                        (ListE [StringLitE t | ArbitraryText t <- xs])
+                        (ListE $ fmap (StringLitE . unArbitraryText) xs)
                         (VarE "sort")
                         []
                         [ ("case_sensitive", TrueE)
                         ]
                   )
                   (\xs ->
-                      ListV $ [StringV t | ArbitraryText t <- sort xs]
+                      ListV $ fmap (StringV . unArbitraryText) (V.fromList . sort . V.toList $ xs)
                   )
             , testProperty "strings, reverse" $
                 prop_eval
                   (\xs ->
                       FilterE
-                        (ListE [StringLitE t | ArbitraryText t <- xs])
+                        (ListE $ fmap (StringLitE . unArbitraryText) xs)
                         (VarE "sort")
                         []
                         [ ("case_sensitive", TrueE)
@@ -521,7 +529,7 @@ tests = testGroup "Language.Ginger.Interpret"
                         ]
                   )
                   (\xs ->
-                      ListV $ [StringV t | ArbitraryText t <- reverse (sort xs)]
+                      ListV $ fmap (StringV . unArbitraryText) (V.reverse . V.fromList . sort . V.toList $ xs)
                   )
             ]
 
@@ -637,28 +645,38 @@ tests = testGroup "Language.Ginger.Interpret"
                     (VarE "items")
                     [] []
               )
-              (\pairs -> ListV [ ListV [StringV k, StringV v] | (ArbitraryText k, ArbitraryText v) <- Map.toAscList . Map.fromList $ pairs ])
+              (\pairs ->
+                ListV . V.fromList $
+                  [ ListV [StringV k, StringV v]
+                  | (ArbitraryText k, ArbitraryText v) <- Map.toAscList . Map.fromList $ pairs
+                  ])
 
         , testProperty "batch" $
             prop_eval
-              (\(PositiveInt i, PositiveInt j) -> FilterE (ListE (replicate (i * j) NoneE)) (VarE "batch") [IntLitE $ fromIntegral j] [])
-              (\(PositiveInt i, PositiveInt j) -> ListV (replicate i (ListV (replicate j NoneV))))
+              (\(PositiveInt i, PositiveInt j) ->
+                FilterE (ListE (V.replicate (i * j) NoneE)) (VarE "batch") [IntLitE $ fromIntegral j] [])
+              (\(PositiveInt i, PositiveInt j) ->
+                ListV (V.replicate i (ListV (V.replicate j NoneV))))
         , testProperty "batch with fill" $
             prop_eval
               (\(PositiveInt i, PositiveInt j, PositiveInt x, f) ->
                   FilterE
-                    (ListE (replicate (i * j + x `mod` j) NoneE))
+                    (ListE (V.replicate (i * j + x `mod` j) NoneE))
                     (VarE "batch")
                     [IntLitE $ fromIntegral j, IntLitE f]
                     []
               )
               (\(PositiveInt i, PositiveInt j, PositiveInt x, f) ->
                   ListV (
-                    replicate i (ListV (replicate j NoneV)) ++
+                    V.replicate i (ListV (V.replicate j NoneV)) <>
                     if x `mod` j == 0 then
-                      []
+                      mempty
                     else
-                      [ListV (replicate (x `mod` j) NoneV ++ replicate (j - x `mod` j) (IntV f))]
+                      V.singleton $
+                        ListV
+                          ( V.replicate (x `mod` j) NoneV
+                          <> V.replicate (j - x `mod` j) (IntV f)
+                          )
                   )
               )
 
@@ -803,9 +821,9 @@ tests = testGroup "Language.Ginger.Interpret"
               )
               (\(NonEmptyText sep, NonEmptyText item) ->
                 if sep `Text.isInfixOf` item then
-                  ListV (map StringV $ Text.splitOn sep item)
+                  ListV (fmap StringV . V.fromList $ Text.splitOn sep item)
                 else
-                  ListV [StringV item]
+                  ListV $ V.singleton (StringV item)
               )
         , testProperty "string split" $
             prop_method "split"
@@ -817,9 +835,9 @@ tests = testGroup "Language.Ginger.Interpret"
               )
               (\(NonEmptyText sep, NonEmptyText item, PositiveInt i) ->
                 if sep `Text.isInfixOf` item then
-                  ListV $ concat $ replicate (i + 1) (map StringV $ Text.splitOn sep item)
+                  ListV $ V.concat $ replicate (i + 1) (fmap StringV . V.fromList $ Text.splitOn sep item)
                 else
-                  ListV $ replicate (i + 1) (StringV item)
+                  ListV $ V.replicate (i + 1) (StringV item)
               )
         , testProperty "string splitlines" $
             prop_method "splitlines"
@@ -828,7 +846,7 @@ tests = testGroup "Language.Ginger.Interpret"
               )
               (const [])
               (\(NonEmptyText item, PositiveInt i) ->
-                ListV $ replicate i (StringV (Text.filter (not . isControl) item))
+                ListV $ V.replicate i (StringV (Text.filter (not . isControl) item))
               )
         , testProperty "string join" $
             prop_method "join"
@@ -836,7 +854,7 @@ tests = testGroup "Language.Ginger.Interpret"
                 StringLitE sep
               )
               (\(NonEmptyText _sep, NonEmptyText item, PositiveInt i) ->
-                [ListE $ replicate i (StringLitE item)]
+                [ListE $ V.replicate i (StringLitE item)]
               )
               (\(NonEmptyText sep, NonEmptyText item, PositiveInt i) ->
                 StringV $ Text.intercalate sep $ replicate i item
@@ -1080,7 +1098,7 @@ prop_scopedVarsDisappear (name1, val1) (name2, val2) =
       isJust <$> lookupVarMaybe name2
     exists1c <- isJust <$> lookupVarMaybe name1
     notExists2 <- isNothing <$> lookupVarMaybe name2
-    pure $ and [ exists1a, exists1c, exists2, notExists2 ]
+    pure $ V.and [ exists1a, exists1c, exists2, notExists2 ]
 
 --------------------------------------------------------------------------------
 -- Expression properties
@@ -1492,7 +1510,7 @@ prop_ifStatementOutput cond yes no =
 
 prop_forStatementSimple :: Identifier -> Identifier -> [String] -> Property
 prop_forStatementSimple itereeName varName strItems =
-  let items = ListV $ map (StringV . Text.pack) strItems
+  let items = ListV . V.fromList $ map (StringV . Text.pack) strItems
       expected = StringV . Text.pack . mconcat $ strItems
       resultFor = runGingerIdentity $ do
                     setVar itereeName items
@@ -1510,7 +1528,7 @@ prop_forStatementSimple itereeName varName strItems =
 
 prop_forStatementWithKey :: Identifier -> Identifier -> Identifier -> [String] -> Property
 prop_forStatementWithKey itereeName varName keyName strItems =
-  let items = ListV $ map (StringV . Text.pack) strItems
+  let items = ListV . V.fromList $ map (StringV . Text.pack) strItems
       expected = StringV . Text.pack . mconcat $
                   [ show k ++ v | (k, v) <- zip [(0 :: Int) ..] strItems ]
       resultFor = runGingerIdentity $ do
@@ -1550,7 +1568,7 @@ prop_forStatementEmpty body =
 
 prop_forStatementFilter :: [Integer] -> Property
 prop_forStatementFilter intItems =
-  let items = ListV $ map IntV intItems
+  let items = ListV . V.fromList $ map IntV intItems
       expected = StringV . Text.pack . mconcat $ [ show i | i <- intItems, i > 0 ]
       resultFor = runGingerIdentity $ do
                     setVar "items" items
@@ -1568,7 +1586,7 @@ prop_forStatementFilter intItems =
 
 prop_forStatementLoopVars :: [Integer] -> Property
 prop_forStatementLoopVars intItems =
-  let items = ListV $ map IntV intItems
+  let items = ListV . V.fromList $ map IntV intItems
       expected = StringV . Text.pack . mconcat $
           [ show (succ i) ++ show (i :: Int) ++ show v
           | (i, v) <- zip [0..] intItems

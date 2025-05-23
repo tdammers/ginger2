@@ -5,16 +5,18 @@
 module Language.Ginger.AST
 where
 
-import Data.Text (Text, pattern (:<) )
-import qualified Data.Text as Text
-import Data.String (IsString (..))
-import Test.Tasty.QuickCheck (Arbitrary (..))
-import qualified Test.Tasty.QuickCheck as QC
+import Data.Aeson (ToJSON (..), ToJSONKey (..), FromJSON (..), FromJSONKey (..))
+import Data.List (intercalate)
+import Data.Maybe (maybeToList)
 import Data.Set (Set)
 import qualified Data.Set as Set
-import Data.Maybe (maybeToList)
-import Data.List (intercalate)
-import Data.Aeson (ToJSON (..), ToJSONKey (..), FromJSON (..), FromJSONKey (..))
+import Data.String (IsString (..))
+import Data.Text (Text, pattern (:<) )
+import qualified Data.Text as Text
+import Data.Vector (Vector)
+import qualified Data.Vector as V
+import Test.Tasty.QuickCheck (Arbitrary (..))
+import qualified Test.Tasty.QuickCheck as QC
 
 import Language.Ginger.SourcePosition
 
@@ -336,7 +338,7 @@ data Expr
   | IntLitE !Integer
   | FloatLitE !Double
   | StatementE !Statement
-  | ListE ![Expr]
+  | ListE !(Vector Expr)
   | DictE ![(Expr, Expr)]
     -- | @UnaryE op rhs
   | UnaryE !UnaryOperator !Expr
@@ -372,9 +374,13 @@ instance Arbitrary Expr where
   shrink (IntLitE i) = IntLitE <$> shrink i
   shrink (FloatLitE i) = FloatLitE <$> shrink i
   shrink (StatementE s) = StatementE <$> shrink s
-  shrink (ListE []) = pure NoneE
-  shrink (ListE [x]) = (ListE . (:[]) <$> shrink x) ++ [x]
-  shrink (ListE xs) = ListE <$> shrink xs
+  shrink (ListE v) =
+    case V.uncons v of
+      Nothing -> pure NoneE
+      Just (x, xs) | V.null xs ->
+        (ListE . V.singleton <$> shrink x) ++ [x]
+      _ ->
+        ListE . V.fromList <$> shrink (V.toList v)
   shrink (DictE xs) = DictE <$> shrink xs
   shrink (UnaryE op e) =
     (UnaryE <$> pure op <*> shrink e) ++
@@ -430,7 +436,7 @@ arbitraryExpr defined = do
           , (100, StringLitE <$> QC.resize (fuel - 1) (Text.pack <$> QC.listOf arbitrary))
           , (100, IntLitE <$> QC.resize (fuel - 1) arbitrary)
           , (100, FloatLitE <$> QC.resize (fuel - 1) arbitrary)
-          , (100, ListE <$> fuelledList (arbitraryExpr defined))
+          , (100, ListE . V.fromList <$> fuelledList (arbitraryExpr defined))
           , (100, DictE <$> fuelledList ((,) <$> arbitraryExpr defined <*> arbitraryExpr defined))
           , (90, QC.resize (max 0 $ fuel `div` 2 - 1) $
               BinaryE <$> arbitrary
@@ -630,7 +636,7 @@ traverseE :: (Expr -> Expr) -> (Statement -> Statement) -> Expr -> Expr
 traverseE fE fS expr = go (fE expr)
   where
     go (StatementE s) = StatementE (traverseS fS fE s)
-    go (ListE xs) = ListE (map (traverseE fE fS) xs)
+    go (ListE xs) = ListE (fmap (traverseE fE fS) xs)
     go (DictE items) =
       DictE [ (traverseE fE fS k, traverseE fE fS v) | (k, v) <- items ]
     go (UnaryE op e) = UnaryE op (traverseE fE fS e)

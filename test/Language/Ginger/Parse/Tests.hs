@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE OverloadedLists #-}
 
 module Language.Ginger.Parse.Tests
 where
@@ -12,6 +13,7 @@ import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.QuickCheck
 import Text.Megaparsec (eof)
+import Test.QuickCheck.Instances ()
 
 import Language.Ginger.AST
 import Language.Ginger.Parse
@@ -121,7 +123,7 @@ tests = testGroup "Language.Ginger.Parse"
           ]
     , testGroup "List"
       [ testCase "empty list" $
-          test_parser exprUP "[]" (ListE [])
+          test_parser exprUP "[]" (ListE mempty)
       , testCase "single-item list" $
           test_parser exprUP "[ 1 ] " (ListE [IntLitE 1])
       , testCase "multi-item list" $

@@ -9,6 +9,7 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE OverloadedLists #-}
 
 module Language.Ginger.Interpret.Eval
 ( Eval (..)
@@ -29,12 +30,12 @@ module Language.Ginger.Interpret.Eval
 where
 
 import Language.Ginger.AST
-import Language.Ginger.RuntimeError
-import Language.Ginger.Value
+import Language.Ginger.Interpret.Builtins
+import Language.Ginger.Interpret.Type
 import Language.Ginger.Parse (parseGinger)
 import qualified Language.Ginger.Parse as Parse
-import Language.Ginger.Interpret.Type
-import Language.Ginger.Interpret.Builtins
+import Language.Ginger.RuntimeError
+import Language.Ginger.Value
 
 import Control.Monad (foldM, forM, void)
 import Control.Monad.Except
@@ -44,14 +45,16 @@ import Control.Monad.Except
 import Control.Monad.Reader (ask , asks, local, MonadReader (..))
 import Control.Monad.State (gets)
 import Control.Monad.Trans (lift, MonadTrans (..))
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as ByteString
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (listToMaybe, catMaybes, fromMaybe)
+import Data.Maybe (catMaybes, fromMaybe)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as Text
-import Data.ByteString (ByteString)
-import qualified Data.ByteString as ByteString
+import Data.Vector (Vector)
+import qualified Data.Vector as V
 
 loadTemplate :: Monad m => Text -> GingerT m LoadedTemplate
 loadTemplate name = do
@@ -207,7 +210,7 @@ evalE (BoolE b) = pure (BoolV b)
 evalE (StringLitE s) = pure (StringV s)
 evalE (IntLitE i) = pure (IntV i)
 evalE (FloatLitE d) = pure (FloatV d)
-evalE (ListE xs) = ListV <$> mapM evalE xs
+evalE (ListE xs) = ListV <$> V.mapM evalE xs
 evalE (DictE xs) =
   DictV . Map.fromList <$> mapM evalKV xs
 evalE (UnaryE op expr) = do
@@ -265,17 +268,17 @@ evalNamedArg (kIdent, vExpr) = do
   vVal <- evalE vExpr
   return (Just kIdent, vVal)
 
-sliceList :: [a] -> Maybe Int -> Maybe Int -> [a]
-sliceList xs startMay endMay =
+sliceVector :: Vector a -> Maybe Int -> Maybe Int -> Vector a
+sliceVector xs startMay endMay =
   let start = case startMay of
                 Nothing -> 0
-                Just n | n < 0 -> length xs + n
+                Just n | n < 0 -> V.length xs + n
                 Just n -> n
       end = case endMay of
-                Nothing -> length xs - start
-                Just n | n < 0 -> length xs - start + n
+                Nothing -> V.length xs - start
+                Just n | n < 0 -> V.length xs - start + n
                 Just n -> n
-  in take end . drop start $ xs
+  in V.take end . V.drop start $ xs
 
 sliceText :: Text -> Maybe Int -> Maybe Int -> Text
 sliceText xs startMay endMay =
@@ -309,7 +312,7 @@ sliceValue :: Monad m
 sliceValue (ListV xs) startValMay endValMay = do
   startMay <- mapM (native . pure . asIntVal) startValMay
   endMay <- mapM (native . pure . asIntVal) endValMay
-  pure . ListV $ sliceList xs (fromIntegral <$> startMay) (fromIntegral <$> endMay)
+  pure . ListV $ sliceVector xs (fromIntegral <$> startMay) (fromIntegral <$> endMay)
 sliceValue (StringV xs) startValMay endValMay = do
   startMay <- mapM (native . pure . asIntVal) startValMay
   endMay <- mapM (native . pure . asIntVal) endValMay
@@ -375,12 +378,11 @@ valuesEqual (StringV a) (StringV b) = pure (a == b)
 valuesEqual (BoolV a) (BoolV b) = pure (a == b)
 valuesEqual (BytesV a) (BytesV b) = pure (a == b)
 valuesEqual (EncodedV a) (EncodedV b) = pure (a == b)
-valuesEqual (ListV []) (ListV []) = pure True
-valuesEqual (ListV []) (ListV _) = pure False
-valuesEqual (ListV _) (ListV []) = pure False
-valuesEqual (ListV (x:xs)) (ListV (y:ys)) =
-    (&&) <$> valuesEqual x y
-         <*> valuesEqual (ListV xs) (ListV ys)
+valuesEqual (ListV a) (ListV b)
+  | V.length a /= V.length b
+  = pure False
+  | otherwise
+  = V.and <$> V.zipWithM valuesEqual a b
 valuesEqual (DictV a) (DictV b) = dictsEqual a b
 valuesEqual (NativeV a) (NativeV b) =
   native $ a --> nativeObjectEq b
@@ -439,13 +441,15 @@ evalBinary BinopIn a b = case b of
   DictV m -> case a of
     ScalarV k -> pure . BoolV $ k `Map.member` m
     x -> throwError $ TagError "in" "scalar" (tagNameOf x)
-  ListV [] -> pure . BoolV $ False
-  ListV (x:xs) -> do
-    found <- valuesEqual a x
-    if found then
-      pure . BoolV $ True
-    else
-      evalBinary BinopIn a (ListV xs)
+  ListV v -> case V.uncons v of
+    Nothing ->
+      pure FalseV
+    Just (x, xs) -> do
+      found <- valuesEqual a x
+      if found then
+        pure . BoolV $ True
+      else
+        evalBinary BinopIn a (ListV xs)
   x -> throwError $ TagError "in" "list or dict" (tagNameOf x)
 evalBinary BinopIndex a b = do
   itemMay <- getItem a b
@@ -702,9 +706,9 @@ evalLoop loopKeyMay loopName iteree loopCondMay recursivity bodyS elseSMay recur
   -- First, convert the iteree into a plain list.
 
   itemPairs <- case iteree of
-    ListV items -> pure (zip (map IntV [0..]) items)
-    DictV dict -> pure [ (ScalarV k, v) | (k, v) <- Map.toList dict ]
-    NoneV -> pure []
+    ListV items -> pure (V.zip (fmap IntV [0..]) items)
+    DictV dict -> (pure . V.fromList) [ (ScalarV k, v) | (k, v) <- Map.toList dict ]
+    NoneV -> pure mempty
     x -> throwError $ TagError "iteree" "list or dict" (tagNameOf x)
 
   filtered <- maybe (pure itemPairs) (goFilter itemPairs) loopCondMay
@@ -716,50 +720,55 @@ evalLoop loopKeyMay loopName iteree loopCondMay recursivity bodyS elseSMay recur
   else
     go 0 (length filtered) Nothing filtered
   where
-    goFilter :: [(Value m, Value m)] -> Expr -> GingerT m [(Value m, Value m)]
-    goFilter [] _ = pure []
-    goFilter ((k, v):xs) condE = do
-      keep <- scoped $ do
-        -- Bind key and value
-        maybe (pure ()) (\loopKey -> setVar loopKey k) loopKeyMay
-        setVar loopName v
-        asBool "loop condition" =<< evalE condE
-      rest <- goFilter xs condE
-      if keep then
-        pure $ (k, v):rest
-      else
-        pure rest
+    goFilter :: Vector (Value m, Value m) -> Expr -> GingerT m (Vector (Value m, Value m))
+    goFilter pairs condE =
+      case V.uncons pairs of
+        Nothing ->
+          pure mempty
+        Just ((k, v), xs) -> do
+          keep <- scoped $ do
+            -- Bind key and value
+            maybe (pure ()) (\loopKey -> setVar loopKey k) loopKeyMay
+            setVar loopName v
+            asBool "loop condition" =<< evalE condE
+          rest <- goFilter xs condE
+          if keep then
+            pure $ V.cons (k, v) rest
+          else
+            pure rest
 
-    go :: Int -> Int -> Maybe (Value m) -> [(Value m, Value m)] -> GingerT m (Value m)
-    go _ _ _ [] = pure NoneV
-    go n num prevVal ((k, v):xs) = do
-      (prevVal', body) <- scoped $ do
-        -- Bind key and value
-        maybe (pure ()) (\loopKey -> setVar loopKey k) loopKeyMay
-        setVar loopName v
-        env <- gets evalEnv
-        setVar "loop" $
-          dictV
-            [ "index" .= (n + 1)
-            , "index0" .= n
-            , "revindex" .= (num - n)
-            , "revindex0" .= (num - n - 1)
-            , "first" .= (n == 0)
-            , "last" .= (n == num - 1)
-            , "length" .= num
-            , "cycle" .= cycleFunc n
-            , "depth" .= (recursionLevel + 1)
-            , "depth0" .= recursionLevel
-            , "previtem" .= prevVal
-            , "nextitem" .= (snd <$> listToMaybe xs)
-            , "changed" .= changedFunc env v
-            , "__call__" .= if is recursivity then Just (recurFunc env) else Nothing
-            ]
-        body <- evalS bodyS
-        pure (Just v, body)
+    go :: Int -> Int -> Maybe (Value m) -> Vector (Value m, Value m) -> GingerT m (Value m)
+    go n num prevVal pairs = do
+      case V.uncons pairs of
+        Nothing -> pure NoneV
+        Just ((k, v), xs) -> do
+          (prevVal', body) <- scoped $ do
+            -- Bind key and value
+            maybe (pure ()) (\loopKey -> setVar loopKey k) loopKeyMay
+            setVar loopName v
+            env <- gets evalEnv
+            setVar "loop" $
+              dictV
+                [ "index" .= (n + 1)
+                , "index0" .= n
+                , "revindex" .= (num - n)
+                , "revindex0" .= (num - n - 1)
+                , "first" .= (n == 0)
+                , "last" .= (n == num - 1)
+                , "length" .= num
+                , "cycle" .= cycleFunc n
+                , "depth" .= (recursionLevel + 1)
+                , "depth0" .= recursionLevel
+                , "previtem" .= prevVal
+                , "nextitem" .= (snd <$> xs V.!? 0)
+                , "changed" .= changedFunc env v
+                , "__call__" .= if is recursivity then Just (recurFunc env) else Nothing
+                ]
+            body <- evalS bodyS
+            pure (Just v, body)
 
-      rest <- go (succ n) num prevVal' xs
-      concatValues body rest
+          rest <- go (succ n) num prevVal' xs
+          concatValues body rest
 
     changedFunc :: Env m -> Value m -> Value m
     changedFunc env v = ProcedureV $ GingerProcedure env [("val", Just v)] $
@@ -793,8 +802,8 @@ evalLoop loopKeyMay loopName iteree loopCondMay recursivity bodyS elseSMay recur
         ListV [] ->
           NoneV
         ListV xs -> do
-          let n' = n `mod` length xs
-          toValue $ listToMaybe $ drop n' xs
+          let n' = n `mod` V.length xs
+          toValue $ xs V.!? n'
         _ ->
           NoneV
 

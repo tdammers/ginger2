@@ -17,7 +17,7 @@ import Language.Ginger.Interpret
 import Language.Ginger.Value
 import Language.Ginger.AST
 
-newtype ArbitraryText = ArbitraryText Text
+newtype ArbitraryText = ArbitraryText { unArbitraryText :: Text }
   deriving (Eq, Ord)
 
 instance Show ArbitraryText where

@@ -14,23 +14,6 @@ where
 import Control.Monad.Except (runExceptT, throwError, MonadError)
 import Control.Monad.Reader (ReaderT (..), MonadReader (..))
 import Control.Monad.Trans (MonadTrans, lift)
-import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Base64 as Base64
-import qualified Data.ByteString.Lazy as LBS
-import Data.Int
-import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
-import Data.Maybe (fromMaybe)
-import Data.String (IsString (..))
-import Data.Text (Text)
-import qualified Data.Text as Text
-import Data.Text.Encoding (decodeUtf8)
-import qualified Data.Text.Lazy as LText
-import Data.Word
-import GHC.Float (float2Double)
-import Test.Tasty.QuickCheck (Arbitrary (..))
-import qualified Test.Tasty.QuickCheck as QC
 import Data.Aeson
           ( FromJSON (..)
           , FromJSONKey (..)
@@ -40,7 +23,27 @@ import Data.Aeson
           )
 import qualified Data.Aeson as JSON
 import qualified Data.Aeson.Types as JSON
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Base64 as Base64
+import qualified Data.ByteString.Lazy as LBS
+import Data.Foldable (fold)
+import Data.Int
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
+import Data.Maybe (fromMaybe)
 import Data.Scientific (floatingOrInteger)
+import Data.String (IsString (..))
+import Data.Text (Text)
+import qualified Data.Text as Text
+import Data.Text.Encoding (decodeUtf8)
+import qualified Data.Text.Lazy as LText
+import Data.Vector (Vector)
+import qualified Data.Vector as V
+import Data.Word
+import GHC.Float (float2Double)
+import Test.Tasty.QuickCheck (Arbitrary (..))
+import qualified Test.Tasty.QuickCheck as QC
 
 import Language.Ginger.AST
 import Language.Ginger.RuntimeError
@@ -153,7 +156,7 @@ scalarToText (FloatScalar f) = Text.show f
 
 data Value m
   = ScalarV !Scalar
-  | ListV ![Value m]
+  | ListV !(Vector (Value m))
   | DictV !(Map Scalar (Value m))
   | NativeV !(NativeObject m)
   | ProcedureV !(Procedure m)
@@ -173,7 +176,7 @@ instance ToJSON (Value m) where
 
 traverseValue :: Monoid a => (Value m -> a) -> Value m -> a
 traverseValue p v@(ListV xs) =
-  p v <> mconcat (map (traverseValue p) xs)
+  p v <> fold (fmap (traverseValue p) xs)
 traverseValue p v@(DictV m) =
   p v <> mconcat (map (traverseValue p . snd) $ Map.toList m)
 traverseValue p v = p v
@@ -334,7 +337,7 @@ data NativeObject m =
     , nativeObjectGetAttribute :: Identifier -> m (Maybe (Value m))
     , nativeObjectStringified :: m Text
     , nativeObjectEncoded :: Context m -> m Encoded
-    , nativeObjectAsList :: m (Maybe [Value m])
+    , nativeObjectAsList :: m (Maybe (Vector (Value m)))
     , nativeObjectCall :: Maybe
                             (NativeObject m
                               -> [(Maybe Identifier, Value m)]
@@ -515,6 +518,11 @@ instance (Monad m, FromValue a m) => FromValue [a] m where
     items :: [Value m] <- eitherExceptM (asListVal x)
     mapM (eitherExceptM . fromValue) items
 
+instance (Monad m, FromValue a m) => FromValue (Vector a) m where
+  fromValue x = runExceptT $ do
+    items :: Vector (Value m) <- eitherExceptM (asVectorVal x)
+    V.mapM (eitherExceptM . fromValue) items
+
 instance (Monad m, FromValue a m) => FromValue (Map Scalar a) m where
   fromValue x = runExceptT $ do
     items :: Map Scalar (Value m) <- eitherExceptM (asDictVal x)
@@ -606,38 +614,41 @@ instance (ToValue a m, ToValue b m) => ToValue (Either a b) m where
   toValue (Left x) = toValue x
   toValue (Right x) = toValue x
 
+instance ToValue a m => ToValue (Vector a) m where
+  toValue = ListV . fmap toValue
+
 instance ToValue a m => ToValue [a] m where
-  toValue = ListV . map toValue
+  toValue = ListV . V.fromList . map toValue
 
 instance (ToValue a1 m, ToValue a2 m)
          => ToValue (a1, a2) m where
   toValue (x1, x2) =
-    ListV [toValue x1, toValue x2]
+    ListV $ V.fromList [toValue x1, toValue x2]
 
 instance (ToValue a1 m, ToValue a2 m, ToValue a3 m)
          => ToValue (a1, a2, a3) m where
   toValue (x1, x2, x3) =
-    ListV [toValue x1, toValue x2, toValue x3]
+    ListV $ V.fromList [toValue x1, toValue x2, toValue x3]
 
 instance (ToValue a1 m, ToValue a2 m, ToValue a3 m, ToValue a4 m)
          => ToValue (a1, a2, a3, a4) m where
   toValue (x1, x2, x3, x4) =
-    ListV [toValue x1, toValue x2, toValue x3, toValue x4]
+    ListV $ V.fromList [toValue x1, toValue x2, toValue x3, toValue x4]
 
 instance (ToValue a1 m, ToValue a2 m, ToValue a3 m, ToValue a4 m, ToValue a5 m)
          => ToValue (a1, a2, a3, a4, a5) m where
   toValue (x1, x2, x3, x4, x5) =
-    ListV [toValue x1, toValue x2, toValue x3, toValue x4, toValue x5]
+    ListV $ V.fromList [toValue x1, toValue x2, toValue x3, toValue x4, toValue x5]
 
 instance (ToValue a1 m, ToValue a2 m, ToValue a3 m, ToValue a4 m, ToValue a5 m, ToValue a6 m)
          => ToValue (a1, a2, a3, a4, a5, a6) m where
   toValue (x1, x2, x3, x4, x5, x6) =
-    ListV [toValue x1, toValue x2, toValue x3, toValue x4, toValue x5, toValue x6]
+    ListV $ V.fromList [toValue x1, toValue x2, toValue x3, toValue x4, toValue x5, toValue x6]
 
 instance (ToValue a1 m, ToValue a2 m, ToValue a3 m, ToValue a4 m, ToValue a5 m, ToValue a6 m, ToValue a7 m)
          => ToValue (a1, a2, a3, a4, a5, a6, a7) m where
   toValue (x1, x2, x3, x4, x5, x6, x7) =
-    ListV [toValue x1, toValue x2, toValue x3, toValue x4, toValue x5, toValue x6, toValue x7]
+    ListV $ V.fromList [toValue x1, toValue x2, toValue x3, toValue x4, toValue x5, toValue x6, toValue x7]
 
 instance (ToScalar k, ToValue v m) => ToValue (Map k v) m where
   toValue = DictV . Map.mapKeys toScalar . Map.map toValue
@@ -786,7 +797,7 @@ resolveArgs context specs args =
     go [] kwargs varargs =
         -- Map remaining arguments to @varargs@ and @kwargs@.
         Right $ Map.fromList
-          [ ("varargs", ListV varargs)
+          [ ("varargs", ListV $ V.fromList varargs)
           , ("kwargs", DictV (Map.mapKeys (toScalar . identifierName) kwargs))
           ]
 
@@ -833,12 +844,21 @@ asBoolVal (BoolV a) = Right a
 asBoolVal NoneV = Right False
 asBoolVal x = Left $ TagError "conversion to bool" "bool" (tagNameOf x)
 
-asListVal :: Monad m => Value m -> m (Either RuntimeError [Value m])
-asListVal (ListV a) = pure $ Right a
-asListVal (NativeV n) =
+asVectorVal :: Monad m => Value m -> m (Either RuntimeError (Vector (Value m)))
+asVectorVal (ListV a) = pure . Right $ a
+asVectorVal (NativeV n) =
   maybe
     (Left $ TagError "conversion to list" "list" "non-list native object")
     Right <$>
+    nativeObjectAsList n
+asVectorVal x = pure . Left $ TagError "conversion to list" "list" (tagNameOf x)
+
+asListVal :: Monad m => Value m -> m (Either RuntimeError [Value m])
+asListVal (ListV a) = pure . Right $ V.toList a
+asListVal (NativeV n) =
+  maybe
+    (Left $ TagError "conversion to list" "list" "non-list native object")
+    (Right . V.toList) <$>
     nativeObjectAsList n
 asListVal x = pure . Left $ TagError "conversion to list" "list" (tagNameOf x)
 
@@ -979,8 +999,8 @@ stringify (IntV i) = pure $ Text.show i
 stringify (FloatV f) = pure $ Text.show f
 stringify (ScalarV s) = pure . Text.show $ s
 stringify (ListV xs) = do
-  elems <- mapM stringify xs
-  pure $ Text.intercalate ", " elems
+  elems <- V.mapM stringify xs
+  pure $ Text.intercalate ", " $ V.toList elems
 stringify (DictV m) = do
   elems <- mapM stringifyKV $ Map.toAscList m
   pure $ Text.intercalate ", " elems
@@ -1092,7 +1112,7 @@ instance Monad m => Arbitrary (Value m) where
     QC.oneof
       [ pure NoneV
       , ScalarV <$> arbitrary
-      , ListV <$> fuelledList arbitrary
+      , ListV . V.fromList <$> fuelledList arbitrary
       , DictV . Map.fromList <$> fuelledList arbitrary
       , NativeV <$> arbitraryNative
       , ProcedureV <$> arbitraryNativeProcedure

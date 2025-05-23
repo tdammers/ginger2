@@ -27,6 +27,8 @@ import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
+import Data.Vector (Vector)
+import qualified Data.Vector as V
 import Data.Void (Void)
 import Text.Megaparsec as Megaparsec
 import Text.Megaparsec.Char
@@ -456,8 +458,8 @@ memberAccessExpr = do
       (posArgs, kwArgs) <- option ([], []) $ callArgs
       exprTail (FilterE lhs callable posArgs kwArgs)
 
-list :: P [Expr]
-list = bracketed (expr `sepBy` comma)
+list :: P (Vector Expr)
+list = V.fromList <$> bracketed (expr `sepBy` comma)
 
 dict :: P [(Expr, Expr)]
 dict = braced (dictPair `sepBy` comma)

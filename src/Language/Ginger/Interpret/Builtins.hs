@@ -15,29 +15,26 @@ module Language.Ginger.Interpret.Builtins
 where
 
 import Language.Ginger.AST
+import Language.Ginger.Interpret.Type
 import Language.Ginger.RuntimeError
 import Language.Ginger.Value
-import Language.Ginger.Interpret.Type
 
-import Control.Monad (filterM)
 import Control.Monad.Except
 import Control.Monad.Trans (lift)
-import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
+import qualified Data.Aeson as JSON
+import qualified Data.Array as Array
+import Data.Bits (popCount)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
+import Data.Char (isUpper, isLower, isAlphaNum, isPrint, isSpace, isAlpha, isDigit, ord)
+import Data.Foldable (asum)
+import Data.List (sortBy)
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
+import Data.Maybe (fromMaybe, listToMaybe, catMaybes, isJust)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
-import Data.Char (isUpper, isLower, isAlphaNum, isPrint, isSpace, isAlpha, isDigit, ord)
-import Data.Maybe (fromMaybe, listToMaybe, catMaybes, isJust)
-import Text.Read (readMaybe)
-import Data.Bits (popCount)
-import Data.List (sortBy)
-import Text.Printf (printf)
-import qualified Text.Regex.TDFA as RE
-import qualified Data.Array as Array
-import qualified Data.Aeson as JSON
 import Data.Time
         ( TimeZone (..)
         , ZonedTime (..)
@@ -51,7 +48,11 @@ import Data.Time
         , zonedTimeToUTC
         , formatTime
         )
-import Data.Foldable (asum)
+import Data.Vector (Vector)
+import qualified Data.Vector as V
+import Text.Printf (printf)
+import Text.Read (readMaybe)
+import qualified Text.Regex.TDFA as RE
 
 --------------------------------------------------------------------------------
 -- Builtins
@@ -220,7 +221,7 @@ builtinStringAttribs = Map.fromList
   -- , ("zfill", ?)
   ]
 
-builtinListAttribs :: Monad m => BuiltinAttribs [Value m] m
+builtinListAttribs :: Monad m => BuiltinAttribs (Vector (Value m)) m
 builtinListAttribs = Map.fromList
   [
   ]
@@ -318,12 +319,14 @@ fnToList :: forall m. Monad m => Procedure m
 fnToList = mkFn1 "list"
               ("value", Nothing :: Maybe (Value m))
   $ \case
-    ListV xs -> pure xs
-    DictV xs -> pure (Map.elems xs)
+    ListV xs ->
+      pure xs
+    DictV xs ->
+      pure (V.fromList $ Map.elems xs)
     StringV txt ->
-      pure $ map (toValue . Text.singleton) $ Text.unpack txt
+      pure $ fmap (toValue . Text.singleton) . V.fromList $ Text.unpack txt
     EncodedV (Encoded txt) ->
-      pure $ map (toValue . Text.singleton) $ Text.unpack txt
+      pure $ fmap (toValue . Text.singleton) . V.fromList $ Text.unpack txt
     NativeV obj ->
       native (Right <$> nativeObjectAsList obj) >>=
         maybe
@@ -336,7 +339,7 @@ fnToList = mkFn1 "list"
           )
           pure
     BytesV bytes ->
-      pure $ map toValue $ BS.unpack bytes
+      pure $ fmap toValue . V.fromList $ BS.unpack bytes
     x -> throwError $
             ArgumentError
               "list"
@@ -385,7 +388,7 @@ fnReverse = mkFn1 "reverse"
               ("value", Nothing)
   $ \case
       Left t -> pure $ StringV (Text.reverse t)
-      Right xs -> pure $ ListV (reverse (xs :: [Value m]))
+      Right xs -> pure $ ListV (V.reverse (xs :: Vector (Value m)))
 
 fnItems :: forall m. Monad m => Procedure m
 fnItems = mkFn1 "items"
@@ -489,7 +492,7 @@ fnSelect evalE scrutineeE args ctx env = runExceptT $ do
   varargs <- fnArg funcName "varargs" argValues
   (kwargs :: Map Scalar (Value m)) <- fnArg funcName "kwargs" argValues
   (scrutinee :: Value m) <- eitherExceptM $ runGingerT (evalE scrutineeE) ctx env
-  (xs :: [Value m]) <- eitherExceptM $ fromValue scrutinee
+  (xs :: Vector (Value m)) <- eitherExceptM $ fromValue scrutinee
 
   case varargs of
     [] ->
@@ -572,7 +575,7 @@ fnSelect evalE scrutineeE args ctx env = runExceptT $ do
 
           apply = apply' test
 
-      ListV <$> filterM apply xs
+      ListV <$> V.filterM apply xs
   where
     toIdentifier :: Scalar -> Maybe Identifier
     toIdentifier (StringScalar s) = Just $ Identifier s
@@ -606,7 +609,7 @@ fnMap evalE scrutineeE args ctx env = runExceptT $ do
   varargs <- fnArg funcName "varargs" argValues
   (kwargs :: Map Scalar (Value m)) <- fnArg funcName "kwargs" argValues
   (scrutinee :: Value m) <- eitherExceptM $ runGingerT (evalE scrutineeE) ctx env
-  (xs :: [Value m]) <- eitherExceptM $ fromValue scrutinee
+  (xs :: Vector (Value m)) <- eitherExceptM $ fromValue scrutinee
 
   -- First, let's see if an attribute was specified.
   let attributeMay = Map.lookup "attribute" kwargs
@@ -615,7 +618,7 @@ fnMap evalE scrutineeE args ctx env = runExceptT $ do
       -- Attribute was specified, so let's extract that.
       -- We also need to find the default value.
       let defVal = fromMaybe NoneV (Map.lookup "default" kwargs) :: Value m
-      ListV <$> mapM
+      ListV <$> V.mapM
         (\x -> do
           attributeIdent <- Identifier <$> eitherExceptM (fromValue attribute)
           fromMaybe defVal <$>
@@ -987,8 +990,9 @@ fnFirst :: forall m. Monad m => Procedure m
 fnFirst = mkFn1 "first"
             ("value", Nothing :: Maybe (Value m))
   $ \case
-    ListV (x:_) -> pure x
-    ListV [] -> pure NoneV
+    ListV v -> case V.uncons v of
+                  Just (x, _) -> pure x
+                  Nothing -> pure NoneV
     StringV txt -> pure $ StringV $ Text.take 1 txt
     EncodedV (Encoded txt) -> pure $ EncodedV . Encoded $ Text.take 1 txt
     BytesV arr -> pure . toValue $ BS.indexMaybe arr 0
@@ -998,8 +1002,9 @@ fnLast :: forall m. Monad m => Procedure m
 fnLast = mkFn1 "first"
             ("value", Nothing :: Maybe (Value m))
   $ \case
-    ListV [] -> pure NoneV
-    ListV xs -> pure (last xs)
+    ListV v -> case V.unsnoc v of
+                  Just (_, x) -> pure x
+                  Nothing -> pure NoneV
     StringV txt -> pure $ StringV $ Text.takeEnd 1 txt
     BytesV arr -> pure . toValue $ BS.indexMaybe arr (BS.length arr - 1)
     EncodedV (Encoded txt) -> pure $ EncodedV . Encoded $ Text.takeEnd 1 txt
@@ -1072,8 +1077,11 @@ parseTZ (StringV s) =
   parseTimeM True defaultTimeLocale "%z" $ Text.unpack s
 parseTZ (IntV i) =
   Just $ TimeZone (fromInteger i) False ""
-parseTZ (ListV [IntV minutes, BoolV summerOnly, StringV name]) =
-  Just $ TimeZone (fromInteger minutes) summerOnly (Text.unpack name)
+parseTZ (ListV v) =
+  case V.toList v of
+    [IntV minutes, BoolV summerOnly, StringV name] ->
+      Just $ TimeZone (fromInteger minutes) summerOnly (Text.unpack name)
+    _ -> Nothing
 parseTZ _ = Nothing
 
 convertTZ :: Maybe TimeZone -> ZonedTime -> ZonedTime
@@ -1181,7 +1189,7 @@ getItemRaw a b = case a of
     ScalarV k -> pure $ toValue <$> k `Map.lookup` m
     _ -> pure Nothing
   ListV xs -> case b of
-    IntV i -> pure . fmap toValue . listToMaybe . drop (fromInteger i) $ xs
+    IntV i -> pure . fmap toValue $ xs V.!? (fromInteger i)
     _ -> pure Nothing
   StringV str -> case b of
     IntV i -> pure

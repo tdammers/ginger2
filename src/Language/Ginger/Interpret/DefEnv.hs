@@ -14,11 +14,11 @@ module Language.Ginger.Interpret.DefEnv
 where
 
 import Language.Ginger.AST
+import Language.Ginger.Interpret.Builtins
+import Language.Ginger.Interpret.Eval
+import Language.Ginger.Interpret.Type
 import Language.Ginger.RuntimeError
 import Language.Ginger.Value
-import Language.Ginger.Interpret.Type
-import Language.Ginger.Interpret.Eval
-import Language.Ginger.Interpret.Builtins
 
 import Control.Monad.Except
 import Data.Map.Strict (Map)
@@ -29,6 +29,7 @@ import qualified Data.Text as Text
 import qualified Data.Text.Lazy as LText
 import Data.Text.Lazy.Builder (Builder)
 import qualified Data.Text.Lazy.Builder as Builder
+import qualified Data.Vector as V
 
 defEnv :: Monad m => Env m
 defEnv =
@@ -271,11 +272,13 @@ isDefined (TernaryE c a b) [] ctx env = do
   definedB <- isDefined b [] ctx env
   definedC <- isDefined c [] ctx env
   pure $ allEitherBool [definedA, definedB, definedC]
-isDefined (ListE []) [] _ _ = pure . Right $ True
-isDefined (ListE (x:xs)) [] ctx env = do
-  definedX <- isDefined x [] ctx env
-  definedXS <- isDefined (ListE xs) [] ctx env
-  pure $ allEitherBool [definedX, definedXS]
+isDefined (ListE v) [] ctx env =
+  case V.uncons v of
+    Nothing -> pure . Right $ True
+    Just (x, xs) -> do
+      definedX <- isDefined x [] ctx env
+      definedXS <- isDefined (ListE xs) [] ctx env
+      pure $ allEitherBool [definedX, definedXS]
 isDefined (DictE []) [] _ _ = pure . Right $ True
 isDefined (DictE ((k, v):xs)) [] ctx env = do
   definedK <- isDefined k [] ctx env
@@ -323,7 +326,7 @@ gingerBinopTest op =
     f expr args ctx env = runGingerT (go expr args) ctx env
 
     go expr args = scoped $ do
-      setVar "#args" (ListV $ map snd args)
+      setVar "#args" (ListV . V.fromList $ map snd args)
       eval (BinaryE op expr (VarE "#args")) >>= \case
         TrueV -> pure True
         _ -> pure False

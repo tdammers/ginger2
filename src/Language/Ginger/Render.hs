@@ -6,14 +6,15 @@ where
 
 import Language.Ginger.AST
 
-import Data.Text.Lazy.Builder (Builder)
-import qualified Data.Text.Lazy as LText
-import qualified Data.Text.Lazy.Builder as Builder
-import Data.Text (Text)
-import qualified Data.Text as Text
-import Data.List (intersperse)
 import Data.Bool (bool)
 import Data.Char (isControl, ord)
+import Data.List (intersperse)
+import Data.Text (Text)
+import qualified Data.Text as Text
+import qualified Data.Text.Lazy as LText
+import Data.Text.Lazy.Builder (Builder)
+import qualified Data.Text.Lazy.Builder as Builder
+import qualified Data.Vector as V
 import Text.Printf (printf)
 
 class RenderSyntax a where
@@ -75,7 +76,7 @@ instance RenderSyntax Expr where
   renderSyntax (IntLitE i) = Builder.fromText $ Text.show i
   renderSyntax (FloatLitE f) = Builder.fromText $ Text.show f
   renderSyntax (ListE xs) =
-    "[" <> (mconcat . intersperse ", " . map renderSyntax $ xs) <> "]"
+    "[" <> (mconcat . intersperse ", " . map renderSyntax . V.toList $ xs) <> "]"
   renderSyntax (DictE xs) =
     "{" <> (mconcat . intersperse ", " $ [ renderSyntax k <> ": " <> renderSyntax v | (k, v) <- xs ]) <> "}"
   renderSyntax (NotE expr) =

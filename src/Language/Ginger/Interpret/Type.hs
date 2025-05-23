@@ -88,7 +88,7 @@ runGingerT g ctx env =
   runExceptT
     (evalStateT
       (runReaderT (unGingerT g) ctx)
-      (EvalState env mempty mempty Nothing)
+      (EvalState env { envRootMay = Just env } mempty mempty Nothing)
     )
 
 decorateError :: Monad m
@@ -195,10 +195,6 @@ withoutContext action = do
   e' <- gets evalEnv
   modifyEnv $ const (e' <> e)
   return retval
-
-bumpEnv :: Monad m
-        => GingerT m ()
-bumpEnv = modifyEnv (\e -> e { envRootMay = Just (envRoot e) })
 
 withEnv :: Monad m
         => Env m

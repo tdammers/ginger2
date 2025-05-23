@@ -142,7 +142,7 @@ isIdentifierInitialChar c =
 
 isOperatorChar :: Char -> Bool
 isOperatorChar c =
-  c `elem` ("&|%^*+-/~.=!,)}]" :: [Char])
+  c `elem` ("&|%^*+-/~.=!,(){}[]" :: [Char])
 
 operatorChar :: P Char
 operatorChar = satisfy isOperatorChar
@@ -223,14 +223,14 @@ intLit = do
 
 intDigits :: P String
 intDigits = try $ do
-  sign <- try $ (option "" $ "-" <$ char '-') <* notFollowedBy operatorChar
+  sign <- try $ (option "" $ "-" <$ char '-')
   str <- some digit
   pure (sign ++ str)
 
 floatLit :: P Double
 floatLit = do
   m <- do
-    sign <- try $ (option "" $ "-" <$ char '-') <* notFollowedBy operatorChar
+    sign <- try $ (option "" $ "-" <$ char '-')
     intPart <- many digit
     void $ char '.'
     fracPart <- many digit

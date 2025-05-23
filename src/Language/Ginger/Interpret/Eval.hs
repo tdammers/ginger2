@@ -520,7 +520,6 @@ concatValues a b = case (a, b) of
 
 evalT :: Monad m => Template -> GingerT m (Value m)
 evalT t = do
-  bumpEnv
   case templateParent t of
     Nothing ->
       evalS (templateBody t)

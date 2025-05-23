@@ -251,6 +251,14 @@ tests = testGroup "Language.Ginger.Parse"
               (IsE (VarE "a") (VarE "b") [] [])
               (VarE "c")
             )
+      , testCase "multiple filters" $
+          test_parser exprUP
+            "a|b|c"
+            (FilterE
+              (FilterE (VarE "a") (VarE "b") [] [])
+              (VarE "c")
+              [] []
+            )
       ]
   , testGroup "Statement"
     [ testProperty "roundTrip" (prop_parserRoundTrip statementUP simplifyS)

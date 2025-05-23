@@ -104,13 +104,13 @@ runGingerIdentity action =
 runGingerIdentityEither :: GingerT Identity a -> Either PrettyRuntimeError a
 runGingerIdentityEither action =
   mapLeft (PrettyRuntimeError . unPositionedError) $
-    runIdentity (runGingerT (bumpEnv >> action) defContext defEnv)
+    runIdentity (runGingerT action defContext defEnv)
 
 runGingerIdentityWithLoader :: TemplateLoader Identity
                                   -> GingerT Identity a
                                   -> a
 runGingerIdentityWithLoader loader action =
-  either (error . show) id $ runGingerIdentityEitherWithLoader loader (bumpEnv >> action)
+  either (error . show) id $ runGingerIdentityEitherWithLoader loader action
 
 runGingerIdentityEitherWithLoader :: TemplateLoader Identity
                                   -> GingerT Identity a

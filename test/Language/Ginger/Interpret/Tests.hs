@@ -565,6 +565,15 @@ tests = testGroup "Language.Ginger.Interpret"
             , testProperty "boolean false, boolean mode" $
                 prop_eval (\i -> FilterE FalseE (VarE "default") [(IntLitE i), TrueE] []) IntV
             ]
+        , testGroup "strip"
+            [ testProperty "string" $
+                prop_eval (\(ArbitraryText t) ->
+                            FilterE (StringLitE t) (VarE "strip") [] []
+                          )
+                          (\(ArbitraryText t) ->
+                              StringV (Text.strip t)
+                          )
+            ]
         , testGroup "center string"
             [ testProperty "width as vararg" $
                 prop_eval (\((ArbitraryText t), w) ->

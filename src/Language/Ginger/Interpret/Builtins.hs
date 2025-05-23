@@ -112,6 +112,7 @@ builtinGlobals evalE = Map.fromList $
   , ("sort", ProcedureV fnSort)
   , ("split", ProcedureV fnStrSplit)
   , ("string", ProcedureV fnToString)
+  , ("strip", ProcedureV fnStrStrip)
   -- , ("striptags", undefined)
   -- , ("sum", undefined)
   , ("title", textBuiltin Text.toTitle)

@@ -36,6 +36,7 @@ import Language.Ginger.Parse (parseGinger)
 import qualified Language.Ginger.Parse as Parse
 import Language.Ginger.RuntimeError
 import Language.Ginger.Value
+import Language.Ginger.SourcePosition
 
 import Control.Monad (foldM, forM, void)
 import Control.Monad.Except
@@ -47,6 +48,7 @@ import Control.Monad.State (gets)
 import Control.Monad.Trans (lift, MonadTrans (..))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
+import qualified Data.ByteString.Lazy as LBS
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes, fromMaybe)
@@ -55,6 +57,11 @@ import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Vector (Vector)
 import qualified Data.Vector as V
+import Data.Digest.Pure.SHA (sha256, showDigest)
+import Data.Text.Encoding (encodeUtf8)
+
+hashShow :: Show a => a -> Text
+hashShow = Text.pack . showDigest . sha256 . LBS.fromStrict . encodeUtf8 . Text.show
 
 loadTemplate :: Monad m => Text -> GingerT m LoadedTemplate
 loadTemplate name = do
@@ -568,7 +575,8 @@ evalS (CallS name posArgsExpr namedArgsExpr bodyS) = whenOutputPolicy $ do
   callee <- lookupVar name
   callerVal <- eval bodyS
   srcPosMay <- gets evalSourcePosition
-  let callerID = ObjectID $ "caller:" <> maybe (Text.show callerVal) Text.show srcPosMay
+  let callerID =
+        objectIDFromContext "caller" callerVal srcPosMay
   let caller =
         ProcedureV $
           NativeProcedure callerID (const . const . pure . Right $ callerVal)
@@ -634,6 +642,15 @@ evalS (WithS varEs bodyS) = do
     setVars vars
     evalS bodyS
 evalS (GroupS xs) = evalSs xs
+
+objectIDFromContext :: Show a
+                    => Text
+                    -> a
+                    -> Maybe SourcePosition
+                    -> ObjectID
+objectIDFromContext prefix x posMay =
+  ObjectID $
+    prefix <> ":" <> maybe (hashShow x) hashShow posMay
 
 hush :: Monad m => GingerT m a -> GingerT m a
 hush = local (\c -> c { contextOutput = Quiet })
@@ -751,9 +768,11 @@ evalLoop loopKeyMay loopName iteree loopCondMay recursivity bodyS elseSMay recur
             env <- gets evalEnv
             srcPosMay <- gets evalSourcePosition
             let recurFuncID =
-                  ObjectID $ "loop.recur:" <> maybe (Text.show bodyS) Text.show srcPosMay
+                  objectIDFromContext
+                    "loop.recur" bodyS srcPosMay
             let cycleFuncID =
-                  ObjectID $ "loop.cycle:" <> maybe (Text.show bodyS) Text.show srcPosMay
+                  objectIDFromContext
+                    "loop.cycle" bodyS srcPosMay
             setVar "loop" $
               dictV
                 [ "index" .= (n + 1)

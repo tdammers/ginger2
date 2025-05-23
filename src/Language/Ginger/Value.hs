@@ -233,7 +233,7 @@ pattern IntV v = ScalarV (IntScalar v)
 pattern FloatV :: Double -> Value m
 pattern FloatV v = ScalarV (FloatScalar v)
 
-newtype ObjectID = ObjectID Text
+newtype ObjectID = ObjectID { unObjectID :: Text }
   deriving (Eq)
 
 instance IsString ObjectID where
@@ -1027,8 +1027,10 @@ stringify (DictV m) = do
   pure $ Text.intercalate ", " elems
 stringify (NativeV n) =
   native (Right <$> nativeObjectStringified n)
-stringify (ProcedureV _) =
-  pure "[[procedure]]"
+stringify (ProcedureV (NativeProcedure oid _)) =
+  pure $ "[[procedure " <> unObjectID oid <> "]]"
+stringify (ProcedureV (GingerProcedure {})) =
+  pure $ "[[procedure]]"
 stringify (TestV _) =
   pure "[[test]]"
 stringify (FilterV _) =

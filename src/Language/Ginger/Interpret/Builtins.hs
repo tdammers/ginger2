@@ -10,6 +10,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedLists #-}
 
 module Language.Ginger.Interpret.Builtins
 where
@@ -64,21 +65,37 @@ builtinGlobals :: forall m. Monad m
                  => (Expr -> GingerT m (Value m))
                  -> Map Identifier (Value m)
 builtinGlobals evalE = Map.fromList $
-  [ ("abs", numericBuiltin "builtin:abs" abs abs)
-  , ("attr", fnToValue "builtin:attr" $
-               \x y -> case y :: Value m of
+  [ ("abs", numericBuiltin
+               "builtin:abs"
+               [ "abs(value : number) : number"
+               ]
+               abs abs)
+  , ("attr", fnToValue "builtin:attr"
+               [ "attr(value : dict, attrName : string) : any"
+               ]
+               $ \x y -> case y :: Value m of
                     StringV yStr ->
                       fmap (fromMaybe NoneV) <$> getAttrRaw @m x (Identifier yStr)
                     _ ->
                       pure . Right $ NoneV)
   , ("batch", ProcedureV fnBatch)
-  , ("capitalize", textBuiltin "builtin:capitalize" Text.toTitle)
+  , ("capitalize", textBuiltin
+                      "builtin:capitalize"
+                      [ "capitalize(value : string) : string"
+                      , "Convert value to title case."
+                      ]
+                      Text.toTitle)
   , ("center", ProcedureV fnCenter)
   , ("count", ProcedureV fnLength)
   , ("date", ProcedureV fnDateFormat)
   , ("dictsort", ProcedureV fnDictsort)
   , ("escape", ProcedureV fnEscape)
-  , ("even", intBuiltin "builtin:even" even)
+  , ("even", intBuiltin
+                "builtin:even"
+                [ "even(value : int) : bool"
+                , "Check if value is an even number"
+                ]
+                even)
   , ("filesizeformat", ProcedureV fnFilesizeFormat)
   , ("first", ProcedureV fnFirst)
   , ("float", ProcedureV fnToFloat)
@@ -93,11 +110,21 @@ builtinGlobals evalE = Map.fromList $
   , ("last", ProcedureV fnLast)
   , ("length", ProcedureV fnLength)
   , ("list", ProcedureV fnToList)
-  , ("lower", textBuiltin "builtin:lower" Text.toLower)
+  , ("lower", textBuiltin
+                "builtin:lower"
+                [ "lower(value : string) : string"
+                , "Convert value to lowercase."
+                ]
+                Text.toLower)
   , ("map", FilterV . NativeFilter $ fnMap evalE)
   -- , ("max", undefined)
   -- , ("min", undefined)
-  , ("odd", intBuiltin "builtin:odd" odd)
+  , ("odd", intBuiltin
+              "builtin:odd"
+              [ "odd(value : int) : bool"
+              , "Checks if value is an odd number."
+              ]
+              odd)
   -- , ("pprint", undefined)
   -- , ("random", undefined)
   -- , ("rejectattr", undefined)
@@ -114,15 +141,30 @@ builtinGlobals evalE = Map.fromList $
   , ("string", ProcedureV fnToString)
   -- , ("striptags", undefined)
   -- , ("sum", undefined)
-  , ("title", textBuiltin "builtin:title" Text.toTitle)
+  , ("title", textBuiltin
+                "builtin:title"
+                [ "title(value : string) : string"
+                , "Convert value to title case."
+                ]
+                Text.toTitle)
   , ("tojson", ProcedureV fnToJSON)
   -- , ("trim", undefined)
   -- , ("truncate", undefined)
   -- , ("unique", undefined)
-  , ("upper", textBuiltin "builtin:upper" Text.toUpper)
+  , ("upper", textBuiltin
+                "builtin:upper"
+                [ "upper(value : string) : string"
+                , "Convert value to uppercase."
+                ]
+                Text.toUpper)
   -- , ("urlencode", undefined)
   -- , ("urlize", undefined)
-  , ("wordcount", textBuiltin "builtin:wordcount" (length . Text.words))
+  , ("wordcount", textBuiltin
+                    "builtin:wordcount"
+                    [ "wordcount(value : string) : int"
+                    , "Counts words in value."
+                    ]
+                    (length . Text.words))
   -- , ("wordwrap", undefined)
   -- , ("xmlattr", undefined)
   ]
@@ -139,7 +181,11 @@ builtinGlobalsNonJinja _evalE = Map.fromList $
 builtinIntAttribs :: forall m. Monad m => BuiltinAttribs Integer m
 builtinIntAttribs = Map.fromList
   [ ("denominator", intProp (const (1 :: Integer)))
-  , ("bit_count", intAttrib "builtin:int:bit_count" popCount)
+  , ("bit_count", intAttrib
+                    "builtin:int:bit_count"
+                    [ "int.bit_count : int"
+                    ]
+                    popCount)
   -- , ("bit_length", ?)
   -- , ("conjugate", ?)
   -- , ("from_bytes", ?)
@@ -162,7 +208,11 @@ builtinFloatAttribs = Map.fromList
 builtinBoolAttribs :: Monad m => BuiltinAttribs Bool m
 builtinBoolAttribs = Map.fromList
   [ ("denominator", boolProp (const (1 :: Integer)))
-  , ("bit_count", boolAttrib "builtin:bool:bit_count" popCount)
+  , ("bit_count", boolAttrib
+                    "builtin:bool:bit_count"
+                    [ "bool.bit_count"
+                    ]
+                    popCount)
   -- , ("bit_length", ?)
   -- , ("conjugate", ?)
   -- , ("from_bytes", ?)
@@ -175,8 +225,19 @@ builtinBoolAttribs = Map.fromList
 builtinStringAttribs :: forall m. Monad m => BuiltinAttribs Text m
 builtinStringAttribs = Map.fromList
   [ ("length", textProp Text.length)
-  , ("capitalize", textAttrib "builtin:string:capitalize" Text.toTitle)
-  , ("casefold", textAttrib "builtin:string:casefold" Text.toCaseFold)
+  , ("capitalize", textAttrib
+                      "builtin:string:capitalize"
+                      [ "string.capitalize()"
+                      , "Convert value to title case."
+                      ]
+                      Text.toTitle)
+  , ("casefold", textAttrib
+                      "builtin:string:casefold"
+                      [ "string.casefold()"
+                      , "Convert value to canonical case for " <>
+                        "case-insensitive comparisons."
+                      ]
+                      Text.toCaseFold)
   , ("center", textProcAttrib fnCenter)
   , ("count", textProcAttrib fnStrCount)
   , ("encode", textProcAttrib fnStrEncode)
@@ -186,20 +247,57 @@ builtinStringAttribs = Map.fromList
   -- , ("format", ?)
   -- , ("format_map", ?)
   -- , ("index", ?)
-  , ("isalnum", textAttrib "builtin:string:isalnum" (Text.all isAlphaNum))
-  , ("isalpha", textAttrib "builtin:string:isalpha" (Text.all isAlpha))
-  , ("isascii", textAttrib "builtin:string:isascii" (Text.all ((< 128) . ord)))
+  , ("isalnum", textAttrib
+                  "builtin:string:isalnum"
+                  [ "string.isalnum()"
+                  ]
+                  (Text.all isAlphaNum))
+  , ("isalpha", textAttrib
+                  "builtin:string:isalpha"
+                  [ "string.isalpha()"
+                  ]
+                  (Text.all isAlpha))
+  , ("isascii", textAttrib
+                  "builtin:string:isascii"
+                  [ "string.isascii()"
+                  ]
+                  (Text.all ((< 128) . ord)))
   -- , ("isdecimal", ?)
-  , ("isdigit", textAttrib "builtin:string:isdigit" (Text.all isDigit))
+  , ("isdigit", textAttrib
+                  "builtin:string:isdigit"
+                  [ "string.isdigit()"
+                  ]
+                  (Text.all isDigit))
   -- , ("isidentifier", ?)
-  , ("islower", textNProcAttrib "builtin:string:islower" isLowerVal)
+  , ("islower", textNProcAttrib
+                  "builtin:string:islower"
+                  [ "string.islower()"
+                  ]
+                  isLowerVal)
   -- , ("isnumeric", ?)
-  , ("isprintable", textAttrib "builtin:string:isprintable" (Text.all isPrint))
-  , ("isspace", textAttrib "builtin:string:isspace" (Text.all isSpace))
-  , ("isupper", textNProcAttrib "builtin:string:isupper" isUpperVal)
+  , ("isprintable", textAttrib
+                  "builtin:string:isprintable"
+                  [ "string.isprintable()"
+                  ]
+                  (Text.all isPrint))
+  , ("isspace", textAttrib
+                  "builtin:string:isspace"
+                  [ "string.isspace()"
+                  ]
+                  (Text.all isSpace))
+  , ("isupper", textNProcAttrib
+                  "builtin:string:isupper"
+                  [ "string.isupper()"
+                  ]
+                  isUpperVal)
   , ("join", textProcAttrib fnStrJoin)
   -- , ("ljust", ?)
-  , ("lower", textAttrib "builtin:lower" Text.toLower)
+  , ("lower", textAttrib
+                  "builtin:lower"
+                  [ "string.lower()"
+                  , "Convert value to lowercase."
+                  ]
+                  Text.toLower)
   , ("lstrip", textProcAttrib fnStrLStrip)
   -- , ("maketrans", ?)
   -- , ("partition", ?)
@@ -212,13 +310,27 @@ builtinStringAttribs = Map.fromList
   -- , ("rpartition", ?)
   , ("rstrip", textProcAttrib fnStrRStrip)
   , ("split", textProcAttrib fnStrSplit)
-  , ("splitlines", textAttrib "builtin:string:splitlines" Text.lines)
+  , ("splitlines", textAttrib
+                  "builtin:string:splitlines()"
+                  [ "string.splitlines"
+                  ]
+                  Text.lines)
   , ("startswith", textProcAttrib fnStrStartswith)
   , ("strip", textProcAttrib fnStrStrip)
   -- , ("swapcase", ?)
-  , ("title", textAttrib "builtin:title" Text.toTitle)
+  , ("title", textAttrib
+                  "builtin:title"
+                  [ "string.title()"
+                  , "Convert value to title case."
+                  ]
+                  Text.toTitle)
   -- , ("translate", ?)
-  , ("upper", textAttrib "builtin:upper" Text.toUpper)
+  , ("upper", textAttrib
+                  "builtin:upper"
+                  [ "string.upper()"
+                  , "Convert value to uppercase."
+                  ]
+                  Text.toUpper)
   -- , ("zfill", ?)
   ]
 
@@ -550,7 +662,7 @@ fnSelect evalE scrutineeE args ctx env = runExceptT $ do
                 -- value.
                 let env' = env { envVars = Map.insert "@" x $ envVars env }
                 eitherExceptM $ runTest f (VarE "@") args' ctx env'
-              ProcedureV (NativeProcedure _ f) -> do
+              ProcedureV (NativeProcedure _ _ f) -> do
                 -- If it's a native procedure, we can just call it without
                 -- binding anything.
                 eitherExceptM (f ((Nothing, x):args') ctx) >>=
@@ -684,7 +796,7 @@ fnMap evalE scrutineeE args ctx env = runExceptT $ do
                     -- value.
                     let env' = env { envVars = Map.insert "@" x $ envVars env }
                     eitherExceptM $ runFilter f (VarE "@") args' ctx env'
-                  ProcedureV (NativeProcedure _ f) -> do
+                  ProcedureV (NativeProcedure _ _ f) -> do
                     -- If it's a native procedure, we can just call it without
                     -- binding anything.
                     eitherExceptM $ f ((Nothing, x):args') ctx
@@ -1234,8 +1346,8 @@ getItemOrAttrRaw a b = runExceptT $ do
 --------------------------------------------------------------------------------
 
 nativeMethod :: Procedure m -> Value m -> Value m
-nativeMethod (NativeProcedure oid f) self =
-  ProcedureV . NativeProcedure oid $ \args -> f ((Just "value", self) : args)
+nativeMethod (NativeProcedure oid doc f) self =
+  ProcedureV . NativeProcedure oid doc $ \args -> f ((Just "value", self) : args)
 nativeMethod (GingerProcedure env argSpec body) self =
   ProcedureV $ GingerProcedure env' (drop 1 argSpec) body
   where
@@ -1243,58 +1355,64 @@ nativeMethod (GingerProcedure env argSpec body) self =
 
 nativePureMethod :: Monad m
                  => ObjectID
+                 -> Documentation
                  -> (Value m -> Either RuntimeError (Value m))
                  -> Value m
                  -> Value m
-nativePureMethod oid = nativeMethod . pureNativeFunc oid
+nativePureMethod oid doc = nativeMethod . pureNativeFunc oid doc
 
 toNativeMethod :: ToNativeProcedure m a
                => ObjectID
+               -> Documentation
                -> a
                -> Value m
                -> Value m
-toNativeMethod oid f = nativeMethod (NativeProcedure oid $ toNativeProcedure f)
+toNativeMethod oid doc f = nativeMethod (NativeProcedure oid doc $ toNativeProcedure f)
 
 pureAttrib :: Applicative m => (s -> a) -> s -> m (Either RuntimeError a)
 pureAttrib f x = pure . Right $ f x
 
 textBuiltin :: (Monad m, ToValue a m)
             => ObjectID
+            -> Documentation
             -> (Text -> a)
             -> Value m
-textBuiltin oid f =
+textBuiltin oid doc f =
   ProcedureV .
-  pureNativeFunc oid .
+  pureNativeFunc oid doc .
   textFunc $
   (Right . f)
 
 intBuiltin :: (Monad m, ToValue a m)
             => ObjectID
+            -> Documentation
             -> (Integer -> a)
             -> Value m
-intBuiltin oid f =
+intBuiltin oid doc f =
   ProcedureV .
-  pureNativeFunc oid .
+  pureNativeFunc oid doc .
   intFunc $
   (Right . f)
 
 numericBuiltin :: (Monad m)
             => ObjectID
+            -> Documentation
             -> (Integer -> Integer)
             -> (Double -> Double)
             -> Value m
-numericBuiltin oid f g =
+numericBuiltin oid doc f g =
   ProcedureV .
-  pureNativeFunc oid $
+  pureNativeFunc oid doc $
   numericFunc f g
 
 anyBuiltin :: (Monad m, FromValue a m, ToValue b m)
             => ObjectID
+            -> Documentation
             -> (a -> b)
             -> Value m
-anyBuiltin oid f =
+anyBuiltin oid doc f =
   ProcedureV .
-  nativeFunc oid $ \x -> runExceptT $
+  nativeFunc oid doc $ \x -> runExceptT $
     toValue . f <$> eitherExceptM (fromValue x)
 
 
@@ -1306,19 +1424,21 @@ boolProp f t = pure . Right . toValue $ f t
 
 boolAttrib :: (Monad m, ToValue a m)
            => ObjectID
+           -> Documentation
            -> (Bool -> a)
            -> Bool
            -> m (Either RuntimeError (Value m))
-boolAttrib oid f =
-  pureAttrib $ nativePureMethod oid (boolFunc f) . BoolV
+boolAttrib oid doc f =
+  pureAttrib $ nativePureMethod oid doc (boolFunc f) . BoolV
 
 boolNProcAttrib :: (Monad m, ToNativeProcedure m a)
                 => ObjectID
+                -> Documentation
                 -> (Value m -> a)
                 -> Bool
                 -> m (Either RuntimeError (Value m))
-boolNProcAttrib oid f =
-  pureAttrib $ toNativeMethod oid f . BoolV
+boolNProcAttrib oid doc f =
+  pureAttrib $ toNativeMethod oid doc f . BoolV
 
 boolProcAttrib :: Monad m
                => Procedure m
@@ -1336,19 +1456,21 @@ intProp f t = pure . Right . toValue $ f t
 
 intAttrib :: (Monad m, ToValue a m)
            => ObjectID
+           -> Documentation
            -> (Integer -> a)
            -> Integer
            -> m (Either RuntimeError (Value m))
-intAttrib oid f =
-  pureAttrib $ nativePureMethod oid (intFunc (pure . f)) . IntV
+intAttrib oid doc f =
+  pureAttrib $ nativePureMethod oid doc (intFunc (pure . f)) . IntV
 
 intNProcAttrib :: (Monad m, ToNativeProcedure m a)
                 => ObjectID
+                -> Documentation
                 -> (Value m -> a)
                 -> Integer
                 -> m (Either RuntimeError (Value m))
-intNProcAttrib oid f =
-  pureAttrib $ toNativeMethod oid f . IntV
+intNProcAttrib oid doc f =
+  pureAttrib $ toNativeMethod oid doc f . IntV
 
 intProcAttrib :: Monad m
                => Procedure m
@@ -1366,19 +1488,21 @@ floatProp f t = pure . Right . toValue $ f t
 
 floatAttrib :: (Monad m, ToValue a m)
            => ObjectID
+           -> Documentation
            -> (Double -> a)
            -> Double
            -> m (Either RuntimeError (Value m))
-floatAttrib oid f =
-  pureAttrib $ nativePureMethod oid (floatFunc (pure . f)) . FloatV
+floatAttrib oid doc f =
+  pureAttrib $ nativePureMethod oid doc (floatFunc (pure . f)) . FloatV
 
 floatNProcAttrib :: (Monad m, ToNativeProcedure m a)
                 => ObjectID
+                -> Documentation
                 -> (Value m -> a)
                 -> Double
                 -> m (Either RuntimeError (Value m))
-floatNProcAttrib oid f =
-  pureAttrib $ toNativeMethod oid f . FloatV
+floatNProcAttrib oid doc f =
+  pureAttrib $ toNativeMethod oid doc f . FloatV
 
 floatProcAttrib :: Monad m
                => Procedure m
@@ -1396,19 +1520,21 @@ textProp f t = pure . Right . toValue $ f t
 
 textAttrib :: (Monad m, ToValue a m)
            => ObjectID
+           -> Documentation
            -> (Text -> a)
            -> Text
            -> m (Either RuntimeError (Value m))
-textAttrib oid f =
-  pureAttrib $ nativePureMethod oid (textFunc (pure . f)) . StringV
+textAttrib oid doc f =
+  pureAttrib $ nativePureMethod oid doc (textFunc (pure . f)) . StringV
 
 textNProcAttrib :: (Monad m, ToNativeProcedure m a)
                 => ObjectID
+                -> Documentation
                 -> (Value m -> a)
                 -> Text
                 -> m (Either RuntimeError (Value m))
-textNProcAttrib oid f =
-  pureAttrib $ toNativeMethod oid f . StringV
+textNProcAttrib oid doc f =
+  pureAttrib $ toNativeMethod oid doc f . StringV
 
 textProcAttrib :: Monad m
                => Procedure m
@@ -1420,7 +1546,7 @@ textProcAttrib f =
 builtinNotImplemented :: Monad m => Text -> Value m
 builtinNotImplemented name =
   ProcedureV $
-    NativeProcedure (ObjectID $ "builtin:not_implemented:" <> name) $ \_ _ ->
+    NativeProcedure (ObjectID $ "builtin:not_implemented:" <> name) [] $ \_ _ ->
       pure . Left $ NotImplementedError name
 
 fnMaybeArg :: Monad m => Text -> Text -> Maybe b -> ExceptT RuntimeError m b
@@ -1444,6 +1570,12 @@ fnArg context name argValues = do
   argV <- fnMaybeArg context (identifierName name) $ Map.lookup name argValues
   eitherExceptM $ fromValue argV
 
+describeArg :: Identifier
+            -> Maybe a
+            -> Text
+describeArg name _ =
+  identifierName name
+
 mkFn0' :: ( Monad m
          , ToValue r m
          )
@@ -1451,13 +1583,16 @@ mkFn0' :: ( Monad m
       -> (Context m -> ExceptT RuntimeError m r)
       -> Procedure m
 mkFn0' funcName f =
-  NativeProcedure (ObjectID $ "builtin:" <> funcName) $ \args ctx -> runExceptT $ do
-    _ <- eitherExcept $
-      resolveArgs
-        funcName
-        []
-        args
-    toValue <$> f ctx
+  NativeProcedure (ObjectID $ "builtin:" <> funcName)
+    [ funcName <> "()"
+    ]
+    $ \args ctx -> runExceptT $ do
+      _ <- eitherExcept $
+        resolveArgs
+          funcName
+          []
+          args
+      toValue <$> f ctx
 
 mkFn0 :: ( Monad m
          , ToValue r m
@@ -1478,15 +1613,20 @@ mkFn1' :: ( Monad m
       -> (Context m -> a -> ExceptT RuntimeError m r)
       -> Procedure m
 mkFn1' funcName (argname1, default1) f =
-  NativeProcedure (ObjectID $ "builtin:" <> funcName) $ \args ctx -> runExceptT $ do
-    argValues <- eitherExcept $
-      resolveArgs
-        funcName
-        [ (argname1, toValue <$> default1)
-        ]
-        args
-    arg1 <- fnArg funcName argname1 argValues
-    toValue <$> f ctx arg1
+  NativeProcedure (ObjectID $ "builtin:" <> funcName)
+    [ funcName <> "("
+    <> describeArg argname1 default1
+    <> ")"
+    ]
+    $ \args ctx -> runExceptT $ do
+      argValues <- eitherExcept $
+        resolveArgs
+          funcName
+          [ (argname1, toValue <$> default1)
+          ]
+          args
+      arg1 <- fnArg funcName argname1 argValues
+      toValue <$> f ctx arg1
 
 mkFn1 :: ( Monad m
          , ToValue a m
@@ -1516,17 +1656,24 @@ mkFn2' funcName
     (argname1, default1)
     (argname2, default2)
     f =
-  NativeProcedure (ObjectID $ "builtin:" <> funcName) $ \args ctx -> runExceptT $ do
-    argValues <- eitherExcept $
-      resolveArgs
-        funcName
-        [ (argname1, toValue <$> default1)
-        , (argname2, toValue <$> default2)
-        ]
-        args
-    arg1 <- fnArg funcName argname1 argValues
-    arg2 <- fnArg funcName argname2 argValues
-    toValue <$> f ctx arg1 arg2
+  NativeProcedure (ObjectID $ "builtin:" <> funcName)
+    [ funcName <> "("
+    <> describeArg argname1 default1
+    <> ", "
+    <> describeArg argname2 default2
+    <> ")"
+    ]
+    $ \args ctx -> runExceptT $ do
+      argValues <- eitherExcept $
+        resolveArgs
+          funcName
+          [ (argname1, toValue <$> default1)
+          , (argname2, toValue <$> default2)
+          ]
+          args
+      arg1 <- fnArg funcName argname1 argValues
+      arg2 <- fnArg funcName argname2 argValues
+      toValue <$> f ctx arg1 arg2
 
 mkFn2 :: ( Monad m
          , ToValue a1 m
@@ -1563,19 +1710,28 @@ mkFn3' funcName
     (argname2, default2)
     (argname3, default3)
     f =
-  NativeProcedure (ObjectID $ "builtin:" <> funcName) $ \args ctx -> runExceptT $ do
-    argValues <- eitherExcept $
-      resolveArgs
-        funcName
-        [ (argname1, toValue <$> default1)
-        , (argname2, toValue <$> default2)
-        , (argname3, toValue <$> default3)
-        ]
-        args
-    arg1 <- fnArg funcName argname1 argValues
-    arg2 <- fnArg funcName argname2 argValues
-    arg3 <- fnArg funcName argname3 argValues
-    toValue <$> f ctx arg1 arg2 arg3
+  NativeProcedure (ObjectID $ "builtin:" <> funcName)
+    [ funcName <> "("
+    <> describeArg argname1 default1
+    <> ", "
+    <> describeArg argname2 default2
+    <> ", "
+    <> describeArg argname3 default3
+    <> ")"
+    ]
+    $ \args ctx -> runExceptT $ do
+      argValues <- eitherExcept $
+        resolveArgs
+          funcName
+          [ (argname1, toValue <$> default1)
+          , (argname2, toValue <$> default2)
+          , (argname3, toValue <$> default3)
+          ]
+          args
+      arg1 <- fnArg funcName argname1 argValues
+      arg2 <- fnArg funcName argname2 argValues
+      arg3 <- fnArg funcName argname3 argValues
+      toValue <$> f ctx arg1 arg2 arg3
 
 mkFn3 :: ( Monad m
          , ToValue a1 m
@@ -1619,21 +1775,32 @@ mkFn4' funcName
     (argname3, default3)
     (argname4, default4)
     f =
-  NativeProcedure (ObjectID $ "builtin:" <> funcName) $ \args ctx -> runExceptT $ do
-    argValues <- eitherExcept $
-      resolveArgs
-        funcName
-        [ (argname1, toValue <$> default1)
-        , (argname2, toValue <$> default2)
-        , (argname3, toValue <$> default3)
-        , (argname4, toValue <$> default4)
-        ]
-        args
-    arg1 <- fnArg funcName argname1 argValues
-    arg2 <- fnArg funcName argname2 argValues
-    arg3 <- fnArg funcName argname3 argValues
-    arg4 <- fnArg funcName argname4 argValues
-    toValue <$> f ctx arg1 arg2 arg3 arg4
+  NativeProcedure (ObjectID $ "builtin:" <> funcName)
+    [ funcName <> "("
+    <> describeArg argname1 default1
+    <> ", "
+    <> describeArg argname2 default2
+    <> ", "
+    <> describeArg argname3 default3
+    <> ", "
+    <> describeArg argname4 default4
+    <> ")"
+    ]
+    $ \args ctx -> runExceptT $ do
+      argValues <- eitherExcept $
+        resolveArgs
+          funcName
+          [ (argname1, toValue <$> default1)
+          , (argname2, toValue <$> default2)
+          , (argname3, toValue <$> default3)
+          , (argname4, toValue <$> default4)
+          ]
+          args
+      arg1 <- fnArg funcName argname1 argValues
+      arg2 <- fnArg funcName argname2 argValues
+      arg3 <- fnArg funcName argname3 argValues
+      arg4 <- fnArg funcName argname4 argValues
+      toValue <$> f ctx arg1 arg2 arg3 arg4
 
 mkFn4 :: ( Monad m
          , ToValue a1 m

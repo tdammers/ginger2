@@ -174,7 +174,7 @@ call :: Monad m => Maybe (Value m) -> Value m -> [Expr] -> [(Identifier, Expr)] 
 call callerMay callable posArgsExpr namedArgsExpr = do
   args <- evalCallArgs posArgsExpr namedArgsExpr
   case callable of
-    ProcedureV (NativeProcedure _ f) ->
+    ProcedureV (NativeProcedure _ _ f) ->
       withEnv mempty $ do
         ctx <- ask
         native $ f args ctx
@@ -581,7 +581,13 @@ evalS (CallS name posArgsExpr namedArgsExpr bodyS) = whenOutputPolicy $ do
         objectIDFromContext "caller" callerVal srcPosMay
   let caller =
         ProcedureV $
-          NativeProcedure callerID (const . const . pure . Right $ callerVal)
+          NativeProcedure
+            callerID
+            [ "caller()"
+            , "Runs the body of the {% call %} statement that called the " <>
+              "current macro."
+            ]
+            (const . const . pure . Right $ callerVal)
   call (Just caller) callee posArgsExpr namedArgsExpr
 evalS (FilterS name posArgsExpr namedArgsExpr bodyS) = whenOutputPolicy $ do
   callee <- lookupVar name
@@ -803,41 +809,56 @@ evalLoop loopKeyMay loopName iteree loopCondMay recursivity bodyS elseSMay recur
       EqualE (IndexE (VarE "loop") (StringLitE "previtem")) (VarE "val")
 
     recurFunc :: ObjectID -> Env m -> Value m
-    recurFunc oid env = ProcedureV . NativeProcedure oid $ \args ctx -> do
-      case args of
-        [(_, iteree')] ->
-          runGingerT
-            (evalLoop
-              loopKeyMay
-              loopName
-              iteree'
-              loopCondMay
-              recursivity
-              bodyS
-              elseSMay
-              (succ recursionLevel))
-            ctx
-            env
-        [] -> pure . Left $
-                ArgumentError "loop()" "1" "argument" "end of arguments"
-        _ -> pure . Left $
-                ArgumentError "loop()" "2" "end of arguments" "argument"
+    recurFunc oid env =
+      ProcedureV .
+        NativeProcedure
+          oid
+          [ "loop.recur()"
+          , "Recurse one level deeper into the iteree"
+          ]
+          $ \args ctx -> do
+                case args of
+                  [(_, iteree')] ->
+                    runGingerT
+                      (evalLoop
+                        loopKeyMay
+                        loopName
+                        iteree'
+                        loopCondMay
+                        recursivity
+                        bodyS
+                        elseSMay
+                        (succ recursionLevel))
+                      ctx
+                      env
+                  [] -> pure . Left $
+                          ArgumentError "loop()" "1" "argument" "end of arguments"
+                  _ -> pure . Left $
+                          ArgumentError "loop()" "2" "end of arguments" "argument"
       
 
     cycleFunc :: ObjectID -> Int -> Value m
-    cycleFunc oid n = ProcedureV . NativeProcedure oid $ \args _ctx -> do
-      case args of
-        [(_, items)] ->
-          case items of
-            ListV [] ->
-              pure . Right $ NoneV
-            ListV xs -> do
-              let n' = n `mod` V.length xs
-              pure . Right . toValue $ xs V.!? n'
-            _ ->
-              pure . Right $ NoneV
-        _ -> pure . Left $
-                ArgumentError "cycle()" "1" "end of arguments" "argument"
+    cycleFunc oid n =
+      ProcedureV .
+        NativeProcedure
+          oid
+          [ "loop.cycle(items : list)"
+          , "Cycle through 'items': on the n-th iteration of the loop, " <>
+            "cycle(items) will return items[n % length(items)]."
+          ]
+          $ \args _ctx -> do
+              case args of
+                [(_, items)] ->
+                  case items of
+                    ListV [] ->
+                      pure . Right $ NoneV
+                    ListV xs -> do
+                      let n' = n `mod` V.length xs
+                      pure . Right . toValue $ xs V.!? n'
+                    _ ->
+                      pure . Right $ NoneV
+                _ -> pure . Left $
+                        ArgumentError "cycle()" "1" "end of arguments" "argument"
 
 
 evalSs :: Monad m => [Statement] -> GingerT m (Value m)

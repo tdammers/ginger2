@@ -240,12 +240,20 @@ newtype ObjectID = ObjectID { unObjectID :: Text }
 instance IsString ObjectID where
   fromString = ObjectID . Text.pack
 
+type Documentation = Vector Text
+
 data Procedure m
-  = NativeProcedure ObjectID !([(Maybe Identifier, Value m)] -> Context m -> m (Either RuntimeError (Value m)))
+  = NativeProcedure
+        !ObjectID
+        !(Documentation)
+        !( [(Maybe Identifier, Value m)]
+            -> Context m
+            -> m (Either RuntimeError (Value m))
+         )
   | GingerProcedure !(Env m) ![(Identifier, Maybe (Value m))] !Expr
 
 instance Eq (Procedure m) where
-  NativeProcedure a _ == NativeProcedure b _ =
+  NativeProcedure a _ _ == NativeProcedure b _ _ =
     a == b
   GingerProcedure env1 argspec1 body1 == GingerProcedure env2 argspec2 body2 =
     (env1, argspec1, body1) == (env2, argspec2, body2)
@@ -253,17 +261,19 @@ instance Eq (Procedure m) where
 
 pureNativeProcedure :: Applicative m
                     => ObjectID
+                    -> Documentation
                     -> ([(Maybe Identifier, Value m)] -> Either RuntimeError (Value m))
                     -> Procedure m
-pureNativeProcedure oid f =
-  NativeProcedure oid $ \args _ -> pure (f args)
+pureNativeProcedure oid doc f =
+  NativeProcedure oid doc $ \args _ -> pure (f args)
 
 nativeFunc :: (Monad m)
            => ObjectID
+           -> Documentation
            -> (Value m -> m (Either RuntimeError (Value m)))
            -> Procedure m
-nativeFunc oid f =
-  NativeProcedure oid $ \args _ -> case args of
+nativeFunc oid doc f =
+  NativeProcedure oid doc $ \args _ -> case args of
     [] ->
       pure . Left $
         ArgumentError
@@ -283,10 +293,11 @@ nativeFunc oid f =
 
 pureNativeFunc :: (Applicative m)
                => ObjectID
+               -> Documentation
                -> (Value m -> Either RuntimeError (Value m))
                -> Procedure m
-pureNativeFunc oid f =
-  NativeProcedure oid $ \args _ -> case args of
+pureNativeFunc oid doc f =
+  NativeProcedure oid doc $ \args _ -> case args of
     [] ->
       pure . Left $
         ArgumentError
@@ -306,10 +317,11 @@ pureNativeFunc oid f =
 
 pureNativeFunc2 :: (Applicative m)
                => ObjectID
+               -> Documentation
                -> (Value m -> Value m -> Either RuntimeError (Value m))
                -> Procedure m
-pureNativeFunc2 oid f =
-  NativeProcedure oid $ \args _ -> case args of
+pureNativeFunc2 oid doc f =
+  NativeProcedure oid doc $ \args _ -> case args of
     [] ->
       pure . Left $
         ArgumentError
@@ -558,7 +570,7 @@ instance ToValue (Value m) m where
   toValue = id
 
 class FnToValue a m where
-  fnToValue :: ObjectID -> a -> Value m
+  fnToValue :: ObjectID -> Documentation -> a -> Value m
 
 --------------------------------------------------------------------------------
 -- ToValue Scalar instances
@@ -721,51 +733,51 @@ instance (Applicative m, ToNativeProcedure m a) => ToNativeProcedure m (Value m 
 
 
 instance Applicative m => FnToValue (Value m -> Value m) m where
-  fnToValue oid f = ProcedureV . NativeProcedure oid . toNativeProcedure $ f
+  fnToValue oid doc f = ProcedureV . NativeProcedure oid doc . toNativeProcedure $ f
 
 instance Applicative m => FnToValue (Value m -> Value m -> Value m) m where
-  fnToValue oid f = ProcedureV . NativeProcedure oid . toNativeProcedure $ f
+  fnToValue oid doc f = ProcedureV . NativeProcedure oid doc . toNativeProcedure $ f
 
 instance Applicative m => FnToValue (Value m -> Value m -> Value m -> Value m) m where
-  fnToValue oid f = ProcedureV . NativeProcedure oid . toNativeProcedure $ f
+  fnToValue oid doc f = ProcedureV . NativeProcedure oid doc . toNativeProcedure $ f
 
 instance Applicative m => FnToValue (Value m -> Value m -> Value m -> Value m -> Value m) m where
-  fnToValue oid f = ProcedureV . NativeProcedure oid . toNativeProcedure $ f
+  fnToValue oid doc f = ProcedureV . NativeProcedure oid doc . toNativeProcedure $ f
 
 instance Applicative m => FnToValue (Value m -> Value m -> Value m -> Value m -> Value m -> Value m) m where
-  fnToValue oid f = ProcedureV . NativeProcedure oid . toNativeProcedure $ f
+  fnToValue oid doc f = ProcedureV . NativeProcedure oid doc . toNativeProcedure $ f
 
 
 instance Applicative m => FnToValue (Value m -> m (Value m)) m where
-  fnToValue oid f = ProcedureV . NativeProcedure oid . toNativeProcedure $ f
+  fnToValue oid doc f = ProcedureV . NativeProcedure oid doc . toNativeProcedure $ f
 
 instance Applicative m => FnToValue (Value m -> Value m -> m (Value m)) m where
-  fnToValue oid f = ProcedureV . NativeProcedure oid . toNativeProcedure $ f
+  fnToValue oid doc f = ProcedureV . NativeProcedure oid doc . toNativeProcedure $ f
 
 instance Applicative m => FnToValue (Value m -> Value m -> Value m -> m (Value m)) m where
-  fnToValue oid f = ProcedureV . NativeProcedure oid . toNativeProcedure $ f
+  fnToValue oid doc f = ProcedureV . NativeProcedure oid doc . toNativeProcedure $ f
 
 instance Applicative m => FnToValue (Value m -> Value m -> Value m -> Value m -> m (Value m)) m where
-  fnToValue oid f = ProcedureV . NativeProcedure oid . toNativeProcedure $ f
+  fnToValue oid doc f = ProcedureV . NativeProcedure oid doc . toNativeProcedure $ f
 
 instance Applicative m => FnToValue (Value m -> Value m -> Value m -> Value m -> Value m -> m (Value m)) m where
-  fnToValue oid f = ProcedureV . NativeProcedure oid . toNativeProcedure $ f
+  fnToValue oid doc f = ProcedureV . NativeProcedure oid doc . toNativeProcedure $ f
 
 
 instance Applicative m => FnToValue (Value m -> m (Either RuntimeError (Value m))) m where
-  fnToValue oid f = ProcedureV . NativeProcedure oid . toNativeProcedure $ f
+  fnToValue oid doc f = ProcedureV . NativeProcedure oid doc . toNativeProcedure $ f
 
 instance Applicative m => FnToValue (Value m -> Value m -> m (Either RuntimeError (Value m))) m where
-  fnToValue oid f = ProcedureV . NativeProcedure oid . toNativeProcedure $ f
+  fnToValue oid doc f = ProcedureV . NativeProcedure oid doc . toNativeProcedure $ f
 
 instance Applicative m => FnToValue (Value m -> Value m -> Value m -> m (Either RuntimeError (Value m))) m where
-  fnToValue oid f = ProcedureV . NativeProcedure oid . toNativeProcedure $ f
+  fnToValue oid doc f = ProcedureV . NativeProcedure oid doc . toNativeProcedure $ f
 
 instance Applicative m => FnToValue (Value m -> Value m -> Value m -> Value m -> m (Either RuntimeError (Value m))) m where
-  fnToValue oid f = ProcedureV . NativeProcedure oid . toNativeProcedure $ f
+  fnToValue oid doc f = ProcedureV . NativeProcedure oid doc . toNativeProcedure $ f
 
 instance Applicative m => FnToValue (Value m -> Value m -> Value m -> Value m -> Value m -> m (Either RuntimeError (Value m))) m where
-  fnToValue oid f = ProcedureV . NativeProcedure oid . toNativeProcedure $ f
+  fnToValue oid doc f = ProcedureV . NativeProcedure oid doc . toNativeProcedure $ f
 
 --------------------------------------------------------------------------------
 -- Procedure helpers
@@ -1028,7 +1040,7 @@ stringify (DictV m) = do
   pure $ Text.intercalate ", " elems
 stringify (NativeV n) =
   native (Right <$> nativeObjectStringified n)
-stringify (ProcedureV (NativeProcedure oid _)) =
+stringify (ProcedureV (NativeProcedure oid _ _)) =
   pure $ "[[procedure " <> unObjectID oid <> "]]"
 stringify (ProcedureV (GingerProcedure {})) =
   pure $ "[[procedure]]"
@@ -1146,7 +1158,7 @@ arbitraryNativeProcedure :: Monad m => QC.Gen (Procedure m)
 arbitraryNativeProcedure = do
   retval <- QC.scale (`div` 2) arbitrary
   oid <- ObjectID . ("arbitrary:" <>) . identifierName <$> arbitrary
-  pure $ NativeProcedure oid (\_ _ -> pure (Right retval))
+  pure $ NativeProcedure oid mempty (\_ _ -> pure (Right retval))
 
 arbitraryNative :: Monad m => QC.Gen (NativeObject m)
 arbitraryNative = do

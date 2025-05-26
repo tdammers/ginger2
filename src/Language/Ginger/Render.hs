@@ -5,6 +5,7 @@ module Language.Ginger.Render
 where
 
 import Language.Ginger.AST
+import Language.Ginger.Value
 
 import Data.Bool (bool)
 import Data.Char (isControl, ord)
@@ -16,6 +17,7 @@ import Data.Text.Lazy.Builder (Builder)
 import qualified Data.Text.Lazy.Builder as Builder
 import qualified Data.Vector as V
 import Text.Printf (printf)
+import qualified Data.Map.Strict as Map
 
 class RenderSyntax a where
   renderSyntax :: a -> Builder
@@ -58,6 +60,28 @@ renderUnicodeEscape c =
                   "\\U%08x"
   in
     Builder.fromString $ printf format o
+
+valueToExpr :: Value m -> Expr
+valueToExpr (StringV v) = StringLitE v
+valueToExpr TrueV = TrueE
+valueToExpr FalseV = FalseE
+valueToExpr (IntV i) = IntLitE i
+valueToExpr (FloatV f) = FloatLitE f
+valueToExpr NoneV = NoneE
+valueToExpr (ScalarV s) = error $ "Not matched: scalar " ++ show s
+valueToExpr (ListV items) = ListE $ V.map valueToExpr items
+valueToExpr (DictV xs) =
+  DictE
+    [ (valueToExpr (ScalarV k), valueToExpr v)
+    | (k, v) <- Map.toAscList xs
+    ]
+valueToExpr (NativeV _) = StringLitE "<<native>>"
+valueToExpr (ProcedureV _) = StringLitE "<<procedure>>"
+valueToExpr (TestV _) = StringLitE "<<test>>"
+valueToExpr (FilterV _) = StringLitE "<<filter>>"
+
+instance RenderSyntax (Value m) where
+  renderSyntax = renderSyntax . valueToExpr
 
 instance RenderSyntax Expr where
   renderSyntax (PositionedE _ e) = renderSyntax e

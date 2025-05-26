@@ -73,75 +73,130 @@ defVarsCommon = Map.fromList
         , ("undefined", TestV $ NativeTest isUndefined)
         , ("boolean", fnToValue
                         "builtin:test:boolean"
-                        [ "boolean(value : any) : bool"
-                        , "Test whether value is a boolean."
-                        ]
+                        (Just ProcedureDoc
+                          { procedureDocName = "boolean"
+                          , procedureDocArgs = [ArgumentDoc "value" (Just TypeDocAny) Nothing ""]
+                          , procedureDocReturnType = Just $ TypeDocSingle "bool"
+                          , procedureDocDescription =
+                              "Test whether value is a boolean."
+                          }
+                        )
                         (isBool @m))
         , ("callable", fnToValue
                         "builtin:test:callable"
-                        [ "callable(value : any) : bool"
-                        , "Test whether value is callable."
-                        ]
+                        (Just ProcedureDoc
+                          { procedureDocName = "callable"
+                          , procedureDocArgs = [ArgumentDoc "value" (Just TypeDocAny) Nothing ""]
+                          , procedureDocReturnType = Just $ TypeDocSingle "bool"
+                          , procedureDocDescription =
+                              "Test whether value is callable."
+                          }
+                        )
                         (isCallable @m))
         , ("filter", TestV $ NativeTest isFilter)
         , ("float", fnToValue
                         "builtin:test:float"
-                        [ "float(value : any) : bool"
-                        , "Test whether value is a float."
-                        ]
+                        (Just ProcedureDoc
+                          { procedureDocName = "float"
+                          , procedureDocArgs = [ArgumentDoc "value" (Just TypeDocAny) Nothing ""]
+                          , procedureDocReturnType = Just $ TypeDocSingle "bool"
+                          , procedureDocDescription =
+                              "Test whether value is a float."
+                          }
+                        )
                         (isFloat @m))
         , ("integer", fnToValue
                         "builtin:test:integer"
-                        [ "integer()"
-                        , "Test whether value is an integer."
-                        ]
+                        (Just ProcedureDoc
+                          { procedureDocName = "integer"
+                          , procedureDocArgs = mempty
+                          , procedureDocReturnType = Just $ TypeDocSingle "bool"
+                          , procedureDocDescription =
+                              "Test whether value is an integer."
+                          }
+                        )
                         (isInteger @m))
         , ("iterable", fnToValue
                         "builtin:test:iterable"
-                        [ "iterable(value : any) : bool"
-                        , "Test whether value is iterable."
-                        , "Lists and list-like native objects are iterable."
-                        ]
+                        (Just ProcedureDoc
+                          { procedureDocName = "iterable"
+                          , procedureDocArgs = [ArgumentDoc "value" (Just TypeDocAny) Nothing ""]
+                          , procedureDocReturnType = Just $ TypeDocSingle "bool"
+                          , procedureDocDescription =
+                              "Test whether value is iterable.\n"
+                              <> "Lists and list-like native objects are iterable."
+                          }
+                        )
                         (isIterable @m))
         , ("mapping", fnToValue
                         "builtin:test:mapping"
-                        [ "mapping(value : any) : bool"
-                        , "Test whether value is a mapping."
-                        , "Mappings are dicts and dict-like native objects."
-                        ]
+                        (Just ProcedureDoc
+                          { procedureDocName = "mapping"
+                          , procedureDocArgs = [ArgumentDoc "value" (Just TypeDocAny) Nothing ""]
+                          , procedureDocReturnType = Just $ TypeDocSingle "bool"
+                          , procedureDocDescription =
+                              "Test whether value is a mapping.\n"
+                              <> "Mappings are dicts and dict-like native objects."
+                          }
+                        )
                         (isMapping @m))
         , ("number", fnToValue
                         "builtin:test:number"
-                        [ "number(value : any) : bool"
-                        , "Test whether value is a number (integer or float)."
-                        ]
+                        (Just ProcedureDoc
+                          { procedureDocName = "number"
+                          , procedureDocArgs = [ArgumentDoc "value" (Just TypeDocAny) Nothing ""]
+                          , procedureDocReturnType = Just $ TypeDocSingle "bool"
+                          , procedureDocDescription =
+                              "Test whether value is a number (integer or float)."
+                          }
+                        )
                         (isNumber @m))
         , ("sequence", fnToValue
                         "builtin:test:sequence"
-                        [ "sequence(value : any) : bool"
-                        , "Test whether value is a sequence (i.e., a list)."
-                        ]
+                        (Just ProcedureDoc
+                          { procedureDocName = "sequence"
+                          , procedureDocArgs = [ArgumentDoc "value" (Just TypeDocAny) Nothing ""]
+                          , procedureDocReturnType = Just $ TypeDocSingle "bool"
+                          , procedureDocDescription =
+                              "Test whether value is a sequence (i.e., a list)."
+                          }
+                        )
                         (isSequence @m))
         , ("string", fnToValue
                         "builtin:test:string"
-                        [ "string(value : any) : bool"
-                        , "Test whether value is a string."
-                        ]
+                        (Just ProcedureDoc
+                          { procedureDocName = "string"
+                          , procedureDocArgs = [ArgumentDoc "value" (Just TypeDocAny) Nothing ""]
+                          , procedureDocReturnType = Just $ TypeDocSingle "bool"
+                          , procedureDocDescription =
+                              "Test whether value is a string."
+                          }
+                        )
                         (isString @m))
         , ("test", TestV $ NativeTest isTest)
         , ("upper", fnToValue
                         "builtin:test:upper"
-                        [ "upper(value : any) : bool"
-                        , "Test whether value is an all-uppercase string."
-                        ]
+                        (Just ProcedureDoc
+                          { procedureDocName = "upper"
+                          , procedureDocArgs = [ArgumentDoc "value" (Just TypeDocAny) Nothing ""]
+                          , procedureDocReturnType = Just $ TypeDocSingle "bool"
+                          , procedureDocDescription =
+                              "Test whether value is an all-uppercase string."
+                          }
+                        )
                         (isUpperVal @m))
         , ("eq", TestV $ NativeTest isEqual)
         , ("escaped", builtinNotImplemented @m "escaped")
         , ("false", fnToValue
                         "builtin:test:false"
-                        [ "false(value : any) : bool"
-                        , "Test whether value is boolean `false`"
-                        ]
+                        (Just ProcedureDoc
+                          { procedureDocName = "false"
+                          , procedureDocArgs = [ArgumentDoc "value" (Just TypeDocAny) Nothing ""]
+                          , procedureDocReturnType = Just $ TypeDocSingle "bool"
+                          , procedureDocDescription =
+                              "Test whether value is boolean `false`"
+                          }
+                        )
                         (isBoolean False :: Value m -> Value m))
         , ("ge", gingerBinopTest BinopGTE)
         , ("gt", gingerBinopTest BinopGT)
@@ -149,23 +204,38 @@ defVarsCommon = Map.fromList
         , ("le", gingerBinopTest BinopLTE)
         , ("lower", fnToValue
                         "builtin:test:lower"
-                        [ "lower(value : any) : bool"
-                        , "Test whether value is an all-lowercase string"
-                        ]
+                        (Just ProcedureDoc
+                          { procedureDocName = "lower"
+                          , procedureDocArgs = [ArgumentDoc "value" (Just TypeDocAny) Nothing ""]
+                          , procedureDocReturnType = Just $ TypeDocSingle "bool"
+                          , procedureDocDescription =
+                              "Test whether value is an all-lowercase string"
+                          }
+                        )
                         (isLowerVal @m))
         , ("lt", gingerBinopTest BinopLT)
         , ("sameas", builtinNotImplemented @m "sameas")
         , ("true", fnToValue
                         "builtin:test:true"
-                        [ "true(value : any) : bool"
-                        , "Test whether value is boolean `true`"
-                        ]
+                        (Just ProcedureDoc
+                          { procedureDocName = "true"
+                          , procedureDocArgs = [ArgumentDoc "value" (Just TypeDocAny) Nothing ""]
+                          , procedureDocReturnType = Just $ TypeDocSingle "bool"
+                          , procedureDocDescription =
+                              "Test whether value is boolean `true`"
+                          }
+                        )
                         (isBoolean True :: Value m -> Value m))
         , ("none", fnToValue
                         "builtin:test:none"
-                        [ "none(value : any) : bool"
-                        , "Test whether value is the `none` value"
-                        ]
+                        (Just ProcedureDoc
+                          { procedureDocName = "none"
+                          , procedureDocArgs = [ArgumentDoc "value" (Just TypeDocAny) Nothing ""]
+                          , procedureDocReturnType = Just $ TypeDocSingle "bool"
+                          , procedureDocDescription =
+                              "Test whether value is the `none` value"
+                          }
+                        )
                         (isNone :: Value m -> Value m))
         ]
     )

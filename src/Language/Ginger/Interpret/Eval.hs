@@ -583,10 +583,15 @@ evalS (CallS name posArgsExpr namedArgsExpr bodyS) = whenOutputPolicy $ do
         ProcedureV $
           NativeProcedure
             callerID
-            [ "caller()"
-            , "Runs the body of the {% call %} statement that called the " <>
-              "current macro."
-            ]
+            (Just ProcedureDoc
+              { procedureDocName = "caller"
+              , procedureDocArgs = mempty
+              , procedureDocReturnType = Just $ TypeDocSingle "markup"
+              , procedureDocDescription =
+                  "Runs the body of the {% call %} statement that called the " <>
+                  "current macro."
+              }
+            )
             (const . const . pure . Right $ callerVal)
   call (Just caller) callee posArgsExpr namedArgsExpr
 evalS (FilterS name posArgsExpr namedArgsExpr bodyS) = whenOutputPolicy $ do
@@ -813,9 +818,14 @@ evalLoop loopKeyMay loopName iteree loopCondMay recursivity bodyS elseSMay recur
       ProcedureV .
         NativeProcedure
           oid
-          [ "loop.recur()"
-          , "Recurse one level deeper into the iteree"
-          ]
+          (Just ProcedureDoc
+            { procedureDocName = "loop.recur"
+            , procedureDocArgs = mempty
+            , procedureDocReturnType = Just $ TypeDocSingle "markup"
+            , procedureDocDescription =
+                "Recurse one level deeper into the iteree"
+            }
+          )
           $ \args ctx -> do
                 case args of
                   [(_, iteree')] ->
@@ -842,10 +852,21 @@ evalLoop loopKeyMay loopName iteree loopCondMay recursivity bodyS elseSMay recur
       ProcedureV .
         NativeProcedure
           oid
-          [ "loop.cycle(items : list)"
-          , "Cycle through 'items': on the n-th iteration of the loop, " <>
-            "cycle(items) will return items[n % length(items)]."
-          ]
+          (Just ProcedureDoc
+            { procedureDocName = "loop.cycle"
+            , procedureDocArgs =
+                [ ArgumentDoc
+                    "items"
+                    (Just $ TypeDocSingle "list<any>")
+                    Nothing
+                    ""
+                ]
+            , procedureDocReturnType = Just TypeDocAny
+            , procedureDocDescription =
+                "Cycle through 'items': on the n-th iteration of the loop, " <>
+                "cycle(items) will return items[n % length(items)]."
+            }
+          )
           $ \args _ctx -> do
               case args of
                 [(_, items)] ->

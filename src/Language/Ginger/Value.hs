@@ -240,12 +240,35 @@ newtype ObjectID = ObjectID { unObjectID :: Text }
 instance IsString ObjectID where
   fromString = ObjectID . Text.pack
 
-type Documentation = Vector Text
+data TypeDoc
+  = TypeDocNone
+  | TypeDocAny
+  | TypeDocSingle !Text
+  | TypeDocAlternatives !(Vector Text)
+  deriving (Show)
+
+data ArgumentDoc =
+  ArgumentDoc
+    { argumentDocName :: !Text
+    , argumentDocType :: !(Maybe TypeDoc)
+    , argumentDocDefault :: !(Maybe Text)
+    , argumentDocDescription :: !Text
+    }
+    deriving (Show)
+
+data ProcedureDoc =
+  ProcedureDoc
+    { procedureDocName :: !Text
+    , procedureDocArgs :: !(Vector ArgumentDoc)
+    , procedureDocReturnType :: !(Maybe TypeDoc)
+    , procedureDocDescription :: !Text
+    }
+    deriving (Show)
 
 data Procedure m
   = NativeProcedure
         !ObjectID
-        !(Documentation)
+        !(Maybe ProcedureDoc)
         !( [(Maybe Identifier, Value m)]
             -> Context m
             -> m (Either RuntimeError (Value m))
@@ -261,7 +284,7 @@ instance Eq (Procedure m) where
 
 pureNativeProcedure :: Applicative m
                     => ObjectID
-                    -> Documentation
+                    -> Maybe ProcedureDoc
                     -> ([(Maybe Identifier, Value m)] -> Either RuntimeError (Value m))
                     -> Procedure m
 pureNativeProcedure oid doc f =
@@ -269,7 +292,7 @@ pureNativeProcedure oid doc f =
 
 nativeFunc :: (Monad m)
            => ObjectID
-           -> Documentation
+           -> Maybe ProcedureDoc
            -> (Value m -> m (Either RuntimeError (Value m)))
            -> Procedure m
 nativeFunc oid doc f =
@@ -293,7 +316,7 @@ nativeFunc oid doc f =
 
 pureNativeFunc :: (Applicative m)
                => ObjectID
-               -> Documentation
+               -> Maybe ProcedureDoc
                -> (Value m -> Either RuntimeError (Value m))
                -> Procedure m
 pureNativeFunc oid doc f =
@@ -317,7 +340,7 @@ pureNativeFunc oid doc f =
 
 pureNativeFunc2 :: (Applicative m)
                => ObjectID
-               -> Documentation
+               -> Maybe ProcedureDoc
                -> (Value m -> Value m -> Either RuntimeError (Value m))
                -> Procedure m
 pureNativeFunc2 oid doc f =
@@ -570,7 +593,7 @@ instance ToValue (Value m) m where
   toValue = id
 
 class FnToValue a m where
-  fnToValue :: ObjectID -> Documentation -> a -> Value m
+  fnToValue :: ObjectID -> Maybe ProcedureDoc -> a -> Value m
 
 --------------------------------------------------------------------------------
 -- ToValue Scalar instances
@@ -1158,7 +1181,7 @@ arbitraryNativeProcedure :: Monad m => QC.Gen (Procedure m)
 arbitraryNativeProcedure = do
   retval <- QC.scale (`div` 2) arbitrary
   oid <- ObjectID . ("arbitrary:" <>) . identifierName <$> arbitrary
-  pure $ NativeProcedure oid mempty (\_ _ -> pure (Right retval))
+  pure $ NativeProcedure oid Nothing (\_ _ -> pure (Right retval))
 
 arbitraryNative :: Monad m => QC.Gen (NativeObject m)
 arbitraryNative = do

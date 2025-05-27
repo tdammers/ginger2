@@ -49,7 +49,7 @@ defProgramOptions =
 programOptions :: Parser ProgramOptions
 programOptions =
   ProgramOptions
-    <$> some
+    <$> many
           (
             argument str
               ( metavar "DATAFILE"

@@ -1,15 +1,15 @@
-This is a test template.
-
-{% for i in numbers %}
-    {%- if i == 1 %}
-1 bottle of beer on the wall...
-    {%- else %}
-        {%- if i == 0 %}
-no bottles of beer on the wall...
-        {%- else %}
-{{ i }} bottles of beer on the wall...
-        {%- endif %}
-    {%- endif %}
-{% endfor %}
-
-Hello, {{ user.name }}!
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8"/>
+        <title>Ginger Built-In Functionality</title>
+    </head>
+    <body>
+        <h1>Ginger Built-In Functionality</h1>
+        <h2>Built-in Globals</h2>
+        {% for name, value in __jinja__.globals %}
+        <h3>{{ name }}</h3>
+        {{ value|help|json }}
+        {% endfor %}
+    </body>
+</html>

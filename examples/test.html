@@ -9,7 +9,26 @@
         <h2>Built-in Globals</h2>
         {% for name, value in __jinja__.globals %}
         <h3>{{ name }}</h3>
-        {{ value|help|json }}
+        {% set doc = value|help %}
+        <p>
+        <tt>{{ doc.name|d(name) }}({% for arg in doc.args|d([]) -%}
+        {%- if not loop.first %}, {% endif -%}
+        {{- arg.name -}}
+        {%- if arg.type is not none -%}: {{- arg.type -}}
+        {%- endif -%}
+        {%- endfor %})
+        {%- if doc is not none -%}
+            {%- if ('returnType' in doc) and (doc.returnType != '') -%}: {{ doc.returnType|d('') }}{%- endif -%}
+        {%- endif -%}
+        </tt>
+        </p>
+        {%- if doc is not none -%}
+            {%- if doc.description != '' -%}
+            <p>
+                {{ doc.description }}
+            </p>
+            {%- endif -%}
+        {%- endif -%}
         {% endfor %}
     </body>
 </html>

@@ -917,10 +917,7 @@ fnSelect evalE scrutineeE args ctx env = runExceptT $ do
                 -- scope.
                 testV' <- eitherExceptM $
                   runGingerT
-                    (scoped $ do
-                        scopify "jinja-tests"
-                        evalE (VarE $ Identifier name)
-                    )
+                    (withJinjaTests $ evalE (VarE $ Identifier name))
                     ctx env
                 apply' testV' x
               DictV m -> do
@@ -1052,10 +1049,7 @@ fnMap evalE scrutineeE args ctx env = runExceptT $ do
                     -- scope.
                     filterV' <- eitherExceptM $
                       runGingerT
-                        (scoped $ do
-                            scopify "jinja-filters"
-                            evalE (VarE $ Identifier name)
-                        )
+                        (withJinjaFilters $ evalE (VarE $ Identifier name))
                         ctx env
                     apply' filterV' x
                   DictV m -> do

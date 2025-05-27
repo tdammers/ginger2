@@ -43,6 +43,7 @@ import Control.Monad.State
   )
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 
 -- | The Ginger interpreter monad. Provides error reporting / handling via
@@ -218,10 +219,9 @@ bind f = f <$> gets evalEnv
 -- | Lift a dictionary value into the current scope, such that dictionary keys
 -- become variables bound to the respective values in the dictionary.
 scopify :: forall m. Monad m
-        => Identifier
+        => Value m
         -> GingerT m ()
-scopify name = do
-  lookupVar name >>= \case
+scopify = \case
     DictV items -> do
       items' <- forM (Map.toList items) $ \(k, v) -> do
         k' <- scalarToIdentifier k
@@ -232,3 +232,26 @@ scopify name = do
     scalarToIdentifier :: Scalar -> GingerT m Identifier
     scalarToIdentifier (StringScalar txt) = pure $ Identifier txt
     scalarToIdentifier x = throwError $ TagError "liftScope" "string" (tagNameOf $ ScalarV x)
+
+withJinjaFilters :: (Monad m)
+                 => GingerT m a
+                 -> GingerT m a
+withJinjaFilters = withJinjaKey "filters"
+
+withJinjaTests :: (Monad m)
+                 => GingerT m a
+                 -> GingerT m a
+withJinjaTests = withJinjaKey "tests"
+
+withJinjaKey :: (Monad m)
+             => Identifier
+             -> GingerT m a
+             -> GingerT m a
+withJinjaKey key inner =
+  scoped $ do
+    jinjaFilters <-
+      fmap (fromMaybe NoneV . Map.lookup (toScalar key)) $
+      lookupVar "__jinja__" >>= eitherExceptM . asDictVal
+    scopify jinjaFilters
+    inner
+

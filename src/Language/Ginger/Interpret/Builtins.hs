@@ -543,7 +543,15 @@ runReWith matchFunc regexText haystack optsText = do
     pure $ matchFunc regex haystack
 
 fnReMatch :: forall m. Monad m => Procedure m
-fnReMatch = mkFn3 "regex.match"
+fnReMatch = setDescription
+              (Text.unlines
+                  [ "Match a regular expression against a string."
+                  , "Returns an array where the first element is the entire " <>
+                    "match, and subsequent elements are matches on " <>
+                    "subexpressions (capture groups)."
+                  ]
+              ) $
+            mkFn3 "regex.match"
               ( "regex"
               , Nothing
               , Just $ TypeDocAny
@@ -562,7 +570,16 @@ fnReMatch = mkFn3 "regex.match"
   $ runReWith (\r h -> convertMatchOnceText $ RE.matchOnceText r h)
 
 fnReMatches :: forall m. Monad m => Procedure m
-fnReMatches = mkFn3 "regex.match"
+fnReMatches = setDescription
+              (Text.unlines
+                  [ "Match a regular expression against a string."
+                  , "Returns an array of matches, where each match is an " <>
+                    "array where the first element is the entire match, and " <>
+                    "subsequent elements are matches on subexpressions " <>
+                    "(capture groups)."
+                  ]
+              ) $
+            mkFn3 "regex.match"
               ( "regex"
               , Nothing
               , Just $ TypeDocAny
@@ -581,7 +598,13 @@ fnReMatches = mkFn3 "regex.match"
   $ runReWith (\r h -> fmap convertMatchText $ RE.matchAllText r h)
 
 fnReTest :: forall m. Monad m => Procedure m
-fnReTest = mkFn3 "regex.match"
+fnReTest = setDescription
+              (Text.unlines
+                  [ "Match a regular expression against a string."
+                  , "Returns true if at least one match exists, false otherwise."
+                  ]
+              ) $
+            mkFn3 "regex.test"
               ( "regex"
               , Nothing
               , Just $ TypeDocAny
@@ -619,7 +642,12 @@ convertMatchText matches =
   map fst $ Array.elems matches
 
 fnLength :: forall m. Monad m => Procedure m
-fnLength = mkFn1 "length"
+fnLength = setDescription
+              (Text.unlines
+                  [ "Get the length of a string, list, or dictionary."
+                  ]
+              ) $
+            mkFn1 "length"
               ( "value"
               , Nothing :: Maybe (Value m)
               , Just $ TypeDocAlternatives [ "string", "list", "dict" ]
@@ -638,7 +666,12 @@ fnLength = mkFn1 "length"
               (tagNameOf x)
 
 fnEscape :: forall m. Monad m => Procedure m
-fnEscape = mkFn1' "escape"
+fnEscape = setDescription
+              (Text.unlines
+                  [ "Escape the argument."
+                  ]
+              ) $
+            mkFn1' "escape"
               ( "value"
               , Nothing
               , Just $ TypeDocAny
@@ -649,7 +682,12 @@ fnEscape = mkFn1' "escape"
           encodeWith ctx value
 
 fnToList :: forall m. Monad m => Procedure m
-fnToList = mkFn1 "list"
+fnToList = setDescription
+              (Text.unlines
+                  [ "Convert a value to a list, if possible"
+                  ]
+              ) $
+            mkFn1 "list"
               ( "value"
               , Nothing :: Maybe (Value m)
               , Just $ TypeDocAny
@@ -686,7 +724,14 @@ fnToList = mkFn1 "list"
 
 
 fnToFloat :: forall m. Monad m => Procedure m
-fnToFloat = mkFn2 "float"
+fnToFloat = setDescription
+              (Text.unlines
+                  [ "Convert value to float."
+                  , "If `default` is given, values that cannot be converted " <>
+                    " to floats will be replaced with this default value." 
+                  ]
+              ) $
+            mkFn2 "float"
               ( "value"
               , Nothing :: Maybe (Value m)
               , Just $ TypeDocAny
@@ -708,7 +753,14 @@ fnToFloat = mkFn2 "float"
       _ -> pure def
 
 fnToInt :: forall m. Monad m => Procedure m
-fnToInt = mkFn3 "int"
+fnToInt = setDescription
+              (Text.unlines
+                  [ "Convert value to int."
+                  , "If `default` is given, values that cannot be converted " <>
+                    " to integers will be replaced with this default value." 
+                  ]
+              ) $
+            mkFn3 "int"
               ( "value"
               , Nothing :: Maybe (Value m)
               , Just $ TypeDocAny
@@ -2076,6 +2128,14 @@ fnArg :: (Monad m, FromValue a m)
 fnArg context name argValues = do
   argV <- fnMaybeArg context (identifierName name) $ Map.lookup name argValues
   eitherExceptM $ fromValue argV
+
+setDescription :: Text -> Procedure m -> Procedure m
+setDescription desc (NativeProcedure oid (Just doc) f) =
+  NativeProcedure
+    oid
+    (Just $ doc { procedureDocDescription = desc })
+    f
+setDescription _ p = p
 
 describeArg :: Identifier
             -> Maybe (Value m)

@@ -1,34 +1,89 @@
+{%- macro renderDocs(title, docs) -%}
+    <section>
+        <h2>{{ title }}</h2>
+        {% for name, value in docs recursive %}
+        {% if value is mapping %}
+            <section>
+                <h2>{{ name }}</h2>
+                {{ loop(value) }}
+            </section>
+        {% else %}
+            <h3>{{ name }}</h3>
+            {% set doc = value|help %}
+            <p>
+            <tt>{{ doc.name|d(name) }}({% for arg in doc.args|d([]) -%}
+            {%- if not loop.first %}, {% endif -%}
+            {{- arg.name -}}
+            {%- if arg.default is not none -%}={{- arg.default -}}{%- endif -%}
+            {%- if arg.type is string -%} : {{- arg.type -}}
+            {%- else -%}
+                {%- if (arg.type is mapping) and ('oneof' in arg.type) -%} :
+                    {%- for t in arg.type.oneof -%}
+                        {% if not loop.first %} | {% endif %}
+                        {{ t }}
+                    {%- endfor -%}
+                {%- endif -%}
+            {%- endif -%}
+            {%- endfor %})
+            {%- if doc is not none -%}
+                {%- if ('returnType' in doc) and (doc.returnType is not none) and (doc.returnType != '') -%}: {{ doc.returnType|d('') }}{%- endif -%}
+            {%- endif -%}
+            </tt>
+            </p>
+            {%- if doc is not none -%}
+                {%- if doc.description != '' -%}
+                    {% for l in doc.description.split('\n') %}
+                    <p>{{ l }}</p>    
+                    {% endfor %}
+                {%- endif -%}
+            {%- endif -%}
+            {% endif %}
+        {% endfor %}
+    </section>
+{%- endmacro -%}
 <!DOCTYPE html>
 <html>
     <head>
         <meta charset="utf-8"/>
         <title>Ginger Built-In Functionality</title>
+        <style>
+            html {
+                font-family: sans-serif;
+                margin: 0;
+                padding: 0;
+            }
+            body {
+                padding: 1rem;
+            }
+            body>section>h2 {
+                background-color: silver;
+                padding-left: 1rem;
+                padding-right: 1rem;
+                margin-left: -1rem;
+                margin-right: -1rem;
+            }
+            body>section section {
+                padding-left: 1rem;
+                margin-left: 0.5rem;
+                border-left: solid 2px silver;
+            }
+            body>section section h2 {
+                margin-left: -2.5rem;
+                background-color: white;
+                padding-left: 1rem;
+                margin-bottom: 0;
+                padding-bottom: 1rem;
+            }
+            h2+h3 {
+                margin-top: 0;
+            }
+        </style>
     </head>
     <body>
         <h1>Ginger Built-In Functionality</h1>
-        <h2>Built-in Globals</h2>
-        {% for name, value in __jinja__.globals %}
-        <h3>{{ name }}</h3>
-        {% set doc = value|help %}
-        <p>
-        <tt>{{ doc.name|d(name) }}({% for arg in doc.args|d([]) -%}
-        {%- if not loop.first %}, {% endif -%}
-        {{- arg.name -}}
-        {%- if arg.type is not none -%}: {{- arg.type -}}
-        {%- endif -%}
-        {%- endfor %})
-        {%- if doc is not none -%}
-            {%- if ('returnType' in doc) and (doc.returnType != '') -%}: {{ doc.returnType|d('') }}{%- endif -%}
-        {%- endif -%}
-        </tt>
-        </p>
-        {%- if doc is not none -%}
-            {%- if doc.description != '' -%}
-            <p>
-                {{ doc.description }}
-            </p>
-            {%- endif -%}
-        {%- endif -%}
-        {% endfor %}
+        {{ renderDocs('Built-in Globals', __jinja__.globals) }}
+        {{ renderDocs('Ginger extensions', __ginger__.globals) }}
+        {{ renderDocs('Built-in Filters', __jinja__.filters) }}
+        {{ renderDocs('Built-in Tests', __jinja__.tests) }}
     </body>
 </html>

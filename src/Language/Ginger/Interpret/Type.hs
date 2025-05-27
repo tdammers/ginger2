@@ -144,7 +144,7 @@ setVar name val =
 setVars :: Monad m
         => Map Identifier (Value m)
         -> GingerT m ()
-setVars vars = modifyEnv (\e -> e { envVars = envVars e <> vars})
+setVars vars = modifyEnv (\e -> e { envVars = vars <> envVars e })
 
 setBlock :: Monad m
          => Identifier

@@ -274,6 +274,7 @@ builtinGlobalsNonJinja _evalE = Map.fromList $
   [ ("strip", ProcedureV fnStrStrip)
   , ("regex", regexModule)
   , ("dateformat", ProcedureV fnDateFormat)
+  , ("help", ProcedureV fnHelp)
   ]
 
 builtinIntAttribs :: forall m. Monad m => BuiltinAttribs Integer m
@@ -1713,6 +1714,20 @@ fnDateFormat = mkFn4 "dateformat"
                   Left str -> autoParseDate defTZ str
                   Right parts -> dateFromParts defTZ parts
       pure . Text.pack . formatTime locale (Text.unpack fmt) . convertTZ tzMay $ date
+
+fnHelp :: forall m. Monad m => Procedure m
+fnHelp = mkFn1 "help"
+          ( "value"
+          , Nothing :: Maybe (Value m)
+          , Just $ TypeDocAny
+          , ""
+          )
+    $ \value -> do
+      case value of
+        ProcedureV (NativeProcedure _ doc _) ->
+          pure (toValue doc :: Value m)
+        _ ->
+          pure NoneV
 
 isUpperVal :: Value m -> Value m
 isUpperVal (StringV txt) = BoolV (Text.all isUpper txt)

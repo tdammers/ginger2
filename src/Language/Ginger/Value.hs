@@ -247,6 +247,13 @@ data TypeDoc
   | TypeDocAlternatives !(Vector Text)
   deriving (Show)
 
+instance ToValue TypeDoc m where
+  toValue TypeDocNone = StringV "none"
+  toValue TypeDocAny = StringV "any"
+  toValue (TypeDocSingle t) = StringV t
+  toValue (TypeDocAlternatives xs) =
+    dictV ["oneof" .= xs]
+
 data ArgumentDoc =
   ArgumentDoc
     { argumentDocName :: !Text
@@ -256,6 +263,15 @@ data ArgumentDoc =
     }
     deriving (Show)
 
+instance ToValue ArgumentDoc m where
+  toValue a =
+    dictV
+      [ "name" .= argumentDocName a
+      , "type" .= argumentDocType a
+      , "default" .= argumentDocDefault a
+      , "description" .= argumentDocDescription a
+      ]
+
 data ProcedureDoc =
   ProcedureDoc
     { procedureDocName :: !Text
@@ -264,6 +280,15 @@ data ProcedureDoc =
     , procedureDocDescription :: !Text
     }
     deriving (Show)
+
+instance ToValue ProcedureDoc m where
+  toValue d =
+    dictV
+      [ "name" .= procedureDocName d
+      , "args" .= procedureDocArgs d
+      , "returnType" .= procedureDocReturnType d
+      , "description" .= procedureDocDescription d
+      ]
 
 data Procedure m
   = NativeProcedure

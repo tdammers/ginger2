@@ -204,7 +204,24 @@ builtinGlobals evalE = Map.fromList $
   , ("replace", ProcedureV fnStrReplace)
   , ("reverse", ProcedureV fnReverse)
   , ("round", ProcedureV fnRound)
-  -- , ("safe", undefined)
+  , ("safe", textBuiltin
+              "builtin:safe"
+              (Just ProcedureDoc
+                { procedureDocName = "safe"
+                , procedureDocArgs =
+                    [ ArgumentDoc
+                        "value"
+                        (Just $ TypeDocSingle "string")
+                        Nothing
+                        ""
+                    ]
+                  , procedureDocReturnType = (Just $ TypeDocSingle "encoded")
+                  , procedureDocDescription = "Mark `value` as pre-encoded HTML."
+                  }
+                )
+              (EncodedV @m . Encoded)
+                  
+    )
   -- , ("selectattr", undefined)
   , ("select", FilterV . NativeFilter $ fnSelect evalE)
   -- , ("slice", undefined)
@@ -410,7 +427,16 @@ builtinStringAttribs = Map.fromList
                     }
                   )
                   (Text.all ((< 128) . ord)))
-  -- , ("isdecimal", ?)
+  , ("isdecimal", textAttrib
+                  "builtin:string:isdecimal"
+                  (Just ProcedureDoc
+                    { procedureDocName = "string.isdecimal"
+                    , procedureDocReturnType = (Just $ TypeDocSingle "bool")
+                    , procedureDocArgs = mempty
+                    , procedureDocDescription = "Check whether a string is a decimal number"
+                    }
+                  )
+                  isDecimal)
   , ("isdigit", textAttrib
                   "builtin:string:isdigit"
                   (Just ProcedureDoc
@@ -1881,6 +1907,24 @@ isBoolean _ _ = FalseV
 isNone :: Value m -> Value m
 isNone NoneV = TrueV
 isNone _ = FalseV
+
+isDecimal :: Text -> Bool
+isDecimal "" = False
+isDecimal t = case Text.splitOn "." t of
+  ["0"] ->
+    True
+  [intpart] ->
+    not (Text.null intpart) &&
+    Text.all isDigit intpart &&
+    not ("0" `Text.isPrefixOf` intpart)
+  ["0", fracpart] ->
+    Text.all isDigit fracpart
+  [intpart, fracpart] ->
+    not (Text.null intpart && Text.null fracpart) &&
+    Text.all isDigit intpart &&
+    not ("0" `Text.isPrefixOf` intpart) &&
+    Text.all isDigit fracpart
+  _ -> False
 
 --------------------------------------------------------------------------------
 -- Text conversion

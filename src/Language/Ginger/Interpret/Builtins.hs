@@ -543,15 +543,14 @@ runReWith matchFunc regexText haystack optsText = do
     pure $ matchFunc regex haystack
 
 fnReMatch :: forall m. Monad m => Procedure m
-fnReMatch = setDescription
+fnReMatch = mkFn3 "regex.match"
               (Text.unlines
-                  [ "Match a regular expression against a string."
-                  , "Returns an array where the first element is the entire " <>
-                    "match, and subsequent elements are matches on " <>
-                    "subexpressions (capture groups)."
-                  ]
-              ) $
-            mkFn3 "regex.match"
+                [ "Match a regular expression against a string."
+                , "Returns an array where the first element is the entire " <>
+                  "match, and subsequent elements are matches on " <>
+                  "subexpressions (capture groups)."
+                ]
+              )
               ( "regex"
               , Nothing
               , Just $ TypeDocAny
@@ -567,10 +566,11 @@ fnReMatch = setDescription
               , Just $ TypeDocAny
               , ""
               )
+              (Just $ TypeDocSingle "list")
   $ runReWith (\r h -> convertMatchOnceText $ RE.matchOnceText r h)
 
 fnReMatches :: forall m. Monad m => Procedure m
-fnReMatches = setDescription
+fnReMatches = mkFn3 "regex.match"
               (Text.unlines
                   [ "Match a regular expression against a string."
                   , "Returns an array of matches, where each match is an " <>
@@ -578,8 +578,7 @@ fnReMatches = setDescription
                     "subsequent elements are matches on subexpressions " <>
                     "(capture groups)."
                   ]
-              ) $
-            mkFn3 "regex.match"
+              )
               ( "regex"
               , Nothing
               , Just $ TypeDocAny
@@ -595,16 +594,16 @@ fnReMatches = setDescription
               , Just $ TypeDocAny
               , ""
               )
+              (Just $ TypeDocSingle "list")
   $ runReWith (\r h -> fmap convertMatchText $ RE.matchAllText r h)
 
 fnReTest :: forall m. Monad m => Procedure m
-fnReTest = setDescription
+fnReTest = mkFn3 "regex.test"
               (Text.unlines
                   [ "Match a regular expression against a string."
                   , "Returns true if at least one match exists, false otherwise."
                   ]
-              ) $
-            mkFn3 "regex.test"
+              )
               ( "regex"
               , Nothing
               , Just $ TypeDocAny
@@ -620,6 +619,7 @@ fnReTest = setDescription
               , Just $ TypeDocAny
               , ""
               )
+              (Just $ TypeDocSingle "bool")
   $ runReWith (\r h -> isJust $ RE.matchOnceText r h)
 
 parseCompOpts :: Text -> RE.CompOption
@@ -642,17 +642,17 @@ convertMatchText matches =
   map fst $ Array.elems matches
 
 fnLength :: forall m. Monad m => Procedure m
-fnLength = setDescription
+fnLength = mkFn1 "length"
               (Text.unlines
                   [ "Get the length of a string, list, or dictionary."
                   ]
-              ) $
-            mkFn1 "length"
+              )
               ( "value"
               , Nothing :: Maybe (Value m)
               , Just $ TypeDocAlternatives [ "string", "list", "dict" ]
               , ""
               )
+              (Just $ TypeDocSingle "int")
   $ \case
       StringV s -> pure $ Text.length s
       ListV xs -> pure $ length xs
@@ -666,33 +666,33 @@ fnLength = setDescription
               (tagNameOf x)
 
 fnEscape :: forall m. Monad m => Procedure m
-fnEscape = setDescription
+fnEscape = mkFn1' "escape"
               (Text.unlines
                   [ "Escape the argument."
                   ]
-              ) $
-            mkFn1' "escape"
+              )
               ( "value"
               , Nothing
               , Just $ TypeDocAny
               , ""
               )
+              (Just $ TypeDocSingle "encoded")
   $ \ctx value ->
         (EncodedV @m) <$>
           encodeWith ctx value
 
 fnToList :: forall m. Monad m => Procedure m
-fnToList = setDescription
+fnToList = mkFn1 "list"
               (Text.unlines
                   [ "Convert a value to a list, if possible"
                   ]
-              ) $
-            mkFn1 "list"
+              )
               ( "value"
               , Nothing :: Maybe (Value m)
               , Just $ TypeDocAny
               , ""
               )
+              (Just $ TypeDocSingle "list")
   $ \case
     ListV xs ->
       pure xs
@@ -724,14 +724,13 @@ fnToList = setDescription
 
 
 fnToFloat :: forall m. Monad m => Procedure m
-fnToFloat = setDescription
+fnToFloat = mkFn2 "float"
               (Text.unlines
                   [ "Convert value to float."
                   , "If `default` is given, values that cannot be converted " <>
                     " to floats will be replaced with this default value." 
                   ]
-              ) $
-            mkFn2 "float"
+              )
               ( "value"
               , Nothing :: Maybe (Value m)
               , Just $ TypeDocAny
@@ -742,6 +741,7 @@ fnToFloat = setDescription
               , Just $ TypeDocAny
               , ""
               )
+              (Just $ TypeDocSingle "float")
   $ \value def ->
   case value of
       IntV i -> pure $ fromIntegral i
@@ -753,14 +753,13 @@ fnToFloat = setDescription
       _ -> pure def
 
 fnToInt :: forall m. Monad m => Procedure m
-fnToInt = setDescription
+fnToInt = mkFn3 "int"
               (Text.unlines
                   [ "Convert value to int."
                   , "If `default` is given, values that cannot be converted " <>
                     " to integers will be replaced with this default value." 
                   ]
-              ) $
-            mkFn3 "int"
+              )
               ( "value"
               , Nothing :: Maybe (Value m)
               , Just $ TypeDocAny
@@ -776,6 +775,7 @@ fnToInt = setDescription
               , Just $ TypeDocAny
               , ""
               )
+              (Just $ TypeDocSingle "int")
   $ \value def _base ->
   case value of
       IntV i -> pure i
@@ -788,32 +788,38 @@ fnToInt = setDescription
 
 fnToString :: forall m. Monad m => Procedure m
 fnToString = mkFn1 "string"
+              "Convert argument to string"
               ( "value"
               , Nothing :: Maybe (Value m)
               , Just $ TypeDocAny
               , ""
               )
+              (Just $ TypeDocSingle "string")
   $ \value ->
     stringify value
 
 fnReverse :: forall m. Monad m => Procedure m
 fnReverse = mkFn1 "reverse"
+              "Reverse a list or string"
               ( "value"
               , Nothing
-              , Just $ TypeDocAny
+              , Just $ TypeDocAlternatives [ "list", "string" ]
               , ""
               )
+              (Just $ TypeDocAlternatives [ "list", "string" ])
   $ \case
       Left t -> pure $ StringV (Text.reverse t)
       Right xs -> pure $ ListV (V.reverse (xs :: Vector (Value m)))
 
 fnItems :: forall m. Monad m => Procedure m
 fnItems = mkFn1 "items"
+            "Convert a dict to a list of its elements without the keys."
             ( "value"
             , Nothing
-            , Just $ TypeDocAny
+            , Just $ TypeDocSingle "dict"
             , ""
             )
+            (Just $ TypeDocSingle "list")
   $ \value ->
       pure (Map.toAscList value :: [(Scalar, Value m)])
 
@@ -834,19 +840,20 @@ instance (Monad m) => FromValue DictSortBy m where
 
 fnSort :: forall m. Monad m => Procedure m
 fnSort = mkFn4 "sort"
+              ""
               ( "value"
               , Nothing :: Maybe [Value m]
-              , Just $ TypeDocAny
+              , Just $ TypeDocSingle "list"
               , ""
               )
               ( "reverse"
               , Just False
-              , Just $ TypeDocAny
+              , Just $ TypeDocSingle "bool"
               , ""
               )
               ( "case_sensitive"
               , Just False
-              , Just $ TypeDocAny
+              , Just $ TypeDocSingle "bool"
               , ""
               )
               ( "attribute"
@@ -854,6 +861,7 @@ fnSort = mkFn4 "sort"
               , Just $ TypeDocAny
               , ""
               )
+              (Just $ TypeDocSingle "list")
   $ \value reverseSort caseSensitive attributeMay -> do
     let cmp a b = if caseSensitive then
                     compare (fst a) (fst b)
@@ -875,26 +883,28 @@ fnSort = mkFn4 "sort"
 
 fnDictsort :: forall m. Monad m => Procedure m
 fnDictsort = mkFn4 "dictsort"
+              "Sort a dict, returning a list of key-value pairs."
               ( "value"
               , Nothing :: Maybe (Map Scalar (Value m))
-              , Just $ TypeDocAny
+              , Just $ TypeDocSingle "dict"
               , ""
               )
               ( "case_sensitive"
               , Just False
-              , Just $ TypeDocAny
+              , Just $ TypeDocSingle "bool"
               , ""
               )
               ( "by"
               , Just ByKey
-              , Just $ TypeDocAny
-              , ""
+              , Just $ TypeDocSingle "string"
+              , "One of 'key', 'value'"
               )
               ( "reverse"
               , Just False
-              , Just $ TypeDocAny
+              , Just $ TypeDocSingle "bool"
               , ""
               )
+              (Just $ TypeDocSingle "list")
   $ \value caseSensitive by reverseSort -> do
     let cmp a b = if caseSensitive then
                     compare (fst a) (fst b)
@@ -1165,21 +1175,23 @@ fnMap evalE scrutineeE args ctx env = runExceptT $ do
 
 fnRound :: forall m. Monad m => Procedure m
 fnRound = mkFn3 "round"
+              "Round a floating-point value."
               ( "value"
               , Nothing :: Maybe Double
-              , Just $ TypeDocAny
+              , Just $ TypeDocSingle "float"
               , ""
               )
               ( "precision"
               , Just 0 :: Maybe Integer
-              , Just $ TypeDocAny
+              , Just $ TypeDocSingle "int"
               , ""
               )
               ( "method"
               , Just "common"
-              , Just $ TypeDocAny
-              , ""
+              , Just $ TypeDocSingle "string"
+              , "One of 'common', 'ceil', 'floor'."
               )
+              (Just $ TypeDocAlternatives ["int", "float"])
               $ \value precision method -> do
   (r :: Double -> Integer) <- case method of
     "common" -> pure (floor . (+ 0.5))
@@ -1194,63 +1206,68 @@ fnRound = mkFn3 "round"
 
 fnStrReplace :: Monad m => Procedure m
 fnStrReplace = mkFn4 "replace"
+                "String search-and-replace."
                 ( "value"
                 , Nothing
-                , Just $ TypeDocAny
+                , Just $ TypeDocSingle "string"
                 , ""
                 )
                 ( "old"
                 , Nothing
-                , Just $ TypeDocAny
-                , ""
+                , Just $ TypeDocSingle "string"
+                , "String to search for"
                 )
                 ( "new"
                 , Nothing
-                , Just $ TypeDocAny
-                , ""
+                , Just $ TypeDocSingle "string"
+                , "Replacement"
                 )
                 ( "count"
                 , Just (Nothing :: Maybe Int)
                 , Just $ TypeDocAny
-                , ""
+                , "Maximum number of replacements."
                 )
-                $ \value old new countMay -> do
-  let parts = Text.splitOn old value
-  case countMay of
-    Nothing -> pure $ Text.intercalate new parts
-    Just 0 -> pure value
-    Just count | count < length parts ->
-      pure $
-        Text.intercalate new (take count parts) <>
-        new <>
-        Text.intercalate old (drop count parts)
-    Just _ -> pure $ Text.intercalate new parts
+                (Just $ TypeDocSingle "string")
+  $ \value old new countMay -> do
+    let parts = Text.splitOn old value
+    case countMay of
+      Nothing -> pure $ Text.intercalate new parts
+      Just 0 -> pure value
+      Just count | count < length parts ->
+        pure $
+          Text.intercalate new (take count parts) <>
+          new <>
+          Text.intercalate old (drop count parts)
+      Just _ -> pure $ Text.intercalate new parts
 
 
 fnStrStrip :: Monad m => Procedure m
 fnStrStrip = mkFn2 "strip"
+                "Strip whitespace or selected characters from both ends of a string."
                 ( "value"
                 , Nothing
-                , Just $ TypeDocAny
+                , Just $ TypeDocSingle "string"
                 , ""
                 )
                 ( "chars"
                 , Just Nothing
-                , Just $ TypeDocAny
-                , ""
+                , Just $ TypeDocSingle "string"
+                , "If specified: characters to strip."
                 )
-                $ \value charsMay -> do
-  case charsMay of
-    Nothing -> pure $ Text.strip value
-    Just charsText -> do
-      let chars = Text.unpack charsText
-      pure $
-        Text.dropWhile (`elem` chars) .
-        Text.dropWhileEnd (`elem` chars) $
-        value
+                (Just $ TypeDocSingle "string")
+  $ \value charsMay -> do
+    case charsMay of
+      Nothing -> pure $ Text.strip value
+      Just charsText -> do
+        let chars = Text.unpack charsText
+        pure $
+          Text.dropWhile (`elem` chars) .
+          Text.dropWhileEnd (`elem` chars) $
+          value
 
 fnStrLStrip :: Monad m => Procedure m
 fnStrLStrip = mkFn2 "lstrip"
+                "Strip whitespace or selected characters from the beginning of a string."
                 ( "value"
                 , Nothing
                 , Just $ TypeDocAny
@@ -1259,17 +1276,19 @@ fnStrLStrip = mkFn2 "lstrip"
                 ( "chars"
                 , Just Nothing
                 , Just $ TypeDocAny
-                , ""
+                , "If specified: characters to strip."
                 )
-                $ \value charsMay -> do
-  case charsMay of
-    Nothing -> pure $ Text.stripStart value
-    Just charsText -> do
-      let chars = Text.unpack charsText
-      pure $ Text.dropWhile (`elem` chars) value
+                (Just $ TypeDocSingle "string")
+  $ \value charsMay -> do
+    case charsMay of
+      Nothing -> pure $ Text.stripStart value
+      Just charsText -> do
+        let chars = Text.unpack charsText
+        pure $ Text.dropWhile (`elem` chars) value
 
 fnStrRStrip :: Monad m => Procedure m
 fnStrRStrip = mkFn2 "rstrip"
+                "Strip whitespace or selected characters from the end of a string."
                 ( "value"
                 , Nothing
                 , Just $ TypeDocAny
@@ -1278,17 +1297,19 @@ fnStrRStrip = mkFn2 "rstrip"
                 ( "chars"
                 , Just Nothing
                 , Just $ TypeDocAny
-                , ""
+                , "If specified: characters to strip."
                 )
-                $ \value charsMay -> do
-  case charsMay of
-    Nothing -> pure $ Text.stripEnd value
-    Just charsText -> do
-      let chars = Text.unpack charsText
-      pure $ Text.dropWhileEnd (`elem` chars) value
+                (Just $ TypeDocSingle "string")
+  $ \value charsMay -> do
+    case charsMay of
+      Nothing -> pure $ Text.stripEnd value
+      Just charsText -> do
+        let chars = Text.unpack charsText
+        pure $ Text.dropWhileEnd (`elem` chars) value
 
 fnToJSON :: forall m. Monad m => Procedure m
 fnToJSON = mkFn2 "tojson"
+              "Convert value to JSON"
               ( "value"
               , Nothing :: Maybe (Value m)
               , Just $ TypeDocAny
@@ -1299,26 +1320,29 @@ fnToJSON = mkFn2 "tojson"
               , Just $ TypeDocAny
               , ""
               )
+              (Just $ TypeDocSingle "string")
   $ \value _indentMay ->
     pure . Text.decodeUtf8 . LBS.toStrict $ JSON.encode value
 
 fnJoin :: forall m. Monad m => Procedure m
 fnJoin = mkFn3 "join"
+                "Join an iterable into a string"
                 ( "iterable"
                 , Nothing :: Maybe [Value m]
-                , Just $ TypeDocAny
+                , Just $ TypeDocSingle "list"
                 , ""
                 )
                 ( "d"
                 , Just "" :: Maybe Text
-                , Just $ TypeDocAny
-                , ""
+                , Just $ TypeDocSingle "string"
+                , "Default value to use to replace empty elements"
                 )
                 ( "attr"
                 , Just Nothing :: Maybe (Maybe Text)
                 , Just $ TypeDocAny
-                , ""
+                , "If given, an attribute to pick from each element"
                 )
+                (Just $ TypeDocSingle "string")
                 $ \iterable d attrMay -> do
   iterable' <- case attrMay of
     Nothing -> pure iterable
@@ -1331,36 +1355,42 @@ fnJoin = mkFn3 "join"
 
 fnStrJoin :: Monad m => Procedure m
 fnStrJoin = mkFn2 "join"
+                ("`str.join(iterable)` joins `iterable` into a string, using " <>
+                 "`str` as a separator."
+                )
                 ( "value"
                 , Nothing
-                , Just $ TypeDocAny
+                , Just $ TypeDocSingle "string"
                 , ""
                 )
                 ( "iterable"
                 , Just []
-                , Just $ TypeDocAny
+                , Just $ TypeDocSingle "list"
                 , ""
                 )
+                (Just $ TypeDocSingle "string")
                 $ \value iterable -> do
   pure $ Text.intercalate value iterable
 
 fnStrSplit :: Monad m => Procedure m
 fnStrSplit = mkFn3 "split"
+                "Split a string by a separator."
                 ( "value"
                 , Nothing
-                , Just $ TypeDocAny
+                , Just $ TypeDocSingle "string"
                 , ""
                 )
                 ( "sep"
                 , Just Nothing
-                , Just $ TypeDocAny
+                , Just $ TypeDocSingle "string"
                 , ""
                 )
                 ( "maxsplit"
                 , Just Nothing
-                , Just $ TypeDocAny
-                , ""
+                , Just $ TypeDocSingle "int"
+                , "Maximum number of splits. Unlimited if not specified."
                 )
+                (Just $ TypeDocSingle "list")
                 $ \value sepMay maxsplitMay -> do
   items <- case sepMay of
     Nothing -> pure . Text.words . Text.strip $ value
@@ -1379,26 +1409,28 @@ fnStrSplit = mkFn3 "split"
 
 fnStrStartswith :: Monad m => Procedure m
 fnStrStartswith = mkFn4 "startswith"
+                  "Check whether a string starts with a given prefix."
                   ( "value"
                   , Nothing
-                  , Just $ TypeDocAny
+                  , Just $ TypeDocSingle "string"
                   , ""
                   )
                   ( "prefix"
                   , Nothing
-                  , Just $ TypeDocAny
+                  , Just $ TypeDocSingle "string"
                   , ""
                   )
                   ( "start"
                   , Just 0
-                  , Just $ TypeDocAny
+                  , Just $ TypeDocSingle "int"
                   , ""
                   )
                   ( "end"
                   , Just Nothing
-                  , Just $ TypeDocAny
+                  , Just $ TypeDocSingle "int"
                   , ""
                   )
+                  (Just $ TypeDocSingle "bool")
                   $ \value prefix start endMay -> do
     let value' = case endMay of
           Nothing -> Text.drop start value
@@ -1407,26 +1439,28 @@ fnStrStartswith = mkFn4 "startswith"
 
 fnStrEndswith :: Monad m => Procedure m
 fnStrEndswith = mkFn4 "endswith"
+                  "Check whether a string ends with a given suffix."
                   ( "value"
                   , Nothing
-                  , Just $ TypeDocAny
+                  , Just $ TypeDocSingle "string"
                   , ""
                   )
                   ( "suffix"
                   , Nothing
-                  , Just $ TypeDocAny
+                  , Just $ TypeDocSingle "string"
                   , ""
                   )
                   ( "start"
                   , Just 0
-                  , Just $ TypeDocAny
+                  , Just $ TypeDocSingle "int"
                   , ""
                   )
                   ( "end"
                   , Just Nothing
-                  , Just $ TypeDocAny
+                  , Just $ TypeDocSingle "int"
                   , ""
                   )
+                  (Just $ TypeDocSingle "bool")
                   $ \value suffix start endMay -> do
     let value' = case endMay of
           Nothing -> Text.drop start value
@@ -1435,21 +1469,23 @@ fnStrEndswith = mkFn4 "endswith"
 
 fnStrEncode :: Monad m => Procedure m
 fnStrEncode = mkFn3 "encode"
+                "Encode string into the selected encoding."
                 ( "value"
                 , Nothing
-                , Just $ TypeDocAny
+                , Just $ TypeDocSingle "string"
                 , ""
                 )
                 ( "encoding"
                 , Just "utf-8"
-                , Just $ TypeDocAny
-                , ""
+                , Just $ TypeDocSingle "string"
+                , "Encoding. One of 'ascii', 'utf8' (default), 'utf16le', 'utf16be', 'utf32le', 'utf32be'"
                 )
                 ( "errors"
                 , Just ("strict" :: Text)
                 , Just $ TypeDocAny
                 , ""
                 )
+                (Just $ TypeDocSingle "encoded")
                 $ \value encoding _errors -> do
   func <- case Text.filter isAlphaNum . Text.toCaseFold $ encoding of
     "ascii" -> pure encodeASCII
@@ -1470,26 +1506,28 @@ fnStrEncode = mkFn3 "encode"
 
 fnStrCount :: Monad m => Procedure m
 fnStrCount = mkFn4 "count"
+              "Count the number of occurrences of a substring."
               ( "value"
               , Nothing
-              , Just $ TypeDocAny
+              , Just $ TypeDocSingle "string"
               , ""
               )
               ( "sub"
               , Nothing
-              , Just $ TypeDocAny
-              , ""
+              , Just $ TypeDocSingle "string"
+              , "Substring to search for"
               )
               ( "start"
               , Just 0
-              , Just $ TypeDocAny
+              , Just $ TypeDocSingle "int"
               , ""
               )
               ( "end"
               , Just Nothing
-              , Just $ TypeDocAny
+              , Just $ TypeDocSingle "int"
               , ""
               )
+              (Just $ TypeDocSingle "int")
               $ \value sub start endMay -> do
     let value' = case endMay of
           Nothing -> Text.drop start value
@@ -1498,21 +1536,23 @@ fnStrCount = mkFn4 "count"
 
 fnCenter :: Monad m => Procedure m
 fnCenter = mkFn3 "center"
+            "Pad string on both sides to center it in the given space"
             ( "value"
             , Nothing
-            , Just $ TypeDocAny
+            , Just $ TypeDocSingle "string"
             , ""
             )
             ( "width"
             , Just 80
-            , Just $ TypeDocAny
+            , Just $ TypeDocSingle "int"
             , ""
             )
             ( "fillchar"
             , Just " "
-            , Just $ TypeDocAny
+            , Just $ TypeDocSingle "string"
             , ""
             )
+            (Just $ TypeDocSingle "string")
             $ \value width fillchar' -> do
     let fillchar = Text.take 1 . (<> " ") $ fillchar'
     let paddingTotal = max 0 $ fromInteger width - Text.length value
@@ -1548,16 +1588,18 @@ instance Monad m => FromValue FileSize m where
 
 fnFilesizeFormat :: Monad m => Procedure m
 fnFilesizeFormat = mkFn2 "filesizeformat"
+                    "Format value as a human-readable file size."
                     ( "value"
                     , Nothing
-                    , Just $ TypeDocAny
+                    , Just $ TypeDocSingle "number"
                     , ""
                     )
                     ( "binary"
                     , Just False
-                    , Just $ TypeDocAny
-                    , ""
+                    , Just $ TypeDocSingle "bool"
+                    , "If set, use binary units (kiB, MiB, ...) instead of decimal (kB, MB, ...)"
                     )
+                    (Just $ TypeDocSingle "string")
   $ \(FileSize value) binary -> do
       let (multiplier, units) =
             if binary then
@@ -1586,6 +1628,7 @@ fnFilesizeFormat = mkFn2 "filesizeformat"
 
 fnBatch :: forall m. Monad m => Procedure m
 fnBatch = mkFn3 "batch"
+            "Split up a list into chunks of length `linecount`."
             ( "value"
             , Nothing
             , Just $ TypeDocAny
@@ -1593,14 +1636,15 @@ fnBatch = mkFn3 "batch"
             )
             ( "linecount"
             , Nothing
-            , Just $ TypeDocAny
-            , ""
+            , Just $ TypeDocSingle "int"
+            , "Number of items per chunk. Unlimited if not specified."
             )
             ( "fill_with"
             , Just Nothing
             , Just $ TypeDocAny
-            , ""
+            , "Filler to pad shorter chunks with. If not specified, don't pad."
             )
+            (Just $ TypeDocSingle "list")
             $ \value linecount fillWithMay -> do
   pure $ chunksOf fillWithMay linecount value
   where
@@ -1619,11 +1663,13 @@ fnBatch = mkFn3 "batch"
 
 fnFirst :: forall m. Monad m => Procedure m
 fnFirst = mkFn1 "first"
+            "Get the first element from a list, or the first character from a string."
             ( "value"
             , Nothing :: Maybe (Value m)
-            , Just $ TypeDocAny
+            , Just $ TypeDocAlternatives [ "list", "string", "bytes" ]
             , ""
             )
+            (Just $ TypeDocAny)
   $ \case
     ListV v -> case V.uncons v of
                   Just (x, _) -> pure x
@@ -1634,12 +1680,14 @@ fnFirst = mkFn1 "first"
     x -> throwError $ ArgumentError "first" "value" "list or string" (tagNameOf x)
       
 fnLast :: forall m. Monad m => Procedure m
-fnLast = mkFn1 "first"
+fnLast = mkFn1 "last"
+            "Get the last element from a list, or the last character from a string."
             ( "value"
             , Nothing :: Maybe (Value m)
-            , Just $ TypeDocAny
+            , Just $ TypeDocAlternatives [ "list", "string", "bytes" ]
             , ""
             )
+            (Just $ TypeDocAny)
   $ \case
     ListV v -> case V.unsnoc v of
                   Just (_, x) -> pure x
@@ -1729,26 +1777,45 @@ convertTZ (Just tz) = utcToZonedTime tz . zonedTimeToUTC
 
 fnDateFormat :: forall m. Monad m => Procedure m
 fnDateFormat = mkFn4 "dateformat"
+                (Text.unlines
+                  [ "Format a date/time value."
+                  , "Format strings follow the specification found here:"
+                  , "https://hackage.haskell.org/package/time-1.14/docs/Data-Time-Format.html#v:formatTime"
+                  , "Accepted input formats:"
+                  , "- `%Y-%m-%dT%H:%M:%S%Q%Z`"
+                  , "- `%Y-%m-%d %H:%M:%S%Q`"
+                  , "- `%Y-%m-%d %H:%M:%S%Q%z`"
+                  , "- `%Y-%m-%d %H:%M:%S%Q%Z`"
+                  , "- `%Y-%m-%d`"
+                  ]
+                )
                 ( "date"
                 , Nothing :: Maybe (Either Text [Value m])
-                , Just $ TypeDocAny
-                , ""
+                , Just $ TypeDocAlternatives [ "string", "list" ]
+                , "May be given as a formatted date, or as a list " <>
+                  "of `[ year, month, day, hours, minutes, seconds, " <>
+                  "timezone ]`. " <>
+                  "Partial lists will be padded with appropriate defaults."
                 )
                 ( "format"
                 , Just "%c"
-                , Just $ TypeDocAny
+                , Just $ TypeDocSingle "string"
                 , ""
                 )
                 ( "tz"
                 , Just Nothing :: Maybe (Maybe (Value m))
-                , Just $ TypeDocAny
-                , ""
+                , Just $ TypeDocAlternatives [ "string", "int", "list" ]
+                , "Time zone. May be given as a string specifying an offset " <>
+                  "(±HHMM), an integer offset in minutes, or a list " <>
+                  "containing 3 elements: offset in minues (int), " <>
+                  "summer-only (bool), and timezone name (string)."
                 )
                 ( "locale"
                 , Just Nothing :: Maybe (Maybe Text)
                 , Just $ TypeDocAny
-                , ""
+                , "Select a locale. Not yet implemented, ignored."
                 )
+                (Just $ TypeDocSingle "string")
     $ \dateRaw fmt tzVal _localeMay -> do
       let tzMay = parseTZ =<< tzVal
           defTZ = fromMaybe utc tzMay
@@ -1769,11 +1836,13 @@ fnDateFormat = mkFn4 "dateformat"
 
 fnHelp :: forall m. Monad m => Procedure m
 fnHelp = mkFn1 "help"
+          "Get documentation for the given value, if available."
           ( "value"
           , Nothing :: Maybe (Value m)
           , Just $ TypeDocAny
           , ""
           )
+          (Just $ TypeDocSingle "dict")
     $ \value -> do
       case value of
         ProcedureV (NativeProcedure _ doc _) ->
@@ -2129,14 +2198,6 @@ fnArg context name argValues = do
   argV <- fnMaybeArg context (identifierName name) $ Map.lookup name argValues
   eitherExceptM $ fromValue argV
 
-setDescription :: Text -> Procedure m -> Procedure m
-setDescription desc (NativeProcedure oid (Just doc) f) =
-  NativeProcedure
-    oid
-    (Just $ doc { procedureDocDescription = desc })
-    f
-setDescription _ p = p
-
 describeArg :: Identifier
             -> Maybe (Value m)
             -> Maybe TypeDoc
@@ -2154,15 +2215,17 @@ mkFn0' :: ( Monad m
          , ToValue r m
          )
       => Text
+      -> Text
+      -> Maybe TypeDoc
       -> (Context m -> ExceptT RuntimeError m r)
       -> Procedure m
-mkFn0' funcName f =
+mkFn0' funcName desc retType f =
   NativeProcedure (ObjectID $ "builtin:" <> funcName)
     (Just ProcedureDoc
       { procedureDocName = funcName
       , procedureDocArgs = mempty
-      , procedureDocReturnType = Nothing
-      , procedureDocDescription = ""
+      , procedureDocReturnType = retType
+      , procedureDocDescription = desc
       }
     )
     $ \args ctx -> runExceptT $ do
@@ -2177,10 +2240,12 @@ mkFn0 :: ( Monad m
          , ToValue r m
          )
       => Text
+      -> Text
+      -> Maybe TypeDoc
       -> (ExceptT RuntimeError m r)
       -> Procedure m
-mkFn0 funcName f =
-  mkFn0' funcName (const f)
+mkFn0 funcName desc retType f =
+  mkFn0' funcName desc retType (const f)
 
 mkFn1' :: forall m a r.
           ( Monad m
@@ -2189,18 +2254,20 @@ mkFn1' :: forall m a r.
           , ToValue r m
           )
        => Text
+       -> Text
        -> (Identifier, Maybe a, Maybe TypeDoc, Text)
+       -> Maybe TypeDoc
        -> (Context m -> a -> ExceptT RuntimeError m r)
        -> Procedure m
-mkFn1' funcName (argname1, default1, typedoc1, argdesc1) f =
+mkFn1' funcName desc (argname1, default1, typedoc1, argdesc1) retType f =
   NativeProcedure (ObjectID $ "builtin:" <> funcName)
     (Just ProcedureDoc
       { procedureDocName = funcName
       , procedureDocArgs =
         [ describeArg @m argname1 (toValue <$> default1) typedoc1 argdesc1
         ]
-      , procedureDocReturnType = Nothing
-      , procedureDocDescription = ""
+      , procedureDocReturnType = retType
+      , procedureDocDescription = desc
       }
     )
     $ \args ctx -> runExceptT $ do
@@ -2219,11 +2286,13 @@ mkFn1 :: ( Monad m
          , ToValue r m
          )
       => Text
+      -> Text
       -> (Identifier, Maybe a, Maybe TypeDoc, Text)
+      -> Maybe TypeDoc
       -> (a -> ExceptT RuntimeError m r)
       -> Procedure m
-mkFn1 funcName a f =
-  mkFn1' funcName a (const f)
+mkFn1 funcName a desc retType f =
+  mkFn1' funcName a desc retType (const f)
 
 mkFn2' :: forall m a1 a2 r.
          ( Monad m
@@ -2234,13 +2303,16 @@ mkFn2' :: forall m a1 a2 r.
          , ToValue r m
          )
       => Text
+      -> Text
       -> (Identifier, Maybe a1, Maybe TypeDoc, Text)
       -> (Identifier, Maybe a2, Maybe TypeDoc, Text)
+      -> Maybe TypeDoc
       -> (Context m -> a1 -> a2 -> ExceptT RuntimeError m r)
       -> Procedure m
-mkFn2' funcName
+mkFn2' funcName desc
     (argname1, default1, typedoc1, argdesc1)
     (argname2, default2, typedoc2, argdesc2)
+    retType
     f =
   NativeProcedure (ObjectID $ "builtin:" <> funcName)
     (Just ProcedureDoc
@@ -2249,8 +2321,8 @@ mkFn2' funcName
         [ describeArg @m argname1 (toValue <$> default1) typedoc1 argdesc1
         , describeArg @m argname2 (toValue <$> default2) typedoc2 argdesc2
         ]
-      , procedureDocReturnType = Nothing
-      , procedureDocDescription = ""
+      , procedureDocReturnType = retType
+      , procedureDocDescription = desc
       }
     )
     $ \args ctx -> runExceptT $ do
@@ -2273,12 +2345,14 @@ mkFn2 :: ( Monad m
          , ToValue r m
          )
       => Text
+      -> Text
       -> (Identifier, Maybe a1, Maybe TypeDoc, Text)
       -> (Identifier, Maybe a2, Maybe TypeDoc, Text)
+      -> Maybe TypeDoc
       -> (a1 -> a2 -> ExceptT RuntimeError m r)
       -> Procedure m
-mkFn2 funcName a b f =
-  mkFn2' funcName a b (const f)
+mkFn2 funcName desc a b retType f =
+  mkFn2' funcName desc a b retType (const f)
 
 mkFn3' :: forall m a1 a2 a3 r.
          ( Monad m
@@ -2291,15 +2365,18 @@ mkFn3' :: forall m a1 a2 a3 r.
          , ToValue r m
          )
       => Text
+      -> Text
       -> (Identifier, Maybe a1, Maybe TypeDoc, Text)
       -> (Identifier, Maybe a2, Maybe TypeDoc, Text)
       -> (Identifier, Maybe a3, Maybe TypeDoc, Text)
+      -> Maybe TypeDoc
       -> (Context m -> a1 -> a2 -> a3 -> ExceptT RuntimeError m r)
       -> Procedure m
-mkFn3' funcName
+mkFn3' funcName desc
     (argname1, default1, typedoc1, argdesc1)
     (argname2, default2, typedoc2, argdesc2)
     (argname3, default3, typedoc3, argdesc3)
+    retType
     f =
   NativeProcedure (ObjectID $ "builtin:" <> funcName)
     (Just ProcedureDoc
@@ -2309,8 +2386,8 @@ mkFn3' funcName
         , describeArg @m argname2 (toValue <$> default2) typedoc2 argdesc2
         , describeArg @m argname3 (toValue <$> default3) typedoc3 argdesc3
         ]
-      , procedureDocReturnType = Nothing
-      , procedureDocDescription = ""
+      , procedureDocReturnType = retType
+      , procedureDocDescription = desc
       }
     )
     $ \args ctx -> runExceptT $ do
@@ -2337,13 +2414,15 @@ mkFn3 :: ( Monad m
          , ToValue r m
          )
       => Text
+      -> Text
       -> (Identifier, Maybe a1, Maybe TypeDoc, Text)
       -> (Identifier, Maybe a2, Maybe TypeDoc, Text)
       -> (Identifier, Maybe a3, Maybe TypeDoc, Text)
+      -> Maybe TypeDoc
       -> (a1 -> a2 -> a3 -> ExceptT RuntimeError m r)
       -> Procedure m
-mkFn3 funcName a b c f =
-  mkFn3' funcName a b c (const f)
+mkFn3 funcName desc a b c retType f =
+  mkFn3' funcName desc a b c retType (const f)
 
 mkFn4' :: forall m a1 a2 a3 a4 r.
          ( Monad m
@@ -2358,17 +2437,20 @@ mkFn4' :: forall m a1 a2 a3 a4 r.
          , ToValue r m
          )
       => Text
+      -> Text
       -> (Identifier, Maybe a1, Maybe TypeDoc, Text)
       -> (Identifier, Maybe a2, Maybe TypeDoc, Text)
       -> (Identifier, Maybe a3, Maybe TypeDoc, Text)
       -> (Identifier, Maybe a4, Maybe TypeDoc, Text)
+      -> Maybe TypeDoc
       -> (Context m -> a1 -> a2 -> a3 -> a4 -> ExceptT RuntimeError m r)
       -> Procedure m
-mkFn4' funcName
+mkFn4' funcName desc
     (argname1, default1, typedoc1, argdesc1)
     (argname2, default2, typedoc2, argdesc2)
     (argname3, default3, typedoc3, argdesc3)
     (argname4, default4, typedoc4, argdesc4)
+    retType
     f =
   NativeProcedure (ObjectID $ "builtin:" <> funcName)
     (Just ProcedureDoc
@@ -2379,8 +2461,8 @@ mkFn4' funcName
         , describeArg @m argname3 (toValue <$> default3) typedoc3 argdesc3
         , describeArg @m argname4 (toValue <$> default4) typedoc4 argdesc4
         ]
-      , procedureDocReturnType = Nothing
-      , procedureDocDescription = ""
+      , procedureDocReturnType = retType
+      , procedureDocDescription = desc
       }
     )
     $ \args ctx -> runExceptT $ do
@@ -2411,11 +2493,13 @@ mkFn4 :: ( Monad m
          , ToValue r m
          )
       => Text
+      -> Text
       -> (Identifier, Maybe a1, Maybe TypeDoc, Text)
       -> (Identifier, Maybe a2, Maybe TypeDoc, Text)
       -> (Identifier, Maybe a3, Maybe TypeDoc, Text)
       -> (Identifier, Maybe a4, Maybe TypeDoc, Text)
+      -> Maybe TypeDoc
       -> (a1 -> a2 -> a3 -> a4 -> ExceptT RuntimeError m r)
       -> Procedure m
-mkFn4 funcName a b c d f =
-  mkFn4' funcName a b c d (const f)
+mkFn4 funcName desc a b c d retType f =
+  mkFn4' funcName desc a b c d retType (const f)

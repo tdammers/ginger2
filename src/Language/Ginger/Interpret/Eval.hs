@@ -707,7 +707,9 @@ makeSuper (Just lblock) = do
   pure $ dictV
     [ "__call__" .=
         ProcedureV
-          (mkFn0 "super()" $
+          (mkFn0 "super()"
+              "Evaluate the parent template"
+              Nothing $
               eitherExceptM $
                 runGingerT
                   (evalS . blockBody . loadedBlock $ lblock)

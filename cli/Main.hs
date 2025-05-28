@@ -1,18 +1,27 @@
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedLists #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
+
 {-# OPTIONS_GHC -Werror #-}
 
 module Main where
 
 import Language.Ginger
+import Language.Ginger.Interpret.Builtins (textBuiltin)
+import Language.Ginger.Value
 
+import qualified CMark
+import CMark (commonmarkToHtml)
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
-import System.FilePath (takeDirectory, takeFileName, takeExtension, (</>) )
-import System.Directory (getCurrentDirectory)
-import System.IO (hPutStrLn, stderr)
 import Options.Applicative
-import Data.Map.Strict (Map)
+import System.Directory (getCurrentDirectory)
+import System.FilePath (takeDirectory, takeFileName, takeExtension, (</>) )
+import System.IO (hPutStrLn, stderr)
 
 import qualified Data.Yaml as YAML
 
@@ -188,7 +197,7 @@ runWithOptions po = do
     (poDialect po)
     encoder
     templateName
-    vars >>= printResultTo (poOutputFile po)
+    (vars <> extensions) >>= printResultTo (poOutputFile po)
 
 printResult :: Either RuntimeError Encoded -> IO ()
 printResult = printResultTo Nothing
@@ -206,3 +215,25 @@ demo = runWithOptions $ defProgramOptions
   { poSourceFile = Just "./test.html"
   , poEncoder = TextEncoder
   }
+
+extensions :: forall m. Monad m => Map Identifier (Value m)
+extensions = Map.fromList
+  [ ("markdown"
+    , textBuiltin
+        "extensions:markdown"
+        (Just ProcedureDoc
+          { procedureDocName = "markdown"
+          , procedureDocArgs =
+              [ ArgumentDoc
+                  "value"
+                  (Just $ TypeDocSingle "string")
+                  Nothing
+                  "Markdown source (CommonMark)"
+              ]
+          , procedureDocReturnType = (Just $ TypeDocSingle "encoded")
+          , procedureDocDescription = "Convert CommonMark to HTML"
+          }
+        )
+        (EncodedV @m . Encoded . commonmarkToHtml [CMark.optSafe])
+    )
+  ]

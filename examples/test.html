@@ -33,7 +33,7 @@
             {%- if doc is not none -%}
                 {%- if doc.description != '' -%}
                     {% for l in doc.description.split('\n') %}
-                    <p>{{ l }}</p>    
+                    <p>{{ l|markdown }}</p>    
                     {% endfor %}
                 {%- endif -%}
             {%- endif -%}

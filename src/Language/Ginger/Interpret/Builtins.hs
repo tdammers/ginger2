@@ -78,7 +78,7 @@ builtinGlobals evalE = Map.fromList $
                         ""
                     ]
                   , procedureDocReturnType = (Just $ TypeDocSingle "number")
-                  , procedureDocDescription = ""
+                  , procedureDocDescription = "Absolute of a number."
                   }
                 )
                abs abs)
@@ -98,7 +98,11 @@ builtinGlobals evalE = Map.fromList $
                       ""
                   ]
                 , procedureDocReturnType = (Just $ TypeDocAny)
-                , procedureDocDescription = ""
+                , procedureDocDescription = Text.unlines
+                    [ "Get a named attribute from a `dict` or dict-like object."
+                    , "Unlike `[]` or dot member access, this will only look " <>
+                      "at attributes, not items."
+                    ]
                 }
               )
                $ \x y -> case y :: Value m of
@@ -119,7 +123,7 @@ builtinGlobals evalE = Map.fromList $
                               ""
                           ]
                         , procedureDocReturnType = (Just $ TypeDocSingle "string")
-                        , procedureDocDescription = "Convert value to title case."
+                        , procedureDocDescription = "Convert `value` to title case."
                         }
                       )
                       Text.toTitle)
@@ -140,7 +144,7 @@ builtinGlobals evalE = Map.fromList $
                         ""
                     ]
                   , procedureDocReturnType = (Just $ TypeDocSingle "bool")
-                  , procedureDocDescription = "Check if value is an even number"
+                  , procedureDocDescription = "Check if `value` is an even number"
                   }
                 )
                 even)
@@ -170,7 +174,7 @@ builtinGlobals evalE = Map.fromList $
                         ""
                     ]
                   , procedureDocReturnType = (Just $ TypeDocSingle "string")
-                  , procedureDocDescription = "Convert value to lowercase."
+                  , procedureDocDescription = "Convert `value` to lowercase."
                   }
                 )
                 Text.toLower)
@@ -189,7 +193,7 @@ builtinGlobals evalE = Map.fromList $
                       ""
                   ]
                 , procedureDocReturnType = (Just $ TypeDocSingle "bool")
-                , procedureDocDescription = "Checks if value is an odd number."
+                , procedureDocDescription = "Checks if `value` is an odd number."
                 }
               )
               odd)
@@ -221,7 +225,7 @@ builtinGlobals evalE = Map.fromList $
                         ""
                     ]
                   , procedureDocReturnType = (Just $ TypeDocSingle "string")
-                  , procedureDocDescription = "Convert value to title case."
+                  , procedureDocDescription = "Convert `value` to title case."
                   }
                 )
                 Text.toTitle)
@@ -241,7 +245,7 @@ builtinGlobals evalE = Map.fromList $
                         ""
                     ]
                   , procedureDocReturnType = (Just $ TypeDocSingle "string")
-                  , procedureDocDescription = "Convert value to uppercase."
+                  , procedureDocDescription = "Convert `value` to uppercase."
                   }
                 )
                 Text.toUpper)
@@ -286,7 +290,11 @@ builtinIntAttribs = Map.fromList
                       { procedureDocName = "int.bit_count"
                       , procedureDocArgs = mempty
                       , procedureDocReturnType = (Just $ TypeDocSingle "int")
-                      , procedureDocDescription = ""
+                      , procedureDocDescription =
+                          Text.unlines 
+                            [ "Bit count (popcount)."
+                            , "Counts the number of set bits in an integer."
+                            ]
                       }
                     )
                     popCount)
@@ -318,7 +326,13 @@ builtinBoolAttribs = Map.fromList
                       { procedureDocName = "bool.bit_count"
                       , procedureDocReturnType = (Just $ TypeDocSingle "int")
                       , procedureDocArgs = mempty
-                      , procedureDocDescription = ""
+                      , procedureDocDescription =
+                          Text.unlines 
+                            [ "Bit count (popcount)."
+                            , "Counts the number of set bits."
+                            , "Since a boolean only has one bit, this will " <>
+                              "always be either 0 or 1."
+                            ]
                       }
                     )
                     popCount)
@@ -340,7 +354,7 @@ builtinStringAttribs = Map.fromList
                         { procedureDocName = "string.capitalize"
                         , procedureDocArgs = mempty
                         , procedureDocReturnType = (Just $ TypeDocSingle "string")
-                        , procedureDocDescription = "Convert value to title case."
+                        , procedureDocDescription = "Convert `value` to title case."
                         }
                       )
                       Text.toTitle)
@@ -351,7 +365,7 @@ builtinStringAttribs = Map.fromList
                         , procedureDocArgs = mempty
                         , procedureDocReturnType = (Just $ TypeDocSingle "string")
                         , procedureDocDescription =
-                            "Convert value to canonical case for " <>
+                            "Convert `value` to canonical case for " <>
                             "case-insensitive comparison"
                         }
                       )
@@ -371,7 +385,7 @@ builtinStringAttribs = Map.fromList
                     { procedureDocName = "string.isalnum"
                     , procedureDocArgs = mempty
                     , procedureDocReturnType = (Just $ TypeDocSingle "bool")
-                    , procedureDocDescription = ""
+                    , procedureDocDescription = "Check whether a string is alpha-numeric (a letter or a digit)."
                     }
                   )
                   (Text.all isAlphaNum)
@@ -382,7 +396,7 @@ builtinStringAttribs = Map.fromList
                     { procedureDocName = "string.isalpha"
                     , procedureDocReturnType = (Just $ TypeDocSingle "bool")
                     , procedureDocArgs = mempty
-                    , procedureDocDescription = ""
+                    , procedureDocDescription = "Check whether a string is alphabetic (consists solely of letters)."
                     }
                   )
                   (Text.all isAlpha))
@@ -392,7 +406,7 @@ builtinStringAttribs = Map.fromList
                     { procedureDocName = "string.isascii"
                     , procedureDocReturnType = (Just $ TypeDocSingle "bool")
                     , procedureDocArgs = mempty
-                    , procedureDocDescription = ""
+                    , procedureDocDescription = "Check whether a string consists solely of 7-bit ASCII characters."
                     }
                   )
                   (Text.all ((< 128) . ord)))
@@ -403,7 +417,7 @@ builtinStringAttribs = Map.fromList
                     { procedureDocName = "string.isdigit"
                     , procedureDocReturnType = (Just $ TypeDocSingle "bool")
                     , procedureDocArgs = mempty
-                    , procedureDocDescription = ""
+                    , procedureDocDescription = "Check whether a string consists solely of digits."
                     }
                   )
                   (Text.all isDigit))
@@ -414,7 +428,7 @@ builtinStringAttribs = Map.fromList
                     { procedureDocName = "string.islower"
                     , procedureDocReturnType = (Just $ TypeDocSingle "bool")
                     , procedureDocArgs = mempty
-                    , procedureDocDescription = ""
+                    , procedureDocDescription = "Check whether a string is all-lowercase"
                     }
                   )
                   isLowerVal)
@@ -425,7 +439,7 @@ builtinStringAttribs = Map.fromList
                     { procedureDocName = "string.isprintable"
                     , procedureDocReturnType = (Just $ TypeDocSingle "bool")
                     , procedureDocArgs = mempty
-                    , procedureDocDescription = ""
+                    , procedureDocDescription = "Check whether a string contains only printable characters."
                     }
                   )
                   (Text.all isPrint))
@@ -435,7 +449,7 @@ builtinStringAttribs = Map.fromList
                     { procedureDocName = "string.isspace"
                     , procedureDocReturnType = (Just $ TypeDocSingle "bool")
                     , procedureDocArgs = mempty
-                    , procedureDocDescription = ""
+                    , procedureDocDescription = "Check whether a string contains only whitespace."
                     }
                   )
                   (Text.all isSpace))
@@ -445,7 +459,7 @@ builtinStringAttribs = Map.fromList
                     { procedureDocName = "string.isupper"
                     , procedureDocReturnType = (Just $ TypeDocSingle "bool")
                     , procedureDocArgs = mempty
-                    , procedureDocDescription = ""
+                    , procedureDocDescription = "Check whether a string is all-uppercase."
                     }
                   )
                   isUpperVal)
@@ -457,7 +471,7 @@ builtinStringAttribs = Map.fromList
                     { procedureDocName = "string.lower"
                     , procedureDocArgs = mempty
                     , procedureDocReturnType = (Just $ TypeDocSingle "string")
-                    , procedureDocDescription = "Convert value to lowercase."
+                    , procedureDocDescription = "Convert `value` to lowercase."
                     }
                   )
                   Text.toLower)
@@ -479,7 +493,7 @@ builtinStringAttribs = Map.fromList
                     { procedureDocName = "string.splitlines"
                     , procedureDocReturnType = (Just $ TypeDocSingle "string")
                     , procedureDocArgs = mempty
-                    , procedureDocDescription = ""
+                    , procedureDocDescription = "Split a string into lines."
                     }
                   )
                   Text.lines)
@@ -492,7 +506,7 @@ builtinStringAttribs = Map.fromList
                     { procedureDocName = "string.title"
                     , procedureDocArgs = mempty
                     , procedureDocReturnType = (Just $ TypeDocSingle "string")
-                    , procedureDocDescription = "Convert value to title case."
+                    , procedureDocDescription = "Convert `value` to title case."
                     }
                   )
                   Text.toTitle)
@@ -503,7 +517,7 @@ builtinStringAttribs = Map.fromList
                     { procedureDocName = "string.upper"
                     , procedureDocArgs = mempty
                     , procedureDocReturnType = (Just $ TypeDocSingle "string")
-                    , procedureDocDescription = "Convert value to uppercase."
+                    , procedureDocDescription = "Convert `value` to uppercase."
                     }
                   )
                   Text.toUpper)
@@ -684,7 +698,7 @@ fnEscape = mkFn1' "escape"
 fnToList :: forall m. Monad m => Procedure m
 fnToList = mkFn1 "list"
               (Text.unlines
-                  [ "Convert a value to a list, if possible"
+                  [ "Convert `value` to a list, if possible"
                   ]
               )
               ( "value"
@@ -726,7 +740,7 @@ fnToList = mkFn1 "list"
 fnToFloat :: forall m. Monad m => Procedure m
 fnToFloat = mkFn2 "float"
               (Text.unlines
-                  [ "Convert value to float."
+                  [ "Convert `value` to float."
                   , "If `default` is given, values that cannot be converted " <>
                     " to floats will be replaced with this default value." 
                   ]
@@ -755,7 +769,7 @@ fnToFloat = mkFn2 "float"
 fnToInt :: forall m. Monad m => Procedure m
 fnToInt = mkFn3 "int"
               (Text.unlines
-                  [ "Convert value to int."
+                  [ "Convert `value` to int."
                   , "If `default` is given, values that cannot be converted " <>
                     " to integers will be replaced with this default value." 
                   ]
@@ -1309,7 +1323,7 @@ fnStrRStrip = mkFn2 "rstrip"
 
 fnToJSON :: forall m. Monad m => Procedure m
 fnToJSON = mkFn2 "tojson"
-              "Convert value to JSON"
+              "Convert `value` to JSON"
               ( "value"
               , Nothing :: Maybe (Value m)
               , Just $ TypeDocAny
@@ -1588,7 +1602,7 @@ instance Monad m => FromValue FileSize m where
 
 fnFilesizeFormat :: Monad m => Procedure m
 fnFilesizeFormat = mkFn2 "filesizeformat"
-                    "Format value as a human-readable file size."
+                    "Format `value` as a human-readable file size."
                     ( "value"
                     , Nothing
                     , Just $ TypeDocSingle "number"
@@ -1779,8 +1793,8 @@ fnDateFormat :: forall m. Monad m => Procedure m
 fnDateFormat = mkFn4 "dateformat"
                 (Text.unlines
                   [ "Format a date/time value."
-                  , "Format strings follow the specification found here:"
-                  , "https://hackage.haskell.org/package/time-1.14/docs/Data-Time-Format.html#v:formatTime"
+                  , "Format strings follow the specification found here: " <>
+                    "[Date.Time.Format.formatTime](https://hackage.haskell.org/package/time-1.14/docs/Data-Time-Format.html#v:formatTime)"
                   , "Accepted input formats:"
                   , "- `%Y-%m-%dT%H:%M:%S%Q%Z`"
                   , "- `%Y-%m-%d %H:%M:%S%Q`"

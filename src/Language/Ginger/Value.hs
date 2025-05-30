@@ -405,9 +405,17 @@ type TestFunc m = MetaFunc m Bool
 
 type FilterFunc m = MetaFunc m (Value m)
 
-newtype Test m = NativeTest { runTest :: TestFunc m }
+data Test m =
+  NativeTest  
+    { testDoc :: !(Maybe ProcedureDoc)
+    , runTest :: !(TestFunc m)
+    }
 
-newtype Filter m = NativeFilter { runFilter :: FilterFunc m }
+data Filter m =
+  NativeFilter
+    { filterDoc :: !(Maybe ProcedureDoc)
+    , runFilter :: !(FilterFunc m)
+    }
 
 data NativeObject m =
   NativeObject

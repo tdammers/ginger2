@@ -19,6 +19,7 @@ import Language.Ginger.Interpret.Builtins
 import Language.Ginger.Interpret.Eval
 import Language.Ginger.Interpret.Type
 import Language.Ginger.RuntimeError
+import Language.Ginger.Render
 import Language.Ginger.Value
 
 import Control.Monad.Except
@@ -71,8 +72,28 @@ defVarsCommon = Map.fromList
     , dictV
       [ ( "tests"
         , dictV
-            [ ("defined", TestV $ NativeTest isDefined)
-            , ("undefined", TestV $ NativeTest isUndefined)
+            [ ("defined", TestV $
+                            NativeTest
+                              (Just ProcedureDoc
+                                { procedureDocName = "defined"
+                                , procedureDocArgs = [ArgumentDoc "value" (Just TypeDocAny) Nothing ""]
+                                , procedureDocReturnType = Just $ TypeDocSingle "bool"
+                                , procedureDocDescription =
+                                    "Test whether a variable is defined."
+                                }
+                              )
+                              isDefined)
+            , ("undefined", TestV $
+                              NativeTest
+                                (Just ProcedureDoc
+                                  { procedureDocName = "defined"
+                                  , procedureDocArgs = [ArgumentDoc "value" (Just TypeDocAny) Nothing ""]
+                                  , procedureDocReturnType = Just $ TypeDocSingle "bool"
+                                  , procedureDocDescription =
+                                      "Test whether a variable is undefined."
+                                  }
+                                )
+                                isUndefined)
             , ("boolean", fnToValue
                             "builtin:test:boolean"
                             (Just ProcedureDoc
@@ -80,7 +101,7 @@ defVarsCommon = Map.fromList
                               , procedureDocArgs = [ArgumentDoc "value" (Just TypeDocAny) Nothing ""]
                               , procedureDocReturnType = Just $ TypeDocSingle "bool"
                               , procedureDocDescription =
-                                  "Test whether value is a boolean."
+                                  "Test whether `value` is a boolean."
                               }
                             )
                             (isBool @m))
@@ -91,11 +112,21 @@ defVarsCommon = Map.fromList
                               , procedureDocArgs = [ArgumentDoc "value" (Just TypeDocAny) Nothing ""]
                               , procedureDocReturnType = Just $ TypeDocSingle "bool"
                               , procedureDocDescription =
-                                  "Test whether value is callable."
+                                  "Test whether `value` is callable."
                               }
                             )
                             (isCallable @m))
-            , ("filter", TestV $ NativeTest isFilter)
+            , ("filter", TestV $
+                          NativeTest
+                          (Just ProcedureDoc
+                              { procedureDocName = "filter"
+                              , procedureDocArgs = [ArgumentDoc "value" (Just TypeDocAny) Nothing ""]
+                              , procedureDocReturnType = Just $ TypeDocSingle "bool"
+                              , procedureDocDescription =
+                                  "Test whether `value` is a filter."
+                              }
+                          )
+                          isFilter)
             , ("float", fnToValue
                             "builtin:test:float"
                             (Just ProcedureDoc
@@ -103,7 +134,7 @@ defVarsCommon = Map.fromList
                               , procedureDocArgs = [ArgumentDoc "value" (Just TypeDocAny) Nothing ""]
                               , procedureDocReturnType = Just $ TypeDocSingle "bool"
                               , procedureDocDescription =
-                                  "Test whether value is a float."
+                                  "Test whether `value` is a float."
                               }
                             )
                             (isFloat @m))
@@ -114,7 +145,7 @@ defVarsCommon = Map.fromList
                               , procedureDocArgs = mempty
                               , procedureDocReturnType = Just $ TypeDocSingle "bool"
                               , procedureDocDescription =
-                                  "Test whether value is an integer."
+                                  "Test whether `value` is an integer."
                               }
                             )
                             (isInteger @m))
@@ -125,7 +156,7 @@ defVarsCommon = Map.fromList
                               , procedureDocArgs = [ArgumentDoc "value" (Just TypeDocAny) Nothing ""]
                               , procedureDocReturnType = Just $ TypeDocSingle "bool"
                               , procedureDocDescription =
-                                  "Test whether value is iterable.\n"
+                                  "Test whether `value` is iterable.\n"
                                   <> "Lists and list-like native objects are iterable."
                               }
                             )
@@ -137,7 +168,7 @@ defVarsCommon = Map.fromList
                               , procedureDocArgs = [ArgumentDoc "value" (Just TypeDocAny) Nothing ""]
                               , procedureDocReturnType = Just $ TypeDocSingle "bool"
                               , procedureDocDescription =
-                                  "Test whether value is a mapping.\n"
+                                  "Test whether `value` is a mapping.\n"
                                   <> "Mappings are dicts and dict-like native objects."
                               }
                             )
@@ -149,7 +180,7 @@ defVarsCommon = Map.fromList
                               , procedureDocArgs = [ArgumentDoc "value" (Just TypeDocAny) Nothing ""]
                               , procedureDocReturnType = Just $ TypeDocSingle "bool"
                               , procedureDocDescription =
-                                  "Test whether value is a number (integer or float)."
+                                  "Test whether `value` is a number (integer or float)."
                               }
                             )
                             (isNumber @m))
@@ -160,7 +191,7 @@ defVarsCommon = Map.fromList
                               , procedureDocArgs = [ArgumentDoc "value" (Just TypeDocAny) Nothing ""]
                               , procedureDocReturnType = Just $ TypeDocSingle "bool"
                               , procedureDocDescription =
-                                  "Test whether value is a sequence (i.e., a list)."
+                                  "Test whether `value` is a sequence (i.e., a list)."
                               }
                             )
                             (isSequence @m))
@@ -171,11 +202,21 @@ defVarsCommon = Map.fromList
                               , procedureDocArgs = [ArgumentDoc "value" (Just TypeDocAny) Nothing ""]
                               , procedureDocReturnType = Just $ TypeDocSingle "bool"
                               , procedureDocDescription =
-                                  "Test whether value is a string."
+                                  "Test whether `value` is a string."
                               }
                             )
                             (isString @m))
-            , ("test", TestV $ NativeTest isTest)
+            , ("test", TestV $
+                          NativeTest
+                          (Just ProcedureDoc
+                              { procedureDocName = "test"
+                              , procedureDocArgs = [ArgumentDoc "value" (Just TypeDocAny) Nothing ""]
+                              , procedureDocReturnType = Just $ TypeDocSingle "bool"
+                              , procedureDocDescription =
+                                  "Test whether `value` is a test."
+                              }
+                          )
+                          isTest)
             , ("upper", fnToValue
                             "builtin:test:upper"
                             (Just ProcedureDoc
@@ -183,11 +224,21 @@ defVarsCommon = Map.fromList
                               , procedureDocArgs = [ArgumentDoc "value" (Just TypeDocAny) Nothing ""]
                               , procedureDocReturnType = Just $ TypeDocSingle "bool"
                               , procedureDocDescription =
-                                  "Test whether value is an all-uppercase string."
+                                  "Test whether `value` is an all-uppercase string."
                               }
                             )
                             (isUpperVal @m))
-            , ("eq", TestV $ NativeTest isEqual)
+            , ("eq", TestV $
+                          NativeTest
+                          (Just ProcedureDoc
+                              { procedureDocName = "eq"
+                              , procedureDocArgs = [ArgumentDoc "value" (Just TypeDocAny) Nothing ""]
+                              , procedureDocReturnType = Just $ TypeDocSingle "bool"
+                              , procedureDocDescription =
+                                  "Test whether `value` is a eq."
+                              }
+                          )
+                          isEqual)
             , ("escaped", builtinNotImplemented @m "escaped")
             , ("false", fnToValue
                             "builtin:test:false"
@@ -196,7 +247,7 @@ defVarsCommon = Map.fromList
                               , procedureDocArgs = [ArgumentDoc "value" (Just TypeDocAny) Nothing ""]
                               , procedureDocReturnType = Just $ TypeDocSingle "bool"
                               , procedureDocDescription =
-                                  "Test whether value is boolean `false`"
+                                  "Test whether `value` is boolean `false`"
                               }
                             )
                             (isBoolean False :: Value m -> Value m))
@@ -211,7 +262,7 @@ defVarsCommon = Map.fromList
                               , procedureDocArgs = [ArgumentDoc "value" (Just TypeDocAny) Nothing ""]
                               , procedureDocReturnType = Just $ TypeDocSingle "bool"
                               , procedureDocDescription =
-                                  "Test whether value is an all-lowercase string"
+                                  "Test whether `value` is an all-lowercase string"
                               }
                             )
                             (isLowerVal @m))
@@ -224,7 +275,7 @@ defVarsCommon = Map.fromList
                               , procedureDocArgs = [ArgumentDoc "value" (Just TypeDocAny) Nothing ""]
                               , procedureDocReturnType = Just $ TypeDocSingle "bool"
                               , procedureDocDescription =
-                                  "Test whether value is boolean `true`"
+                                  "Test whether `value` is boolean `true`"
                               }
                             )
                             (isBoolean True :: Value m -> Value m))
@@ -235,7 +286,7 @@ defVarsCommon = Map.fromList
                               , procedureDocArgs = [ArgumentDoc "value" (Just TypeDocAny) Nothing ""]
                               , procedureDocReturnType = Just $ TypeDocSingle "bool"
                               , procedureDocDescription =
-                                  "Test whether value is the `none` value"
+                                  "Test whether `value` is the `none` value"
                               }
                             )
                             (isNone :: Value m -> Value m))
@@ -243,8 +294,8 @@ defVarsCommon = Map.fromList
         )
       , ( "filters"
         , dictV
-            [ ("default", FilterV $ NativeFilter defaultFilter)
-            , ("d", FilterV $ NativeFilter defaultFilter)
+            [ ("default", FilterV $ defaultFilter)
+            , ("d", FilterV $ defaultFilter)
             ]
         )
       , ( "globals"
@@ -372,27 +423,41 @@ isString :: Monad m => Value m -> Value m
 isString (StringV {}) = TrueV
 isString _ = FalseV
 
-defaultFilter :: Monad m => FilterFunc m
-defaultFilter expr args ctx env = do
-  calleeEither <- runGingerT (evalE expr) ctx env
-  let resolvedArgsEither = resolveArgs
-                            "default"
-                            [("default_value", Just (StringV "")), ("boolean", Just FalseV)]
-                            args
-  case (calleeEither, resolvedArgsEither) of
-    (_, Left err) ->
-      pure $ Left err
-    (Right val, Right rargs) ->
-      let defval = fromJust $ Map.lookup "default_value" rargs
-          boolean = fromJust $ Map.lookup "boolean" rargs
-      in case val of
-        NoneV -> pure . Right $ defval
-        FalseV -> pure . Right $ if boolean == TrueV then defval else FalseV
-        a -> pure . Right $ a
-    (Left NotInScopeError {}, Right rargs) ->
-      pure . Right . fromJust $ Map.lookup "default_value" rargs
-    (Left err, _) ->
-      pure . Left $ err
+defaultFilter :: Monad m => Filter m
+defaultFilter =
+  NativeFilter
+    (Just $ ProcedureDoc
+      { procedureDocName = "default"
+      , procedureDocArgs =
+          [ ArgumentDoc "value" (Just TypeDocAny) Nothing ""
+          , ArgumentDoc "default" (Just TypeDocAny) Nothing ""
+          ]
+      , procedureDocReturnType = Just $ TypeDocAny
+      , procedureDocDescription =
+          "Return `default` if `value` is `false`, `none`, or undefined, " <>
+          "`value` otherwise."
+      }
+    ) $
+    \expr args ctx env -> do
+      calleeEither <- runGingerT (evalE expr) ctx env
+      let resolvedArgsEither = resolveArgs
+                                "default"
+                                [("default_value", Just (StringV "")), ("boolean", Just FalseV)]
+                                args
+      case (calleeEither, resolvedArgsEither) of
+        (_, Left err) ->
+          pure $ Left err
+        (Right val, Right rargs) ->
+          let defval = fromJust $ Map.lookup "default_value" rargs
+              boolean = fromJust $ Map.lookup "boolean" rargs
+          in case val of
+            NoneV -> pure . Right $ defval
+            FalseV -> pure . Right $ if boolean == TrueV then defval else FalseV
+            a -> pure . Right $ a
+        (Left NotInScopeError {}, Right rargs) ->
+          pure . Right . fromJust $ Map.lookup "default_value" rargs
+        (Left err, _) ->
+          pure . Left $ err
 
 isDefined :: Monad m => TestFunc m
 isDefined _ (_:_) _ _ = pure $ Left $ ArgumentError "defined" "0" "end of arguments" "argument"
@@ -484,8 +549,23 @@ gingerBinopTest :: forall m. Monad m
                 => BinaryOperator
                 -> Value m
 gingerBinopTest op =
-  TestV . NativeTest $ f
+  TestV $ NativeTest
+    (Just ProcedureDoc
+        { procedureDocName = opName
+        , procedureDocArgs =
+            [ ArgumentDoc "expr" (Just TypeDocAny) Nothing ""
+            , ArgumentDoc "arg" (Just TypeDocAny) Nothing ""
+            ]
+        , procedureDocReturnType = Just $ TypeDocAny
+        , procedureDocDescription =
+            "Apply the '" <> opName <> "' operation to the value of `expr` " <>
+            "and  the `arg`, and use the result as a boolean condition."
+        })
+    f
   where
+    opName :: Text
+    opName = renderSyntaxText op
+
     f :: TestFunc m
     f expr args ctx env = runGingerT (go expr args) ctx env
 

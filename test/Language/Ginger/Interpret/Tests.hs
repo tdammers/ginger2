@@ -1633,7 +1633,7 @@ prop_callIdentity body =
   -- Some trickery is needed to make sure that if anything inside @body@
   -- references a variable @f@, it points to the same thing in both cases.
   let body' = StatementE $ GroupS
-                              [ SetS "f" NoneE
+                              [ SetS (SetVar "f") NoneE
                               , InterpolationS body
                               ]
       resultDirect = runGingerIdentityEither $
@@ -1658,7 +1658,7 @@ prop_callEcho body =
   -- Some trickery is needed to make sure that if anything inside @body@
   -- references a variable @f@, it points to the same thing in both cases.
   let body' = GroupS
-                 [ SetS "f" NoneE
+                 [ SetS (SetVar "f") NoneE
                  , InterpolationS body
                  ]
       resultDirect = runGingerIdentityEither $
@@ -1682,7 +1682,7 @@ prop_callMacro body =
   -- Some trickery is needed to make sure that if anything inside @body@
   -- references a variable @f@, it points to the same thing in both cases.
   let body' = GroupS
-                 [ SetS "f" NoneE
+                 [ SetS (SetVar "f") NoneE
                  , body
                  ]
       resultDirect = runGingerIdentityEither $
@@ -1785,7 +1785,7 @@ prop_includeMacroWithoutContext (ArbitraryText name) macroName body =
 prop_includeSet :: ArbitraryText -> Identifier -> ArbitraryText -> Property
 prop_includeSet (ArbitraryText name) varName (ArbitraryText varValue) =
   let bodySrc = renderSyntaxText $
-                  SetS varName (StringLitE varValue)
+                  SetS (SetVar varName) (StringLitE varValue)
       resultDirect = runGingerIdentityEither $
                       eval (StringLitE varValue)
       loader = mockLoader [(name, bodySrc)]
@@ -1808,7 +1808,7 @@ prop_includeWithContext (ArbitraryText name) varName (ArbitraryText varValue) =
                       eval (StringLitE varValue)
       loader = mockLoader [(name, bodySrc)]
       includeS = GroupS
-                  [ SetS varName (StringLitE varValue)
+                  [ SetS (SetVar varName) (StringLitE varValue)
                   , IncludeS (StringLitE name) RequireMissing WithContext
                   ]
       includeSrc = renderSyntaxText includeS
@@ -1825,7 +1825,7 @@ prop_includeWithoutContext (ArbitraryText name) varName (ArbitraryText varValue)
                   InterpolationS (VarE varName)
       loader = mockLoader [(name, bodySrc)]
       includeS = GroupS
-                    [ SetS varName (StringLitE varValue)
+                    [ SetS (SetVar varName) (StringLitE varValue)
                     , IncludeS (StringLitE name) RequireMissing WithoutContext
                     ]
       includeSrc = renderSyntaxText includeS
@@ -1839,7 +1839,7 @@ prop_includeWithoutContext (ArbitraryText name) varName (ArbitraryText varValue)
 
 prop_importValue :: ArbitraryText -> Identifier -> Expr -> Property
 prop_importValue (ArbitraryText name) varName valE =
-  let bodySrc = renderSyntaxText (SetS varName valE)
+  let bodySrc = renderSyntaxText (SetS (SetVar varName) valE)
       resultDirect = runGingerIdentityEither $ eval valE
       loader = mockLoader [(name, bodySrc)]
       resultImport = runGingerIdentityEitherWithLoader loader . eval $
@@ -1853,7 +1853,7 @@ prop_importValue (ArbitraryText name) varName valE =
 
 prop_importValueAlias :: ArbitraryText -> Identifier -> Identifier -> Expr -> Property
 prop_importValueAlias (ArbitraryText name) alias varName valE =
-  let bodySrc = renderSyntaxText (SetS varName valE)
+  let bodySrc = renderSyntaxText (SetS (SetVar varName) valE)
       resultDirect = runGingerIdentityEither $ eval valE
       loader = mockLoader [(name, bodySrc)]
       resultImport = runGingerIdentityEitherWithLoader loader . eval $
@@ -1898,7 +1898,7 @@ prop_importWithoutContext (ArbitraryText name) macroName varName bodyE =
       loader = mockLoader [(name, bodySrc)]
       resultImport = runGingerIdentityEitherWithLoader loader . eval $
                         GroupS
-                          [ SetS varName bodyE
+                          [ SetS (SetVar varName) bodyE
                           , ImportS (StringLitE name) Nothing Nothing RequireMissing WithoutContext
                           , CallS macroName [] [] (InterpolationS NoneE)
                           ]
@@ -1917,7 +1917,7 @@ prop_importWithContext (ArbitraryText name) macroName varName bodyE =
       loader = mockLoader [(name, bodySrc)]
       resultImport = runGingerIdentityEitherWithLoader loader . eval $
                         GroupS
-                          [ SetS varName bodyE
+                          [ SetS (SetVar varName) bodyE
                           , ImportS (StringLitE name) Nothing Nothing RequireMissing WithContext
                           , CallS macroName [] [] (InterpolationS NoneE)
                           ]
@@ -1937,8 +1937,8 @@ prop_importExplicit (NonEmptyText name)
                     body3E =
   let bodySrc = renderSyntaxText $
                     GroupS
-                      [ SetS varName1 body1E
-                      , SetS varName2 body2E
+                      [ SetS (SetVar varName1) body1E
+                      , SetS (SetVar varName2) body2E
                       ]
       directS = GroupS
                   [ InterpolationS body2E
@@ -1952,7 +1952,7 @@ prop_importExplicit (NonEmptyText name)
 
       loader = mockLoader [(name, bodySrc)]
       mainS = GroupS
-                [ SetS varName1 body3E
+                [ SetS (SetVar varName1) body3E
                 , ImportS (StringLitE name) Nothing (Just [(varName2, Nothing)]) RequireMissing WithoutContext
                 , InterpolationS (VarE varName2)
                 , InterpolationS (VarE varName1)
@@ -2062,7 +2062,7 @@ prop_extendWithContext :: NonEmptyText
 prop_extendWithContext (NonEmptyText parentName) blockName varName varExpr =
   let
       parentS = GroupS
-        [ SetS varName varExpr
+        [ SetS (SetVar varName) varExpr
         , BlockS blockName (Block (GroupS []) Scoped Optional)
         ]
       parentSrc = renderSyntaxText $ parentS
@@ -2075,7 +2075,7 @@ prop_extendWithContext (NonEmptyText parentName) blockName varName varExpr =
       childSrc = renderSyntaxText $ childT
 
       directS = GroupS
-                  [ SetS varName varExpr
+                  [ SetS (SetVar varName) varExpr
                   , BlockS blockName
                       (Block (InterpolationS (VarE varName)) Scoped Optional)
                   ]
@@ -2106,7 +2106,7 @@ prop_extendWithoutContext :: NonEmptyText
 prop_extendWithoutContext (NonEmptyText parentName) blockName varName varExpr dummyVarName =
   let
       parentS = GroupS
-        [ SetS varName varExpr
+        [ SetS (SetVar varName) varExpr
         , BlockS blockName (Block (GroupS []) NotScoped Optional)
         ]
       parentSrc = renderSyntaxText $ parentS
@@ -2119,7 +2119,7 @@ prop_extendWithoutContext (NonEmptyText parentName) blockName varName varExpr du
       childSrc = renderSyntaxText $ childT
 
       directS = GroupS
-                  [ SetS dummyVarName varExpr
+                  [ SetS (SetVar dummyVarName) varExpr
                   , BlockS blockName
                       (Block (InterpolationS (VarE varName)) NotScoped Optional)
                   ]

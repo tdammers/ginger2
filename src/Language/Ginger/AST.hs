@@ -79,6 +79,11 @@ data Block =
     }
     deriving (Show, Eq)
 
+data SetTarget
+  = SetVar !Identifier
+  | SetMutable !Identifier !Identifier
+  deriving (Show, Eq)
+
 -- | A statement in the template language.
 data Statement
   = -- | Statement tagged with a source position
@@ -128,11 +133,11 @@ data Statement
       !Statement -- body
   | -- | @{% set name=expr %}@
     SetS
-      !Identifier -- variable name
+      !SetTarget -- variable name
       !Expr -- value
   | -- | @{% set name %}body{% endset %}@
     SetBlockS
-      !Identifier -- variable name
+      !SetTarget -- variable name
       !Statement -- body
       !(Maybe Expr) -- optional filter
   | -- | @{% include includee ignore missing with context %}@
@@ -284,9 +289,15 @@ arbitraryStatement defined = do
                   <*> QC.resize (fuel `div` 3) (QC.listOf (arbitraryExpr defined))
                   <*> QC.resize (fuel `div` 3) (QC.listOf ((,) <$> arbitrary <*> arbitraryExpr defined))
                   <*> QC.resize (fuel `div` 3) (arbitraryStatement defined)
-        , SetS <$> arbitrary
+        , SetS <$> QC.frequency
+                      [ (100, SetVar <$> arbitrary)
+                      , (5, SetMutable <$> arbitrary <*> arbitrary)
+                      ]
                <*> QC.resize (fuel `div` 2) (arbitraryExpr defined)
-        , SetBlockS <$> arbitrary
+        , SetBlockS <$> QC.frequency
+                          [ (100, SetVar <$> arbitrary)
+                          , (5, SetMutable <$> arbitrary <*> arbitrary)
+                          ]
                     <*> QC.resize (fuel `div` 2) (arbitraryStatement defined)
                     <*> QC.resize (fuel `div` 2) (QC.oneof [ pure Nothing, Just <$> arbitraryExpr defined ])
 

@@ -45,6 +45,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
+import qualified Data.Text as Text
 
 -- | The Ginger interpreter monad. Provides error reporting / handling via
 -- 'MonadError', an execution context ('Context'), and an evaluation state
@@ -58,6 +59,8 @@ newtype GingerT m a =
 data EvalState m =
   EvalState
     { evalEnv :: !(Env m)
+    , evalMutables :: !(Map RefID (Value m))
+    , evalNextRefID :: !RefID
     , evalLoadedTemplates :: !(Map Text CachedTemplate)
     , evalBlocks :: !(Map Identifier LoadedBlock)
     , evalSourcePosition :: !(Maybe SourcePosition)
@@ -74,6 +77,8 @@ instance Semigroup (EvalState m) where
   a <> b =
     EvalState
       { evalEnv = evalEnv a <> evalEnv b
+      , evalMutables = evalMutables a <> evalMutables b
+      , evalNextRefID = max (evalNextRefID a) (evalNextRefID b)
       , evalLoadedTemplates = evalLoadedTemplates a <> evalLoadedTemplates b
       , evalBlocks = evalBlocks a <> evalBlocks b
       , evalSourcePosition = evalSourcePosition a <|> evalSourcePosition b
@@ -94,7 +99,7 @@ runGingerT g ctx env =
   runExceptT
     (evalStateT
       (runReaderT (unGingerT g) ctx)
-      (EvalState env { envRootMay = Just env } mempty mempty Nothing)
+      (EvalState env { envRootMay = Just env } mempty (RefID 0) mempty mempty Nothing)
     )
 
 decorateError :: Monad m
@@ -146,6 +151,26 @@ setVars :: Monad m
         -> GingerT m ()
 setVars vars = modifyEnv (\e -> e { envVars = vars <> envVars e })
 
+setMutable :: forall m. Monad m
+           => Identifier
+           -> Identifier
+           -> Value m
+           -> GingerT m ()
+setMutable name attr val = do
+  varVal <- lookupVar name
+  refID <- case varVal of
+    MutableRefV i -> pure i
+    x -> throwError $ TagError (identifierName name) "mutable ref" (tagNameOf x)
+  modifyMutable refID go
+  where
+    go :: Value m -> GingerT m (Value m)
+    go (DictV m) = pure (DictV $ Map.insert (toScalar attr) val m)
+    go x = throwError $
+                TagError
+                (identifierName name)
+                "dict"
+                (tagNameOf x)
+
 setBlock :: Monad m
          => Identifier
          -> Block
@@ -156,6 +181,46 @@ setBlock name block = do
       lblock' = maybe lblock (appendLoadedBlock lblock) mparent
   modify (\s -> s { evalBlocks = Map.insert name lblock' (evalBlocks s) })
   pure lblock'
+
+bindMutable :: Monad m
+            => Value m
+            -> GingerT m RefID
+bindMutable val = do
+  refID <- gets evalNextRefID
+  modify (\s ->
+    s { evalNextRefID = succ (evalNextRefID s)
+      , evalMutables = Map.insert refID val (evalMutables s)
+      })
+  pure refID
+
+assignMutable :: Monad m
+              => RefID
+              -> Value m
+              -> GingerT m ()
+assignMutable refID val =
+  modify (\s -> s { evalMutables = Map.insert refID val (evalMutables s) })
+
+modifyMutable :: Monad m
+              => RefID
+              -> (Value m -> GingerT m (Value m))
+              -> GingerT m ()
+modifyMutable refID f = do
+  mval <- derefMutable refID
+  mval' <- f mval
+  modify (\s -> s { evalMutables = Map.insert refID mval' (evalMutables s) })
+
+derefMutableMaybe :: Monad m
+                  => RefID
+                  -> GingerT m (Maybe (Value m))
+derefMutableMaybe refID =
+  gets (Map.lookup refID . evalMutables)
+
+derefMutable :: Monad m
+             => RefID
+             -> GingerT m (Value m)
+derefMutable refID =
+  derefMutableMaybe refID >>=
+    maybe (throwError $ NotInScopeError ("ref#" <> Text.show refID)) pure
 
 setSourcePosition :: Monad m
                   => SourcePosition

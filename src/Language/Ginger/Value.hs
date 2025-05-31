@@ -12,7 +12,7 @@ module Language.Ginger.Value
 where
 
 import Control.Monad.Except (runExceptT, throwError, MonadError)
-import Control.Monad.Reader (ReaderT (..), MonadReader (..))
+import Control.Monad.Reader (MonadReader (..))
 import Control.Monad.Trans (MonadTrans, lift)
 import Data.Aeson
           ( FromJSON (..)
@@ -155,6 +155,9 @@ scalarToText (EncodedScalar (Encoded e)) = e
 scalarToText (IntScalar i) = Text.show i
 scalarToText (FloatScalar f) = Text.show f
 
+newtype RefID = RefID { unRefID :: Int }
+  deriving (Show, Ord, Eq, Bounded, Enum)
+
 -- | A value, as using by the interpreter.
 data Value m
   = ScalarV !Scalar
@@ -164,6 +167,7 @@ data Value m
   | ProcedureV !(Procedure m)
   | TestV !(Test m)
   | FilterV !(Filter m)
+  | MutableRefV !RefID
 
 instance FromJSON (Value m) where
   parseJSON v@JSON.Object {} = DictV <$> parseJSON v
@@ -191,6 +195,7 @@ instance Show (Value m) where
   show (ProcedureV {}) = "<<procedure>>"
   show (TestV {}) = "<<test>>"
   show (FilterV {}) = "<<filter>>"
+  show (MutableRefV i) = show i
 
 instance Eq (Value m) where
   ScalarV a == ScalarV b = a == b
@@ -206,6 +211,7 @@ tagNameOf NativeV {} = "native"
 tagNameOf ProcedureV {} = "procedure"
 tagNameOf TestV {} = "test"
 tagNameOf FilterV {} = "filter"
+tagNameOf MutableRefV {} = "mutref"
 
 pattern NoneV :: Value m
 pattern NoneV = ScalarV NoneScalar
@@ -1063,56 +1069,6 @@ native :: (Monad m, MonadTrans t, MonadError RuntimeError (t m))
 native action =
   lift action >>= either throwError pure
 
---------------------------------------------------------------------------------
--- String / Encoding helpers
---------------------------------------------------------------------------------
-
-stringifyWith :: (Monad m, MonadError RuntimeError m)
-              => Context m
-              -> Value m
-              -> m Text
-stringifyWith ctx val =
-  runReaderT (stringify val) ctx
-
-stringify :: (Monad m, MonadError RuntimeError (t m), MonadTrans t)
-          => Value m
-          -> t m Text
-stringify NoneV = pure ""
-stringify TrueV = pure "true"
-stringify FalseV = pure ""
-stringify (StringV str) = pure str
-stringify (BytesV b) =
-  pure . decodeUtf8 . Base64.encode $ b
-stringify (EncodedV (Encoded e)) =
-  pure e
-stringify (IntV i) = pure $ Text.show i
-stringify (FloatV f) = pure $ Text.show f
-stringify (ScalarV s) = pure . Text.show $ s
-stringify (ListV xs) = do
-  elems <- V.mapM stringify xs
-  pure $ Text.intercalate ", " $ V.toList elems
-stringify (DictV m) = do
-  elems <- mapM stringifyKV $ Map.toAscList m
-  pure $ Text.intercalate ", " elems
-stringify (NativeV n) =
-  native (Right <$> nativeObjectStringified n)
-stringify (ProcedureV (NativeProcedure oid _ _)) =
-  pure $ "[[procedure " <> unObjectID oid <> "]]"
-stringify (ProcedureV (GingerProcedure {})) =
-  pure $ "[[procedure]]"
-stringify (TestV _) =
-  pure "[[test]]"
-stringify (FilterV _) =
-  pure "[[filter]]"
-
-stringifyKV :: (Monad m, MonadError RuntimeError (t m), MonadTrans t)
-            => (Scalar, Value m)
-            -> t m Text
-stringifyKV (k, v) = do
-  kStr <- stringify (ScalarV k)
-  vStr <- stringify v
-  pure $ kStr <> ": " <> vStr
-
 encodeText :: ( Monad m
               , MonadError RuntimeError (t m)
               , MonadTrans t
@@ -1157,6 +1113,58 @@ encodeWith _ (EncodedV e) = pure e
 encodeWith ctx (NativeV n) = native (Right <$> nativeObjectEncoded n ctx)
 encodeWith _ (ProcedureV _) = pure $ Encoded "[[procedure]]"
 encodeWith ctx v = encodeTextWith ctx =<< stringify v
+
+--------------------------------------------------------------------------------
+-- String / Encoding helpers
+--------------------------------------------------------------------------------
+
+stringify :: ( Monad m
+             , MonadError RuntimeError (t m)
+             , MonadTrans t
+             )
+          => Value m
+          -> t m Text
+stringify NoneV = pure ""
+stringify TrueV = pure "true"
+stringify FalseV = pure ""
+stringify (StringV str) = pure str
+stringify (BytesV b) =
+  pure . decodeUtf8 . Base64.encode $ b
+stringify (EncodedV (Encoded e)) =
+  pure e
+stringify (IntV i) = pure $ Text.show i
+stringify (FloatV f) = pure $ Text.show f
+stringify (ScalarV s) = pure . Text.show $ s
+stringify (ListV xs) = do
+  elems <- V.mapM stringify xs
+  pure $ Text.intercalate ", " $ V.toList elems
+stringify (DictV m) = do
+  elems <- mapM stringifyKV $ Map.toAscList m
+  pure $ Text.intercalate ", " elems
+stringify (NativeV n) =
+  native (Right <$> nativeObjectStringified n)
+stringify (ProcedureV (NativeProcedure oid _ _)) =
+  pure $ "[[procedure " <> unObjectID oid <> "]]"
+stringify (ProcedureV (GingerProcedure {})) =
+  pure $ "[[procedure]]"
+stringify (TestV _) =
+  pure "[[test]]"
+stringify (FilterV _) =
+  pure "[[filter]]"
+stringify (MutableRefV ref) =
+  pure $ "[[ref#]]" <> Text.show (unRefID ref)
+
+stringifyKV :: ( Monad m
+               , MonadError RuntimeError (t m)
+               , MonadTrans t
+               )
+            => (Scalar, Value m)
+            -> t m Text
+stringifyKV (k, v) = do
+  kStr <- stringify (ScalarV k)
+  vStr <- stringify v
+  pure $ kStr <> ": " <> vStr
+
 
 --------------------------------------------------------------------------------
 -- Dictionary helpers

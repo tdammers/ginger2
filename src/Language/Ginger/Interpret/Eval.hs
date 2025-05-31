@@ -10,6 +10,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedLists #-}
+{-# LANGUAGE LambdaCase #-}
 
 module Language.Ginger.Interpret.Eval
 ( Eval (..)
@@ -212,24 +213,30 @@ instance Monad m => Eval m Template where
   eval = evalT
 
 evalE :: Monad m => Expr -> GingerT m (Value m)
-evalE (PositionedE pos e) = do
+evalE expr =
+  evalE' expr >>= \case
+    MutableRefV refID -> derefMutable refID
+    v -> pure v
+
+evalE' :: Monad m => Expr -> GingerT m (Value m)
+evalE' (PositionedE pos e) = do
   evalE e `catchError` decorateError pos
-evalE NoneE = pure NoneV
-evalE (BoolE b) = pure (BoolV b)
-evalE (StringLitE s) = pure (StringV s)
-evalE (IntLitE i) = pure (IntV i)
-evalE (FloatLitE d) = pure (FloatV d)
-evalE (ListE xs) = ListV <$> V.mapM evalE xs
-evalE (DictE xs) =
+evalE' NoneE = pure NoneV
+evalE' (BoolE b) = pure (BoolV b)
+evalE' (StringLitE s) = pure (StringV s)
+evalE' (IntLitE i) = pure (IntV i)
+evalE' (FloatLitE d) = pure (FloatV d)
+evalE' (ListE xs) = ListV <$> V.mapM evalE xs
+evalE' (DictE xs) =
   DictV . Map.fromList <$> mapM evalKV xs
-evalE (UnaryE op expr) = do
+evalE' (UnaryE op expr) = do
   v <- evalE expr
   evalUnary op v
-evalE (BinaryE op aExpr bExpr) = do
+evalE' (BinaryE op aExpr bExpr) = do
   a <- evalE aExpr
   b <- evalE bExpr
   evalBinary op a b
-evalE (DotE aExpr b) = do
+evalE' (DotE aExpr b) = do
   a <- evalE aExpr
   attrMay <- getAttr a b
   case attrMay of
@@ -239,25 +246,25 @@ evalE (DotE aExpr b) = do
       case itemMay of
         Just item -> pure item
         Nothing -> throwError $ NotInScopeError (Text.show a <> "." <> Text.show b)
-evalE (SliceE sliceeE beginEMay endEMay) = do
+evalE' (SliceE sliceeE beginEMay endEMay) = do
   slicee <- evalE sliceeE
   beginMay <- mapM evalE beginEMay
   endMay <- mapM evalE endEMay
   sliceValue slicee beginMay endMay
-evalE (CallE callableExpr posArgsExpr namedArgsExpr) = do
+evalE' (CallE callableExpr posArgsExpr namedArgsExpr) = do
   callable <- evalE callableExpr
   call Nothing callable posArgsExpr namedArgsExpr
-evalE (FilterE scrutinee filterE args kwargs) = do
+evalE' (FilterE scrutinee filterE args kwargs) = do
   f <- withJinjaFilters (eval filterE)
   callFilter f scrutinee args kwargs
-evalE (TernaryE condExpr yesExpr noExpr) = do
+evalE' (TernaryE condExpr yesExpr noExpr) = do
   cond <- evalE condExpr >>= asBool "condition"
   evalE (if cond then yesExpr else noExpr)
-evalE (VarE name) =
+evalE' (VarE name) =
   lookupVar name
-evalE (StatementE statement) = do
+evalE' (StatementE statement) = do
   evalS statement
-evalE (IsE scrutinee testE args kwargs) = do
+evalE' (IsE scrutinee testE args kwargs) = do
   t <- withJinjaTests (evalE testE)
   callTest t scrutinee args kwargs
 
@@ -502,7 +509,6 @@ safeDiv a b =
     c | isNaN c -> Left (NumericError "/" "not a number")
     c | isInfinite c -> Left (NumericError "/" ("division by zero"))
     c -> Right c
-  
 
 concatValues :: Monad m => (Value m) -> (Value m) -> GingerT m (Value m)
 concatValues a b = case (a, b) of
@@ -597,11 +603,13 @@ evalS (FilterS name posArgsExpr namedArgsExpr bodyS) = whenOutputPolicy $ do
   let posArgsExpr' = StatementE bodyS : posArgsExpr
   call Nothing callee posArgsExpr' namedArgsExpr
 
-evalS (SetS name valE) = do
+evalS (SetS target valE) = do
   val <- evalE valE
-  setVar name val
+  case target of
+    SetVar name -> setVar name val
+    SetMutable name path -> setMutable name path val
   pure NoneV
-evalS (SetBlockS name bodyS filterEMaybe) = do
+evalS (SetBlockS target bodyS filterEMaybe) = do
   body <- case filterEMaybe of
             Nothing ->
               evalS bodyS
@@ -610,7 +618,9 @@ evalS (SetBlockS name bodyS filterEMaybe) = do
                 evalE (CallE callee (StatementE bodyS : posArgs) kwArgs)
               callee ->
                 evalE (CallE callee [StatementE bodyS] mempty)
-  setVar name body
+  case target of
+    SetVar name -> setVar name body
+    SetMutable name path -> setMutable name path body
   pure NoneV
 evalS (IncludeS nameE missingPolicy contextPolicy) = do
   name <- eval nameE >>= (eitherExcept . asTextVal)

@@ -79,9 +79,15 @@ valueToExpr (NativeV _) = StringLitE "<<native>>"
 valueToExpr (ProcedureV _) = StringLitE "<<procedure>>"
 valueToExpr (TestV _) = StringLitE "<<test>>"
 valueToExpr (FilterV _) = StringLitE "<<filter>>"
+valueToExpr (MutableRefV (RefID i)) = StringLitE $ "<<ref" <> Text.show i <> ">>"
 
 instance RenderSyntax (Value m) where
   renderSyntax = renderSyntax . valueToExpr
+
+instance RenderSyntax SetTarget where
+  renderSyntax (SetVar name) = renderSyntax name
+  renderSyntax (SetMutable name attr) =
+    renderSyntax name <> "." <> renderSyntax attr
 
 instance RenderSyntax Expr where
   renderSyntax (PositionedE _ e) = renderSyntax e

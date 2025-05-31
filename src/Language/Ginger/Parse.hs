@@ -716,15 +716,26 @@ filterStatement = do
 setPair :: P (Identifier, Expr)
 setPair = (,) <$> identifier <* chunk "=" <* space <*> expr
 
+setTargetPair :: P (SetTarget, Expr)
+setTargetPair = (,) <$> setTarget <* chunk "=" <* space <*> expr
+
+setTarget :: P SetTarget
+setTarget = do
+  leader <- identifier
+  selectorMay <- optional $ chunk "." *> identifier
+  pure $ case selectorMay of
+    Nothing -> SetVar leader
+    Just selector -> SetMutable leader selector
+
 setStatement :: P Statement
 setStatement = try $ do
-  flow "set" $ uncurry SetS <$> setPair
+  flow "set" $ uncurry SetS <$> setTargetPair
 
 setBlockStatement :: P Statement
 setBlockStatement = do
   withFlow "set" setBlockHeader setBlockBody makeSetBlock
   where
-    setBlockHeader = (,) <$> identifier <*> optional (chunk "|" *> space *> expr)
+    setBlockHeader = (,) <$> setTarget <*> optional (chunk "|" *> space *> expr)
     setBlockBody = statement
     makeSetBlock (name, filterMay) body =
       SetBlockS name body filterMay

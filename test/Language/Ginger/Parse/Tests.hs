@@ -302,15 +302,15 @@ tests = testGroup "Language.Ginger.Parse"
       [ testCase "set" $
           test_parser statementUP
             "{% set foo = bar %}"
-            (SetS "foo" (VarE "bar"))
+            (SetS (SetVar "foo") (VarE "bar"))
       , testCase "set block" $
           test_parser statementUP
             "{% set foo %}foo{% endset %}"
-            (SetBlockS "foo" (ImmediateS $ Encoded "foo") Nothing)
+            (SetBlockS (SetVar "foo") (ImmediateS $ Encoded "foo") Nothing)
       , testCase "set block with filter" $
           test_parser statementUP
             "{% set foo | bar %}foo{% endset %}"
-            (SetBlockS "foo" (ImmediateS $ Encoded "foo") (Just (VarE "bar")))
+            (SetBlockS (SetVar "foo") (ImmediateS $ Encoded "foo") (Just (VarE "bar")))
       ]
     , testGroup "ForS"
       [ testCase "for" $
@@ -462,53 +462,53 @@ tests = testGroup "Language.Ginger.Parse"
     [ testCase "trim newline" $
         test_parser statementUP
           "{% set foo = bar %}\nHello"
-          (GroupS [SetS "foo" (VarE "bar"), ImmediateS . Encoded $ "Hello"])
+          (GroupS [SetS (SetVar "foo") (VarE "bar"), ImmediateS . Encoded $ "Hello"])
     , testCase "trim only newline" $
         test_parser statementUP
           "{% set foo = bar %}\n Hello"
-          (GroupS [SetS "foo" (VarE "bar"), ImmediateS . Encoded $ " Hello"])
+          (GroupS [SetS (SetVar "foo") (VarE "bar"), ImmediateS . Encoded $ " Hello"])
     , testCase "keep newline" $
         test_parser statementUP
           "{% set foo = bar +%}\nHello"
           (GroupS
-            [ SetS "foo" (VarE "bar")
+            [ SetS (SetVar "foo") (VarE "bar")
             , ImmediateS . Encoded $ "\nHello"
             ])
     , testCase "force-trim newline" $
         test_parser statementUP
           "{% set foo = bar -%}\nHello"
-          (GroupS [SetS "foo" (VarE "bar"), ImmediateS . Encoded $ "Hello"])
+          (GroupS [SetS (SetVar "foo") (VarE "bar"), ImmediateS . Encoded $ "Hello"])
     , testCase "keep leading" $
         test_parser statementUP
           "    {% set foo = bar %}"
-          (GroupS [ImmediateS . Encoded $ "    ", SetS "foo" (VarE "bar")])
+          (GroupS [ImmediateS . Encoded $ "    ", SetS (SetVar "foo") (VarE "bar")])
     , testCase "force-keep leading" $
         test_parser statementUP
           "    {%+ set foo = bar %}"
-          (GroupS [ImmediateS . Encoded $ "    ", SetS "foo" (VarE "bar")])
+          (GroupS [ImmediateS . Encoded $ "    ", SetS (SetVar "foo") (VarE "bar")])
     , testCase "trim leading" $
         test_parser statementUP
           "    {%- set foo = bar %}"
-          (SetS "foo" (VarE "bar"))
+          (SetS (SetVar "foo") (VarE "bar"))
     , testCase "trim both" $
         test_parser statementUP
           "    {%- set foo = bar -%}\n"
-          (SetS "foo" (VarE "bar"))
+          (SetS (SetVar "foo") (VarE "bar"))
     , testCase "trim leading after non-space" $
         test_parser statementUP
           "Hello,\n    {%- set foo = bar %}"
           (GroupS
             [ ImmediateS . Encoded $ "Hello,\n"
-            , SetS "foo" (VarE "bar")
+            , SetS (SetVar "foo") (VarE "bar")
             ])
     , testCase "trim trailing before non-space" $
         test_parser statementUP
           "{% set foo = bar -%} \nHello"
-          (GroupS [SetS "foo" (VarE "bar"), ImmediateS . Encoded $ "Hello"])
+          (GroupS [SetS (SetVar "foo") (VarE "bar"), ImmediateS . Encoded $ "Hello"])
     , testCase "adjacent right and left trim" $
         test_parser statementUP
           "{% set foo = bar -%} \t \r\n\t {%- set baz = quux %}"
-          (GroupS [SetS "foo" (VarE "bar"), SetS "baz" (VarE "quux")])
+          (GroupS [SetS (SetVar "foo") (VarE "bar"), SetS (SetVar "baz") (VarE "quux")])
     ]
     , testGroup "Regressions"
       [ testCase "-%} after test" $

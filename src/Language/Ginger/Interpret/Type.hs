@@ -182,10 +182,10 @@ setBlock name block = do
   modify (\s -> s { evalBlocks = Map.insert name lblock' (evalBlocks s) })
   pure lblock'
 
-bindMutable :: Monad m
-            => Value m
-            -> GingerT m RefID
-bindMutable val = do
+allocMutable :: (Monad m, MonadTrans t, MonadState (EvalState m) (t m))
+             => Value m
+             -> t m RefID
+allocMutable val = do
   refID <- gets evalNextRefID
   modify (\s ->
     s { evalNextRefID = succ (evalNextRefID s)

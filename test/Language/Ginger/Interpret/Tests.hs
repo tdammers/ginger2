@@ -41,6 +41,7 @@ import Language.Ginger.Interpret.DefEnv (htmlEncode)
 import Language.Ginger.Render
 import Language.Ginger.TestUtils
 import Language.Ginger.Value
+import Language.Ginger.SourcePosition
 
 tests :: TestTree
 tests = testGroup "Language.Ginger.Interpret"
@@ -154,6 +155,7 @@ tests = testGroup "Language.Ginger.Interpret"
         [ testProperty "Native nullary" prop_nativeNullary
         , testProperty "Native identity" prop_nativeIdentity
         , testProperty "User nullary" prop_userNullary
+        , testProperty "Namespace set/get" prop_namespaceSetGet
         ]
       , testProperty "TernaryE" prop_ternary
       , testGroup "VarE"
@@ -1008,6 +1010,7 @@ tests = testGroup "Language.Ginger.Interpret"
       , testProperty "with else branch" prop_forStatementEmpty
       , testProperty "with filter" prop_forStatementFilter
       , testProperty "loop object" prop_forStatementLoopVars
+      , testProperty "using namespace object" prop_forStatementNamespace
       ]
     , testGroup "CallS"
       [ testProperty "no args" prop_callNoArgs
@@ -1390,6 +1393,21 @@ prop_userNullary varName bodyExpr =
   in
     resultCall === resultDirect
 
+prop_namespaceSetGet :: Identifier -> Identifier -> Integer -> Property
+prop_namespaceSetGet nsName attrName val =
+  let program = GroupS
+                  [ PositionedS (SourcePosition "test" 1 1) $
+                      SetS (SetVar nsName) (CallE (VarE "namespace") [] [])
+                  , PositionedS (SourcePosition "test" 2 1) $
+                      SetS (SetMutable nsName attrName) (IntLitE val)
+                  , PositionedS (SourcePosition "test" 3 1) $
+                      InterpolationS (DotE (VarE nsName) attrName)
+                  ]
+      result = runGingerIdentity $ eval program
+  in
+    counterexample (Text.unpack $ renderSyntaxText program) $
+    result === IntV val
+
 prop_isDefinedTrue :: Identifier -> Integer -> Property
 prop_isDefinedTrue name val =
   let result = runGingerIdentity $ do
@@ -1610,6 +1628,35 @@ prop_forStatementLoopVars intItems =
                             )
                             Nothing
   in
+    not (null intItems) ==>
+    resultFor === expected
+
+prop_forStatementNamespace :: [Integer] -> Property
+prop_forStatementNamespace intItems =
+  let items = ListV . V.fromList $ map IntV intItems
+      expected = IntV $ sum intItems
+      program = GroupS
+                  [ SetS (SetVar "ns") (CallE (VarE "namespace") [] [])
+                  , SetS (SetMutable "ns" "sum") (IntLitE 0)
+                  , ForS
+                      Nothing
+                      "item"
+                      (VarE "items") -- iteree
+                      Nothing
+                      NotRecursive
+                      (GroupS
+                        [ SetS (SetMutable "ns" "sum") $
+                            PlusE (DotE (VarE "ns") "sum") (VarE "item")
+                        ]
+                      )
+                      Nothing
+                  , InterpolationS (DotE (VarE "ns") "sum")
+                  ]
+      resultFor = runGingerIdentity $ do
+                    setVar "items" items
+                    eval program
+  in
+    counterexample (Text.unpack $ renderSyntaxText program) $
     not (null intItems) ==>
     resultFor === expected
 

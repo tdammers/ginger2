@@ -186,6 +186,9 @@ call callerMay callable posArgsExpr namedArgsExpr = do
         scoped $ do
           setVars argDict
           evalE f
+    ProcedureV NamespaceProcedure -> do
+      refID <- allocMutable (DictV mempty)
+      pure $ MutableRefV refID
     DictV m -> do
       let callable' = Map.lookup "__call__" m
       case callable' of
@@ -212,12 +215,14 @@ instance Monad m => Eval m Statement where
 instance Monad m => Eval m Template where
   eval = evalT
 
+-- | Evaluate an expression, dereferencing mutable refs.
 evalE :: Monad m => Expr -> GingerT m (Value m)
 evalE expr =
   evalE' expr >>= \case
     MutableRefV refID -> derefMutable refID
     v -> pure v
 
+-- | Evaluate an expression without dereferencing mutable refs.
 evalE' :: Monad m => Expr -> GingerT m (Value m)
 evalE' (PositionedE pos e) = do
   evalE e `catchError` decorateError pos
@@ -604,10 +609,10 @@ evalS (FilterS name posArgsExpr namedArgsExpr bodyS) = whenOutputPolicy $ do
   call Nothing callee posArgsExpr' namedArgsExpr
 
 evalS (SetS target valE) = do
-  val <- evalE valE
+  val <- evalE' valE
   case target of
     SetVar name -> setVar name val
-    SetMutable name path -> setMutable name path val
+    SetMutable name attr -> setMutable name attr val
   pure NoneV
 evalS (SetBlockS target bodyS filterEMaybe) = do
   body <- case filterEMaybe of

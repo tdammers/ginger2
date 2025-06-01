@@ -305,12 +305,14 @@ data Procedure m
             -> m (Either RuntimeError (Value m))
          )
   | GingerProcedure !(Env m) ![(Identifier, Maybe (Value m))] !Expr
+  | NamespaceProcedure
 
 instance Eq (Procedure m) where
   NativeProcedure a _ _ == NativeProcedure b _ _ =
     a == b
   GingerProcedure env1 argspec1 body1 == GingerProcedure env2 argspec2 body2 =
     (env1, argspec1, body1) == (env2, argspec2, body2)
+  NamespaceProcedure == NamespaceProcedure = True
   _ == _ = False
 
 pureNativeProcedure :: Applicative m
@@ -1147,6 +1149,8 @@ stringify (ProcedureV (NativeProcedure oid _ _)) =
   pure $ "[[procedure " <> unObjectID oid <> "]]"
 stringify (ProcedureV (GingerProcedure {})) =
   pure $ "[[procedure]]"
+stringify (ProcedureV NamespaceProcedure) =
+  pure $ "[[procedure namespace]]"
 stringify (TestV _) =
   pure "[[test]]"
 stringify (FilterV _) =

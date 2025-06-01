@@ -181,6 +181,7 @@ builtinGlobals evalE = Map.fromList $
   , ("map", FilterV $ fnMap evalE)
   -- , ("max", undefined)
   -- , ("min", undefined)
+  , ("namespace", ProcedureV NamespaceProcedure)
   , ("odd", intBuiltin
               "builtin:odd"
               (Just ProcedureDoc
@@ -2080,6 +2081,8 @@ nativeMethod (GingerProcedure env argSpec body) self =
   ProcedureV $ GingerProcedure env' (drop 1 argSpec) body
   where
     env' = env { envVars = Map.insert "value" self (envVars env) }
+nativeMethod NamespaceProcedure _self =
+  error "'namespace' cannot be used as a method"
 
 nativePureMethod :: Monad m
                  => ObjectID

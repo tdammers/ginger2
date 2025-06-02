@@ -10,7 +10,7 @@ maintainer: tdammers@gmail.com
 copyright: 2025 Tobias Dammers
 category: Language
 build-type: Simple
--- extra-doc-files: CHANGELOG.md
+extra-doc-files: README.markdown
 -- extra-source-files:
 
 common warnings

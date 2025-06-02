@@ -131,6 +131,7 @@ builtinGlobals evalE = Map.fromList $
   , ("count", ProcedureV fnLength)
   , ("date", ProcedureV fnDateFormat)
   , ("dictsort", ProcedureV fnDictsort)
+  , ("e", ProcedureV fnEscape)
   , ("escape", ProcedureV fnEscape)
   , ("even", intBuiltin
                 "builtin:even"

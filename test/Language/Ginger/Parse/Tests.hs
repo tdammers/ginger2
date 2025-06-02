@@ -253,6 +253,13 @@ tests = testGroup "Language.Ginger.Parse"
               (IsE (VarE "a") (VarE "b") [] [])
               (VarE "c")
             )
+      , testCase "is vs and" $
+          test_parser exprUP
+            "a is b and c is d"
+            (AndE
+              (IsE (VarE "a") (VarE "b") [] [])
+              (IsE (VarE "c") (VarE "d") [] [])
+            )
       , testCase "multiple filters" $
           test_parser exprUP
             "a|b|c"

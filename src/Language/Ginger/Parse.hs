@@ -306,7 +306,7 @@ argSig =
 --------------------------------------------------------------------------------
 
 expr :: P Expr
-expr = positioned PositionedE ternaryExpr
+expr = positioned PositionedE ternaryExpr <?> "expression"
 
 ternaryExpr :: P Expr
 ternaryExpr = do
@@ -373,14 +373,20 @@ testExpr = do
       keyword "is"
       wrapper <- option id $ NotE <$ keyword "not"
       test <- VarE <$> identifier
-      (posArgs, kwArgs) <- option ([], []) (callArgs <|> soloArg)
+      (posArgs, kwArgs) <- option ([], []) (try callArgs <|> try soloArg)
       pure . wrapper $ IsE lhs test posArgs kwArgs
 
 soloArg :: P ([Expr], [(Identifier, Expr)])
 soloArg = do
+  notFollowedBy $ choice
+    [ keyword "and"
+    , keyword "or"
+    , keyword "in"
+    , keyword "is"
+    , keyword "not"
+    ]
   arg <- expr
   pure ([arg], [])
-
 
 concatExpr :: P Expr
 concatExpr = binaryExpr concatOp additiveExpr

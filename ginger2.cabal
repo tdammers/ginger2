@@ -1,8 +1,9 @@
 cabal-version: 3.0
 name: ginger2
 version: 2.0.0.0
--- synopsis:
--- description:
+synopsis: Jinja templates for Haskell
+description: Ginger2 approximates Jinja2 (https://jinja.palletsprojects.com/)
+             in Haskell.
 license: MIT
 license-file: LICENSE
 author: Tobias Dammers
@@ -10,11 +11,17 @@ maintainer: tdammers@gmail.com
 copyright: 2025 Tobias Dammers
 category: Language
 build-type: Simple
+bug-reports: https://github.com/tdammers/ginger2/issues
 extra-doc-files: README.markdown
+               , CHANGELOG
 -- extra-source-files:
 
+source-repository head
+    type: git
+    location: https://github.com/tdammers/ginger2
+
 common warnings
-    ghc-options: -Wall -Werror
+    ghc-options: -Wall
 
 library
     import: warnings

@@ -1011,6 +1011,13 @@ textFunc f (FloatV a) = toValue <$> f (Text.show a)
 textFunc f NoneV = toValue <$> f ""
 textFunc _ a = Left (TagError "text function" "int" (tagNameOf a))
 
+dictFunc :: (Monad m, ToValue a m)
+         => (Map Scalar (Value m) -> Either RuntimeError a)
+         -> Value m
+         -> Either RuntimeError (Value m)
+dictFunc f (DictV a) = toValue <$> f a
+dictFunc _ a = Left (TagError "dict function" "dict" (tagNameOf a))
+
 numericFunc2 :: Monad m
              => (Integer -> Integer -> Integer)
              -> (Double -> Double -> Double)

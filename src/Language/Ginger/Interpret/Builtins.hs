@@ -559,7 +559,38 @@ builtinListAttribs = Map.fromList
 
 builtinDictAttribs :: Monad m => BuiltinAttribs (Map Scalar (Value m)) m
 builtinDictAttribs = Map.fromList
-  [
+  [ ("items", dictAttrib
+                "builtin:dict:items"
+                (Just ProcedureDoc
+                  { procedureDocName = "dict.items"
+                  , procedureDocArgs = mempty
+                  , procedureDocReturnType = (Just $ TypeDocSingle "list")
+                  , procedureDocDescription = "Get a list of key/value pairs from dictionary `value` as a list"
+                  }
+                )
+                Map.toList)
+  , ("values", dictAttrib
+                "builtin:dict:values"
+                (Just ProcedureDoc
+                  { procedureDocName = "dict.values"
+                  , procedureDocArgs = mempty
+                  , procedureDocReturnType = (Just $ TypeDocSingle "list")
+                  , procedureDocDescription = "Extract the values from dictionary `value` as a list"
+                  }
+                )
+                Map.elems)
+  , ("keys", dictAttrib
+                "builtin:dict:keys"
+                (Just ProcedureDoc
+                  { procedureDocName = "dict.keys"
+                  , procedureDocArgs = mempty
+                  , procedureDocReturnType = (Just $ TypeDocSingle "list")
+                  , procedureDocDescription = "Get a list of all keys in dict `value`"
+                  }
+                )
+                Map.keys)
+  , ("get", dictProcAttrib
+                fnDictGet)
   ]
 
 --------------------------------------------------------------------------------
@@ -1937,6 +1968,30 @@ fnHelp = mkFn1 "help"
         _ ->
           pure NoneV
 
+fnDictGet :: forall m. Monad m => Procedure m
+fnDictGet = mkFn3 "dict.get"
+            "Get an item from a dictionary."
+            ( "value"
+            , Nothing :: Maybe (Map Scalar (Value m))
+            , Just $ TypeDocSingle "dict"
+            , ""
+            )
+            ( "key"
+            , Nothing
+            , Just $ TypeDocSingle "scalar"
+            , ""
+            )
+            ( "default"
+            , Just NoneV :: Maybe (Value m)
+            , Just $ TypeDocAny
+            , ""
+            )
+            (Just $ TypeDocAny)
+            $ \value key defval -> do
+  case Map.lookup key value of
+    Nothing -> pure defval
+    Just v -> pure v
+
 isUpperVal :: Value m -> Value m
 isUpperVal (StringV txt) = BoolV (Text.all isUpper txt)
 isUpperVal (EncodedV (Encoded txt)) = BoolV (Text.all isUpper txt)
@@ -2274,6 +2329,37 @@ textProcAttrib :: Monad m
                -> m (Either RuntimeError (Value m))
 textProcAttrib f =
   pureAttrib $ nativeMethod f . StringV
+
+dictProp :: (Monad m, ToValue a m)
+         => (Map Scalar (Value m) -> a)
+         -> Map Scalar (Value m)
+         -> m (Either RuntimeError (Value m))
+dictProp f t = pure . Right . toValue $ f t
+
+dictAttrib :: (Monad m, ToValue a m)
+           => ObjectID
+           -> Maybe ProcedureDoc
+           -> (Map Scalar (Value m) -> a)
+           -> Map Scalar (Value m)
+           -> m (Either RuntimeError (Value m))
+dictAttrib oid doc f =
+  pureAttrib $ nativePureMethod oid doc (dictFunc (pure . f)) . DictV
+
+dictNProcAttrib :: (Monad m, ToNativeProcedure m a)
+                => ObjectID
+                -> Maybe ProcedureDoc
+                -> (Value m -> a)
+                -> Map Scalar (Value m)
+                -> m (Either RuntimeError (Value m))
+dictNProcAttrib oid doc f =
+  pureAttrib $ toNativeMethod oid doc f . DictV
+
+dictProcAttrib :: Monad m
+               => Procedure m
+               -> Map Scalar (Value m)
+               -> m (Either RuntimeError (Value m))
+dictProcAttrib f =
+  pureAttrib $ nativeMethod f . DictV
 
 builtinNotImplemented :: Monad m => Text -> Value m
 builtinNotImplemented name =

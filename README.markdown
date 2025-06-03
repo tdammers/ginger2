@@ -2,13 +2,13 @@
 
 ![](http://ginger.tobiasdammers.nl/static/img/ginger-leaf.svg)
 
-A Haskell implementation of the [Jinja2](https://jinja.palletsprojects.com/)
+A Haskell implementation of the [Jinja](https://jinja.palletsprojects.com/)
 template language.
 
 ## Introduction
 
-Ginger2 provides most of the original Jinja2 template language, as much as that
-makes sense in a Haskell host application.
+Ginger2 provides most of the Jinja template language, as much as that makes
+sense in a Haskell host application.
 
 We do, however, avoid some of the most blatant Pythonisms, especially where we
 felt the features in question were more of an accidental result of binding

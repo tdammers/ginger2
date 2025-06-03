@@ -71,7 +71,47 @@ defVarsCommon = Map.fromList
   [ ( "__jinja__"
     , dictV
       [ ( "tests"
-        , dictV
+        , DictV . Map.mapKeys toScalar $ builtinTests
+        )
+      , ( "filters"
+        , DictV . Map.mapKeys toScalar $ builtinFilters
+        )
+      , ( "globals"
+        , DictV . Map.mapKeys toScalar $ builtinGlobals evalE
+        )
+      ]
+    )
+  ]
+  <> builtinGlobals evalE
+
+defVarsCompat :: forall m. Monad m
+              => Map Identifier (Value m)
+defVarsCompat = defVarsCommon
+
+defVars :: forall m. Monad m
+        => Map Identifier (Value m)
+defVars = defVarsCommon
+        <> builtinGlobalsNonJinja evalE
+        <> Map.fromList
+           [ ( "__ginger__"
+             , dictV
+               [ ( "globals"
+                 , DictV . Map.mapKeys toScalar $ builtinGlobalsNonJinja evalE
+                 )
+               ]
+             )
+           ]
+
+builtinFilters :: forall m. Monad m
+             => Map Identifier (Value m)
+builtinFilters = Map.fromList
+            [ ("default", FilterV $ defaultFilter)
+            , ("d", FilterV $ defaultFilter)
+            ]
+
+builtinTests :: forall m. Monad m
+             => Map Identifier (Value m)
+builtinTests = Map.fromList
             [ ("defined", TestV $
                             NativeTest
                               (Just ProcedureDoc
@@ -291,38 +331,6 @@ defVarsCommon = Map.fromList
                             )
                             (isNone :: Value m -> Value m))
             ]
-        )
-      , ( "filters"
-        , dictV
-            [ ("default", FilterV $ defaultFilter)
-            , ("d", FilterV $ defaultFilter)
-            ]
-        )
-      , ( "globals"
-        , DictV . Map.mapKeys toScalar $ builtinGlobals evalE
-        )
-      ]
-    )
-  ]
-  <> builtinGlobals evalE
-
-defVarsCompat :: forall m. Monad m
-              => Map Identifier (Value m)
-defVarsCompat = defVarsCommon
-
-defVars :: forall m. Monad m
-        => Map Identifier (Value m)
-defVars = defVarsCommon
-        <> builtinGlobalsNonJinja evalE
-        <> Map.fromList
-           [ ( "__ginger__"
-             , dictV
-               [ ( "globals"
-                 , DictV . Map.mapKeys toScalar $ builtinGlobalsNonJinja evalE
-                 )
-               ]
-             )
-           ]
 
 isCallable' :: Monad m => Value m -> Bool
 isCallable' (ProcedureV {}) = True
@@ -392,7 +400,7 @@ isTest expr _ ctx env = do
       case existing of
         Just a -> pure . Right $ isCallable' a
         _ -> pure . Right $ False
-        
+
     Right a ->
       pure . Left $ TagError "test name" "string" (tagNameOf a)
     Left err ->

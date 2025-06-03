@@ -20,7 +20,7 @@ import Language.Ginger.Interpret.Type
 import Language.Ginger.RuntimeError
 import Language.Ginger.Value
 import Language.Ginger.Render (renderSyntaxText)
- 
+
 import Control.Monad.Except
 import Control.Monad.Trans (lift)
 import qualified Data.Aeson as JSON
@@ -129,7 +129,6 @@ builtinGlobals evalE = Map.fromList $
                       Text.toTitle)
   , ("center", ProcedureV fnCenter)
   , ("count", ProcedureV fnLength)
-  , ("date", ProcedureV fnDateFormat)
   , ("dictsort", ProcedureV fnDictsort)
   , ("e", ProcedureV fnEscape)
   , ("escape", ProcedureV fnEscape)
@@ -222,7 +221,7 @@ builtinGlobals evalE = Map.fromList $
                   }
                 )
               (EncodedV @m . Encoded)
-                  
+
     )
   -- , ("selectattr", undefined)
   , ("select", FilterV $ fnSelect evalE)
@@ -296,6 +295,7 @@ builtinGlobalsNonJinja :: forall m. Monad m
 builtinGlobalsNonJinja _evalE = Map.fromList $
   [ ("strip", ProcedureV fnStrStrip)
   , ("regex", regexModule)
+  , ("date", ProcedureV fnDateFormat)
   , ("dateformat", ProcedureV fnDateFormat)
   , ("help", ProcedureV fnHelp)
   ]
@@ -310,7 +310,7 @@ builtinIntAttribs = Map.fromList
                       , procedureDocArgs = mempty
                       , procedureDocReturnType = (Just $ TypeDocSingle "int")
                       , procedureDocDescription =
-                          Text.unlines 
+                          Text.unlines
                             [ "Bit count (popcount)."
                             , "Counts the number of set bits in an integer."
                             ]
@@ -346,7 +346,7 @@ builtinBoolAttribs = Map.fromList
                       , procedureDocReturnType = (Just $ TypeDocSingle "int")
                       , procedureDocArgs = mempty
                       , procedureDocDescription =
-                          Text.unlines 
+                          Text.unlines
                             [ "Bit count (popcount)."
                             , "Counts the number of set bits."
                             , "Since a boolean only has one bit, this will " <>
@@ -612,7 +612,7 @@ fnReMatch = mkFn3 "regex.match"
   $ runReWith (\r h -> convertMatchOnceText $ RE.matchOnceText r h)
 
 fnReMatches :: forall m. Monad m => Procedure m
-fnReMatches = mkFn3 "regex.match"
+fnReMatches = mkFn3 "regex.matches"
               (Text.unlines
                   [ "Match a regular expression against a string."
                   , "Returns an array of matches, where each match is an " <>
@@ -699,7 +699,7 @@ fnLength = mkFn1 "length"
       StringV s -> pure $ Text.length s
       ListV xs -> pure $ length xs
       DictV xs -> pure $ Map.size xs
-      x -> 
+      x ->
           throwError $
             ArgumentError
               "length"
@@ -770,7 +770,7 @@ fnToFloat = mkFn2 "float"
               (Text.unlines
                   [ "Convert `value` to float."
                   , "If `default` is given, values that cannot be converted " <>
-                    " to floats will be replaced with this default value." 
+                    " to floats will be replaced with this default value."
                   ]
               )
               ( "value"
@@ -799,7 +799,7 @@ fnToInt = mkFn3 "int"
               (Text.unlines
                   [ "Convert `value` to int."
                   , "If `default` is given, values that cannot be converted " <>
-                    " to integers will be replaced with this default value." 
+                    " to integers will be replaced with this default value."
                   ]
               )
               ( "value"
@@ -978,7 +978,7 @@ fnSelect evalE =
   NativeFilter
     (Just ProcedureDoc
       { procedureDocName = "select"
-      , procedureDocArgs = 
+      , procedureDocArgs =
           [ ArgumentDoc
               "value"
               (Just $ TypeDocSingle "list")
@@ -1765,7 +1765,7 @@ fnFirst = mkFn1 "first"
     EncodedV (Encoded txt) -> pure $ EncodedV . Encoded $ Text.take 1 txt
     BytesV arr -> pure . toValue $ BS.indexMaybe arr 0
     x -> throwError $ ArgumentError "first" "value" "list or string" (tagNameOf x)
-      
+
 fnLast :: forall m. Monad m => Procedure m
 fnLast = mkFn1 "last"
             "Get the last element from a list, or the last character from a string."
@@ -1869,11 +1869,11 @@ fnDateFormat = mkFn4 "dateformat"
                   , "Format strings follow the specification found here: " <>
                     "[Date.Time.Format.formatTime](https://hackage.haskell.org/package/time-1.14/docs/Data-Time-Format.html#v:formatTime)"
                   , "Accepted input formats:"
-                  , "- `%Y-%m-%dT%H:%M:%S%Q%Z`"
-                  , "- `%Y-%m-%d %H:%M:%S%Q`"
-                  , "- `%Y-%m-%d %H:%M:%S%Q%z`"
-                  , "- `%Y-%m-%d %H:%M:%S%Q%Z`"
-                  , "- `%Y-%m-%d`"
+                  , "- `%Y-%m-%dT%H:%M:%S%Q%Z` (2025-11-28T23:54:32.1234UTC)"
+                  , "- `%Y-%m-%d %H:%M:%S%Q` (2025-11-28 23:54:32.1234UTC)"
+                  , "- `%Y-%m-%d %H:%M:%S%Q%z` (2025-11-28 23:54:32.1234+0100)"
+                  , "- `%Y-%m-%d %H:%M:%S%Q%Z` (2025-11-28 23:54:32.1234UTC)"
+                  , "- `%Y-%m-%d` (2025-11-28)"
                   ]
                 )
                 ( "date"
@@ -2278,7 +2278,7 @@ textProcAttrib f =
 builtinNotImplemented :: Monad m => Text -> Value m
 builtinNotImplemented name =
   ProcedureV $
-    NativeProcedure 
+    NativeProcedure
       (ObjectID $ "builtin:not_implemented:" <> name)
       Nothing
       $ \_ _ ->

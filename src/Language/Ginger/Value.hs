@@ -580,16 +580,16 @@ instance Applicative m => FromValue Text m where
   fromValue = pure . asTextVal
 
 instance Applicative m => FromValue Integer m where
-  fromValue = pure . asIntVal
+  fromValue = pure . asIntVal "conversion to int"
 
 instance Applicative m => FromValue Int m where
-  fromValue = fmap (fmap fromInteger) . pure . asIntVal
+  fromValue = fmap (fmap fromInteger) . pure . asIntVal "conversion to int"
 
 instance Applicative m => FromValue Double m where
-  fromValue = pure . asFloatVal
+  fromValue = pure . asFloatVal "conversion to float"
 
 instance Applicative m => FromValue Bool m where
-  fromValue = pure . asBoolVal
+  fromValue = pure . asBoolVal "conversion to bool"
 
 instance Applicative m => FromValue () m where
   fromValue NoneV = pure $ Right ()
@@ -928,19 +928,33 @@ asOptionalVal :: (Value m -> Either RuntimeError a) -> Value m -> Either Runtime
 asOptionalVal _ NoneV = Right Nothing
 asOptionalVal asVal x = Just <$> asVal x
 
-asIntVal :: Value m -> Either RuntimeError Integer
-asIntVal (IntV a) = Right a
-asIntVal x = Left $ TagError "conversion to int" "int" (tagNameOf x)
+asIntVal :: Text -> Value m -> Either RuntimeError Integer
+asIntVal _ (IntV a) = Right a
+asIntVal context x = Left $ TagError context "int" (tagNameOf x)
 
-asFloatVal :: Value m -> Either RuntimeError Double
-asFloatVal (FloatV a) = Right a
-asFloatVal (IntV a) = Right (fromInteger a)
-asFloatVal x = Left $ TagError "conversion to float" "float" (tagNameOf x)
+asFloatVal :: Text -> Value m -> Either RuntimeError Double
+asFloatVal _ (FloatV a) = Right a
+asFloatVal _ (IntV a) = Right (fromInteger a)
+asFloatVal context x = Left $ TagError context "float" (tagNameOf x)
 
-asBoolVal :: Value m -> Either RuntimeError Bool
-asBoolVal (BoolV a) = Right a
-asBoolVal NoneV = Right False
-asBoolVal x = Left $ TagError "conversion to bool" "bool" (tagNameOf x)
+asBoolVal :: Text -> Value m -> Either RuntimeError Bool
+asBoolVal _ (BoolV a) = Right a
+asBoolVal _ NoneV = Right False
+asBoolVal context x = Left $ TagError context "bool" (tagNameOf x)
+
+-- | Lenient version of 'asBoolVal', will also work on strings, numbers, lists,
+-- and dicts.
+asTruthVal :: Text -> Value m -> Either RuntimeError Bool
+asTruthVal _ (BoolV a) = Right a
+asTruthVal _ NoneV = Right False
+asTruthVal _ (StringV t) = Right . not . Text.null $ t
+asTruthVal _ (BytesV t) = Right . not . BS.null $ t
+asTruthVal _ (EncodedV (Encoded t)) = Right . not . Text.null $ t
+asTruthVal _ (IntV i) = Right (i /= 0)
+asTruthVal _ (FloatV i) = Right (i /= 0)
+asTruthVal _ (ListV xs) = Right . not . V.null $ xs
+asTruthVal _ (DictV xs) = Right . not . Map.null $ xs
+asTruthVal context x = Left $ TagError context"bool" (tagNameOf x)
 
 asVectorVal :: Monad m => Value m -> m (Either RuntimeError (Vector (Value m)))
 asVectorVal (ListV a) = pure . Right $ a
@@ -985,13 +999,13 @@ intFunc :: (Monad m, ToValue a m)
          => (Integer -> Either RuntimeError a)
          -> Value m
          -> Either RuntimeError (Value m)
-intFunc f a = toValue <$> (asIntVal a >>= f)
+intFunc f a = toValue <$> (asIntVal "conversion to int" a >>= f)
 
 floatFunc :: (Monad m, ToValue a m)
          => (Double -> Either RuntimeError a)
          -> Value m
          -> Either RuntimeError (Value m)
-floatFunc f a = toValue <$> (asFloatVal a >>= f)
+floatFunc f a = toValue <$> (asFloatVal "conversion to float" a >>= f)
 
 boolFunc :: (Monad m, ToValue a m)
          => (Bool -> a)
@@ -1050,8 +1064,8 @@ intFunc2 :: Monad m
          -> Value m
          -> Either RuntimeError (Value m)
 intFunc2 f a b = do
-  x <- asIntVal a
-  y <- asIntVal b
+  x <- asIntVal "argument conversion to int" a
+  y <- asIntVal "argument conversion to int" b
   IntV <$> f x y
 
 floatFunc2 :: Monad m
@@ -1070,7 +1084,7 @@ boolFunc2 :: Monad m
          -> Value m
          -> Value m
          -> Either RuntimeError (Value m)
-boolFunc2 f a b = BoolV <$> (f <$> asBoolVal a <*> asBoolVal b)
+boolFunc2 f a b = BoolV <$> (f <$> asBoolVal "conversion to bool" a <*> asBoolVal "conversion to bool" b)
 
 native :: (Monad m, MonadTrans t, MonadError RuntimeError (t m))
        => m (Either RuntimeError a)

@@ -1105,7 +1105,7 @@ fnSelect evalE =
                                     NonCallableObjectError
                                       "non-callable native object"
                       Just f -> eitherExceptM (f obj args') >>=
-                                eitherExcept . asBoolVal
+                                eitherExcept . asTruthVal "native object to bool conversion"
                   TestV f -> do
                     -- If it's a test, we apply it as such, mapping the
                     -- current list element to the variable "@" (which cannot
@@ -1120,7 +1120,7 @@ fnSelect evalE =
                     -- If it's a native procedure, we can just call it without
                     -- binding anything.
                     eitherExceptM (f ((Nothing, x):args') ctx) >>=
-                      eitherExcept . asBoolVal
+                      eitherExcept . asTruthVal "native procedure"
                   ProcedureV (GingerProcedure env' argSpecs body) -> do
                     -- If it's a ginger procedure, we need to prepend the
                     -- current list element to the argument list (so it becomes
@@ -1133,7 +1133,7 @@ fnSelect evalE =
                                   argSpecs
                                   ((Nothing, x):args')
                     eitherExceptM (runGingerT (setVars args'' >> evalE body) ctx env') >>=
-                        eitherExcept . asBoolVal
+                        eitherExcept . asTruthVal "ginger procedure"
                   _ ->
                     -- Not something we can call.
                       throwError $

@@ -22,6 +22,7 @@ module Language.Ginger.Interpret.Eval
 , stringify
 , valuesEqual
 , asBool
+, asTruth
 , getAttr
 , getAttrRaw
 , getItem
@@ -263,7 +264,7 @@ evalE' (FilterE scrutinee filterE args kwargs) = do
   f <- withJinjaFilters (eval filterE)
   callFilter f scrutinee args kwargs
 evalE' (TernaryE condExpr yesExpr noExpr) = do
-  cond <- evalE condExpr >>= asBool "condition"
+  cond <- evalE condExpr >>= asTruth "condition"
   evalE (if cond then yesExpr else noExpr)
 evalE' (VarE name) =
   lookupVar name
@@ -329,20 +330,20 @@ sliceValue :: Monad m
            -> Maybe (Value m)
            -> GingerT m (Value m)
 sliceValue (ListV xs) startValMay endValMay = do
-  startMay <- mapM (native . pure . asIntVal) startValMay
-  endMay <- mapM (native . pure . asIntVal) endValMay
+  startMay <- mapM (native . pure . asIntVal "slice start") startValMay
+  endMay <- mapM (native . pure . asIntVal "slice end") endValMay
   pure . ListV $ sliceVector xs (fromIntegral <$> startMay) (fromIntegral <$> endMay)
 sliceValue (StringV xs) startValMay endValMay = do
-  startMay <- mapM (native . pure . asIntVal) startValMay
-  endMay <- mapM (native . pure . asIntVal) endValMay
+  startMay <- mapM (native . pure . asIntVal "slice start") startValMay
+  endMay <- mapM (native . pure . asIntVal "slice end") endValMay
   pure . StringV $ sliceText xs (fromIntegral <$> startMay) (fromIntegral <$> endMay)
 sliceValue (BytesV xs) startValMay endValMay = do
-  startMay <- mapM (native . pure . asIntVal) startValMay
-  endMay <- mapM (native . pure . asIntVal) endValMay
+  startMay <- mapM (native . pure . asIntVal "slice start") startValMay
+  endMay <- mapM (native . pure . asIntVal "slice end") endValMay
   pure . BytesV $ sliceByteString xs (fromIntegral <$> startMay) (fromIntegral <$> endMay)
 sliceValue (EncodedV (Encoded xs)) startValMay endValMay = do
-  startMay <- mapM (native . pure . asIntVal) startValMay
-  endMay <- mapM (native . pure . asIntVal) endValMay
+  startMay <- mapM (native . pure . asIntVal "slice start") startValMay
+  endMay <- mapM (native . pure . asIntVal "slice end") endValMay
   pure . EncodedV . Encoded $ sliceText xs (fromIntegral <$> startMay) (fromIntegral <$> endMay)
 sliceValue x _ _ =
   throwError $
@@ -570,7 +571,7 @@ evalS (ForS loopKeyMay loopName itereeE loopCondMay recursivity bodyS elseSMay) 
   iteree <- evalE itereeE
   evalLoop loopKeyMay loopName iteree loopCondMay recursivity bodyS elseSMay 0
 evalS (IfS condE yesS noSMay) = do
-  cond <- evalE condE >>= asBool "condition"
+  cond <- evalE condE >>= asTruth "condition"
   if cond then evalS yesS else maybe (pure NoneV) evalS noSMay
 evalS (MacroS name argsSig body) = do
   env <- gets evalEnv
@@ -735,9 +736,10 @@ makeSuper (Just lblock) = do
     ]
 
 asBool :: Monad m => Text -> Value m -> GingerT m Bool
-asBool _ (BoolV b) = pure b
-asBool _ NoneV = pure False
-asBool context x = throwError $ TagError context "boolean" (tagNameOf x)
+asBool context x = either throwError pure $ asBoolVal context x
+
+asTruth :: Monad m => Text -> Value m -> GingerT m Bool
+asTruth context x = either throwError pure $ asTruthVal context x
 
 evalLoop :: forall m. Monad m
          => Maybe Identifier
@@ -777,7 +779,7 @@ evalLoop loopKeyMay loopName iteree loopCondMay recursivity bodyS elseSMay recur
             -- Bind key and value
             maybe (pure ()) (\loopKey -> setVar loopKey k) loopKeyMay
             setVar loopName v
-            asBool "loop condition" =<< evalE condE
+            asTruth "loop condition" =<< evalE condE
           rest <- goFilter xs condE
           if keep then
             pure $ V.cons (k, v) rest

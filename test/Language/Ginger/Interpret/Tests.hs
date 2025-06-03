@@ -1003,7 +1003,10 @@ tests = testGroup "Language.Ginger.Interpret"
     [ testProperty "Immediate statement outputs itself" prop_immediateStatementOutput
     , testProperty "Interpolation statement outputs its argument" prop_interpolationStatementOutput
     , testProperty "Comment statement outputs None" prop_commentStatementOutput
-    , testProperty "IfS outputs the correct branch" prop_ifStatementOutput
+    , testGroup "IfS"
+      [ testProperty "simple boolean condition" prop_ifStatementOutput
+      , testProperty "string as condition" prop_ifStatementString
+      ]
     , testGroup "ForS"
       [ testProperty "simple loop" prop_forStatementSimple
       , testProperty "simple loop with key" prop_forStatementWithKey
@@ -1093,6 +1096,10 @@ prop_scopedVarsDisappear :: (Identifier, Value Identity)
                          -> Property
 prop_scopedVarsDisappear (name1, val1) (name2, val2) =
   name1 /= name2 ==>
+  not (name1 `Map.member` envVars (defEnv @Identity)) ==>
+  not (name1 == "e") ==>
+  not (name2 `Map.member` envVars (defEnv @Identity)) ==>
+  not (name2 == "e") ==>
   property . runGingerIdentity $ do
     setVar name1 val1
     exists1a <- isJust <$> lookupVarMaybe name1
@@ -1522,6 +1529,20 @@ prop_ifStatementOutput cond yes no =
       resultNo = runGingerIdentityEither (eval no)
       resultE = if cond then resultYes else resultNo
       resultIf = runGingerIdentityEither (eval $ IfS (BoolE cond) yes (Just no))
+      hasProcedure = case resultE of
+                        Left _ -> False
+                        Right v -> getAny (traverseValue (Any . isProcedure) v)
+  in
+    -- exclude procedures, because we cannot compare those
+    not hasProcedure ==>
+    resultIf === resultE
+
+prop_ifStatementString :: ArbitraryText -> Statement -> Statement -> Property
+prop_ifStatementString (ArbitraryText condText) yes no =
+  let resultYes = runGingerIdentityEither (eval yes)
+      resultNo = runGingerIdentityEither (eval no)
+      resultE = if not (Text.null condText) then resultYes else resultNo
+      resultIf = runGingerIdentityEither (eval $ IfS (StringLitE condText) yes (Just no))
       hasProcedure = case resultE of
                         Left _ -> False
                         Right v -> getAny (traverseValue (Any . isProcedure) v)

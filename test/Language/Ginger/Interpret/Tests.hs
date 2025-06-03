@@ -1806,6 +1806,8 @@ prop_includeMacro (ArbitraryText name) macroName body =
     counterexample ("BODY:\n" ++ Text.unpack bodySrc) $
     counterexample ("INCLUDER:\n" ++ Text.unpack includeSrc) $
     isRight resultDirect ==>
+    not (macroName `Map.member` envVars (defEnv @Identity)) ==>
+    not (macroName == "e") ==>
     resultInclude === resultDirect
 
 prop_includeMacroWithoutContext :: ArbitraryText -> Identifier -> Statement -> Property
@@ -1827,6 +1829,8 @@ prop_includeMacroWithoutContext (ArbitraryText name) macroName body =
     counterexample ("BODY:\n" ++ Text.unpack bodySrc) $
     counterexample ("INCLUDER:\n" ++ Text.unpack includeSrc) $
     name /= identifierName macroName ==>
+    not (macroName `Map.member` envVars (defEnv @Identity)) ==>
+    not (macroName == "e") ==>
     isRight resultDirect ==>
     resultInclude === resultDirect
 
@@ -1865,6 +1869,8 @@ prop_includeWithContext (ArbitraryText name) varName (ArbitraryText varValue) =
   in
     counterexample ("BODY:\n" ++ Text.unpack bodySrc) $
     counterexample ("INCLUDER:\n" ++ Text.unpack includeSrc) $
+    not (varName `Map.member` envVars (defEnv @Identity)) ==>
+    not (varName == "e") ==>
     resultInclude === resultDirect
 
 prop_includeWithoutContext :: ArbitraryText -> Identifier -> ArbitraryText -> Property
@@ -1899,6 +1905,8 @@ prop_importValue (ArbitraryText name) varName valE =
                           ]
   in
     counterexample ("SOURCE:\n" ++ Text.unpack bodySrc) $
+    not (varName `Map.member` envVars (defEnv @Identity)) ==>
+    not (varName == "e") ==>
     resultImport === resultDirect
 
 prop_importValueAlias :: ArbitraryText -> Identifier -> Identifier -> Expr -> Property
@@ -1917,6 +1925,10 @@ prop_importValueAlias (ArbitraryText name) alias varName valE =
   in
     counterexample ("SOURCE:\n" ++ Text.unpack bodySrc) $
     isRight resultDirect ==>
+    not (varName `Map.member` envVars (defEnv @Identity)) ==>
+    not (varName == "e") ==>
+    not (alias `Map.member` envVars (defEnv @Identity)) ==>
+    not (alias == "e") ==>
     resultImport === resultDirect
 
 prop_importMacro :: ArbitraryText -> Identifier -> Statement -> Property
@@ -1934,6 +1946,8 @@ prop_importMacro (ArbitraryText name) varName bodyS =
     counterexample ("BODY:\n" ++ Text.unpack bodySrc) $
     counterexample ("IMPORTER:\n" ++ Text.unpack importSrc) $
     isRight resultDirect ==>
+    not (varName `Map.member` envVars (defEnv @Identity)) ==>
+    not (varName == "e") ==>
     resultImport === resultDirect
 
 prop_importWithoutContext :: ArbitraryText -> Identifier -> Identifier -> Expr -> Property
@@ -1955,6 +1969,10 @@ prop_importWithoutContext (ArbitraryText name) macroName varName bodyE =
   in
     counterexample ("SOURCE:\n" ++ Text.unpack bodySrc) $
     macroName /= varName ==>
+    not (varName `Map.member` envVars (defEnv @Identity)) ==>
+    not (varName == "e") ==>
+    not (macroName `Map.member` envVars (defEnv @Identity)) ==>
+    not (macroName == "e") ==>
     resultImport === resultDirect
 
 prop_importWithContext :: ArbitraryText -> Identifier -> Identifier -> Expr -> Property
@@ -1974,6 +1992,10 @@ prop_importWithContext (ArbitraryText name) macroName varName bodyE =
   in
     counterexample ("SOURCE:\n" ++ Text.unpack bodySrc) $
     macroName /= varName ==>
+    not (varName `Map.member` envVars (defEnv @Identity)) ==>
+    not (varName == "e") ==>
+    not (macroName `Map.member` envVars (defEnv @Identity)) ==>
+    not (macroName == "e") ==>
     resultImport === resultDirect
 
 prop_importExplicit :: NonEmptyText
@@ -2014,6 +2036,10 @@ prop_importExplicit (NonEmptyText name)
     counterexample ("IMPORTED SOURCE:\n" ++ Text.unpack bodySrc) $
     counterexample ("MAIN SOURCE:\n" ++ Text.unpack importerSrc) $
     varName1 /= varName2 ==>
+    not (varName1 `Map.member` envVars (defEnv @Identity)) ==>
+    not (varName1 == "e") ==>
+    not (varName2 `Map.member` envVars (defEnv @Identity)) ==>
+    not (varName2 == "e") ==>
     resultImport === resultDirect
 
 prop_extendSimple :: NonEmptyText
@@ -2145,6 +2171,8 @@ prop_extendWithContext (NonEmptyText parentName) blockName varName varExpr =
     counterexample ("PARENT SOURCE:\n" ++ Text.unpack parentSrc) $
     counterexample ("CHILD SOURCE:\n" ++ Text.unpack childSrc) $
     counterexample ("DIRECT SOURCE:\n" ++ Text.unpack directSrc) $
+    not (varName `Map.member` envVars (defEnv @Identity)) ==>
+    not (varName == "e") ==>
     resultExtends === resultDirect
 
 prop_extendWithoutContext :: NonEmptyText
@@ -2191,4 +2219,6 @@ prop_extendWithoutContext (NonEmptyText parentName) blockName varName varExpr du
     counterexample ("CHILD SOURCE:\n" ++ Text.unpack childSrc) $
     counterexample ("DIRECT SOURCE:\n" ++ Text.unpack directSrc) $
     varName /= dummyVarName ==>
+    not (varName `Map.member` envVars (defEnv @Identity)) ==>
+    not (varName == "e") ==>
     resultExtends === resultDirect

@@ -3,7 +3,7 @@
 module Language.Ginger.BuiltinsAutodoc
 where
 
-import Control.Monad.Identity (Identity)
+import Control.Monad.Identity (Identity, runIdentity)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
@@ -12,11 +12,21 @@ import qualified Data.Vector as Vector
 import Language.Haskell.TH (getDoc, putDoc, DocLoc (..), DecsQ, runIO)
 
 import Language.Ginger.Interpret
-import Language.Ginger.Interpret.Builtins (builtinGlobals, builtinGlobalsNonJinja)
+import Language.Ginger.Interpret.Builtins
+    ( builtinGlobals
+    , builtinGlobalsNonJinja
+    , builtinBoolAttribs
+    , builtinIntAttribs
+    , builtinFloatAttribs
+    , builtinStringAttribs
+    , builtinListAttribs
+    , builtinDictAttribs
+    , BuiltinAttribs
+    )
 import Language.Ginger.Interpret.DefEnv
-        ( builtinTests
-        , builtinFilters
-        )
+    ( builtinTests
+    , builtinFilters
+    )
 import Language.Ginger.AST
 import Language.Ginger.Value
 
@@ -34,6 +44,23 @@ addHaddockFromFile path = do
   putDoc ModuleDoc $ doc ++ src
   pure []
 
+extractAttribs :: Monoid a
+               => BuiltinAttribs a Identity
+               -> [(Identifier, Value Identity)]
+extractAttribs =
+  extractAttribsWith mempty
+
+extractAttribsWith :: a
+                   -> BuiltinAttribs a Identity
+                   -> [(Identifier, Value Identity)]
+extractAttribsWith dummy =
+  Map.toAscList .
+  fmap (
+    either (error . show) id .
+    runIdentity .
+    ($ dummy)
+  )
+
 builtinsAutodoc :: DecsQ
 builtinsAutodoc = do
   doc <- fromMaybe "" <$> getDoc ModuleDoc
@@ -42,12 +69,47 @@ builtinsAutodoc = do
     "\n\n== __List Of Builtin Globals__\n" ++
     "\nThese are available in Jinja, and work (mostly) the same in Ginger.\n" ++
     unlines (map (goItem Nothing "globals_jinja_") (Map.toAscList $ builtinGlobals evalE)) ++
+
     "\n\n== __List Of Extension Globals__\n" ++
     "\nThese are not available in Jinja\n" ++
     unlines (map (goItem Nothing "globals_ginger_") (Map.toAscList $ builtinGlobalsNonJinja evalE)) ++
+
+    "\n\n== __List Of Builtin Attributes__\n" ++
+    "\n\n=== Bool\n" ++
+    unlines
+      (map
+        (goItem (Just "bool") "globals_bool_")
+        (extractAttribsWith False builtinBoolAttribs)) ++
+    "\n\n=== Int\n" ++
+    unlines
+      (map
+        (goItem (Just "int") "globals_int_")
+        (extractAttribsWith 0 builtinIntAttribs)) ++
+    "\n\n=== Float\n" ++
+    unlines
+      (map
+        (goItem (Just "float") "globals_float_")
+        (extractAttribsWith 0 builtinFloatAttribs)) ++
+    "\n\n=== String\n" ++
+    unlines
+      (map
+        (goItem (Just "string") "globals_string_")
+        (extractAttribs builtinStringAttribs)) ++
+    "\n\n=== List\n" ++
+    unlines
+      (map
+        (goItem (Just "list") "globals_list_")
+        (extractAttribs builtinListAttribs)) ++
+    "\n\n=== Dict\n" ++
+    unlines
+      (map
+        (goItem (Just "dict") "globals_dict_")
+        (extractAttribs builtinDictAttribs)) ++
+
     "\n\n== __List Of Builtin Filters__\n" ++
     "\nThese will only work in a filter context, not via procedure call syntax.\n" ++
     unlines (map (goItem Nothing "filters_") (Map.toAscList $ builtinFilters)) ++
+
     "\n\n== __List Of Builtin Tests__\n" ++
     "\nThese will only work in a test context (e.g., an @is@-expression).\n\n" ++
     "\nSome of these tests shadow globals of the same name but different functionality.\n\n" ++
@@ -80,28 +142,40 @@ builtinsAutodoc = do
       let qualifiedName = maybe "" (<> ".") namespaceMay <> identifierName name
       in
         Text.unpack . Text.unlines $
-          goItemHeading namespaceMay prefix (identifierName name) ++
-          ( if qualifiedName /= procedureDocName d then
+          goItemHeading namespaceMay prefix (identifierName name <> "()") ++
+          ( if qualifiedName /= procedureDocName d &&
+               identifierName name /= procedureDocName d then
               [ "Alias for [" <> procedureDocName d <> "](#" <> prefix <> procedureDocName d <> ")"
               ]
             else
               [ ""
-              , "Arguments:"
-              , ""
+              , "__Arguments:__"
               ] ++
-              [ "* @" <> argumentDocName arg
-              <> case argumentDocDefault arg of
-                  Nothing -> ""
-                  Just defval -> "=" <> defval
-              <> "@"
-              <> maybe "" ((" : " <>) . goTy) (argumentDocType arg)
-              <> case argumentDocDefault arg of
-                  Nothing -> " __(required)__"
-                  Just _ -> ""
-              | arg <- Vector.toList (procedureDocArgs d)
-              ] ++
+              ( if Vector.null (procedureDocArgs d) then
+                  [ "none"
+                  , ""
+                  ]
+                else
+                  [ "" ] ++
+                  [ "* @" <> argumentDocName arg
+                  <> case argumentDocDefault arg of
+                      Nothing -> ""
+                      Just defval -> "=" <> defval
+                  <> "@"
+                  <> maybe "" ((" : " <>) . goTy) (argumentDocType arg)
+                  <> case argumentDocDefault arg of
+                      Nothing -> " __(required)__"
+                      Just _ -> ""
+                  <> (if argumentDocDescription arg /= "" then
+                        " - " <> markdownToHaddock (argumentDocDescription arg)
+                      else
+                        ""
+                     )
+                  | arg <- Vector.toList (procedureDocArgs d)
+                  ]
+              ) ++
               [ ""
-              , "Return type: " <> maybe "n/a" goTy (procedureDocReturnType d)
+              , "__Return type:__ " <> maybe "n/a" goTy (procedureDocReturnType d)
               , ""
               , markdownToHaddock $ procedureDocDescription d
               ]

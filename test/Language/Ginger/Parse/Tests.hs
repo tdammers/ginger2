@@ -304,6 +304,24 @@ tests = testGroup "Language.Ginger.Parse"
           test_parser statementUP
             "{% if foo %}blah{% else %}pizza{% endif %}"
             (IfS (VarE "foo") (ImmediateS $ Encoded "blah") (Just (ImmediateS $ Encoded "pizza")))
+      , testCase "if-elif" $
+          test_parser statementUP
+            "{% if foo %}blah{% elif bar %}olives{% endif %}"
+            (IfS (VarE "foo")
+              (ImmediateS $ Encoded "blah")
+              (Just $
+                (IfS (VarE "bar")
+                  (ImmediateS $ Encoded "olives")
+                  Nothing)))
+      , testCase "if-elif-else" $
+          test_parser statementUP
+            "{% if foo %}blah{% elif bar %}olives{% else %}pizza{% endif %}"
+            (IfS (VarE "foo")
+              (ImmediateS $ Encoded "blah")
+              (Just $
+                (IfS (VarE "bar")
+                  (ImmediateS $ Encoded "olives")
+                  (Just (ImmediateS $ Encoded "pizza")))))
       ]
     , testGroup "SetS, SetBlockS"
       [ testCase "set" $

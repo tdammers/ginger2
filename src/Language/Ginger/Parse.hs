@@ -662,9 +662,19 @@ ifStatement = do
   where
     body = do
       yes <- statement
-      noMay <- optional $ flow_ "else" *> statement
+      elifs <- many $ do
+                cond' <- flow "elif" expr
+                body' <- statement
+                pure (cond', body')
+      finalElseMay <- optional $ flow_ "else" *> statement
+      let noMay = mergeElifs elifs finalElseMay
       pure (yes, noMay)
-    makeIf cond (yes, noMay) = IfS cond yes noMay
+    makeIf cond (yes, noMay) = IfS cond yes noMay 
+
+    mergeElifs :: [(Expr, Statement)] -> Maybe Statement -> Maybe Statement
+    mergeElifs [] noMay = noMay
+    mergeElifs ((cond', body'):elifs) noMay =
+      Just $ IfS cond' body' (mergeElifs elifs noMay)
 
 forStatement :: P Statement
 forStatement = do

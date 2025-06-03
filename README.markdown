@@ -60,13 +60,8 @@ Important deviations are listed below.
         </body>
     </html>
 
-There are three kinds of delimiters:
-
-- Interpolation, to inject values into the output; these default to `{{` and
-  `}}`
-- Flow Control, to create conditionals, loops, and other control constructs;
-  these default to `{%` and `%}`
-- Comments, which are removed from the output; these default to `{#` and `#}`.
+For a full description of the syntax, refer to the Haddock documentation for the
+[Language.Ginger module](https://hackage-content.haskell.org/package/ginger2/docs/Language-Ginger.html)
 
 ### Jinja syntax features absent from Ginger 2
 
@@ -78,7 +73,7 @@ There are three kinds of delimiters:
 - Line statements (using a leading `#` to mark a line as a statement, instead
   of `{% ... %}` markers).
 - Template objects (passing an expression to `extends` that evaluates to a
-  template, instead of passing a template name as a string).
+  template, instead of passing a template name as a string) are not supported.
 - Ginger 2 makes no distinction between mutable "lists" and immutable "tuples";
   there are only immutable lists.
 

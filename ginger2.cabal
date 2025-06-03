@@ -14,7 +14,7 @@ build-type: Simple
 bug-reports: https://github.com/tdammers/ginger2/issues
 extra-doc-files: README.markdown
                , CHANGELOG
--- extra-source-files:
+extra-source-files: src/Language/Ginger.haddock
 
 source-repository head
     type: git
@@ -26,6 +26,7 @@ common warnings
 library
     import: warnings
     exposed-modules: Language.Ginger
+                   , Language.Ginger.BuiltinsAutodoc
                    , Language.Ginger.AST
                    , Language.Ginger.Value
                    , Language.Ginger.Interpret

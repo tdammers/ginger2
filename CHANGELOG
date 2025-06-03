@@ -1,3 +1,11 @@
 2.0.0.0
 
 - Initial release
+
+*NEXT VERSION*
+
+- Improved documentation.
+- Added support for `{% elif %}`.
+- Fixed some spurious test failures.
+- Moved `date` builtin to ginger extensions (its alias, `dateformat`, was
+  an extension already).

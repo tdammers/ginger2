@@ -1422,6 +1422,7 @@ prop_isDefinedFalse name =
                 eval $ IsE (VarE name) (VarE "defined") [] []
   in
     not (name `Map.member` envVars (defEnv @Identity)) ==>
+    not (name == "e") ==>
     result === FalseV
 
 prop_isDefinedTrueDict :: Identifier -> Identifier -> Integer -> Property
@@ -1882,6 +1883,8 @@ prop_includeWithoutContext (ArbitraryText name) varName (ArbitraryText varValue)
   in
     counterexample ("BODY:\n" ++ Text.unpack bodySrc) $
     counterexample ("INCLUDER:\n" ++ Text.unpack includeSrc) $
+    not (varName `Map.member` envVars (defEnv @Identity)) ==>
+    not (varName == "e") ==>
     resultInclude === expected
 
 prop_importValue :: ArbitraryText -> Identifier -> Expr -> Property

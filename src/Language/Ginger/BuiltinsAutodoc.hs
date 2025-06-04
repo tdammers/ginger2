@@ -34,8 +34,8 @@ markdownToHaddock :: Text -> Text
 markdownToHaddock =
   Text.replace "'" "\\'" .
   Text.replace "\"" "\\\"" .
-  Text.replace "\n" "\n\n" .
-  Text.replace "`" "@"
+  Text.replace "`" "@" .
+  Text.replace "```" "@"
 
 addHaddockFromFile :: FilePath -> DecsQ
 addHaddockFromFile path = do
@@ -117,16 +117,11 @@ builtinsAutodoc = do
   pure []
   where
     goTy :: TypeDoc -> Text
-    goTy TypeDocAny = "@any@"
-    goTy TypeDocNone = "@none@"
-    goTy (TypeDocSingle t) = "@" <> t <> "@"
+    goTy TypeDocAny = "any"
+    goTy TypeDocNone = "none"
+    goTy (TypeDocSingle t) = t
     goTy (TypeDocAlternatives ts) =
-      case Vector.unsnoc ts of
-        Just (ts', t) ->
-          "@" <> Text.intercalate "@, @" (Vector.toList $ ts') <> "@" <>
-          ", or @" <> t <> "@"
-        Nothing ->
-          "@" <> Text.intercalate "@ or @" (Vector.toList $ ts) <> "@"
+      "[" <> Text.intercalate " | " (Vector.toList $ ts) <> "]"
 
     goItemHeading :: Maybe Text -> Text -> Text -> [Text]
     goItemHeading namespaceMay prefix name =
@@ -136,47 +131,48 @@ builtinsAutodoc = do
         , "=== " <> maybe "" (<> ".") namespaceMay <> name
         ]
 
+    goArgSig :: ArgumentDoc -> Text
+    goArgSig arg =
+      argumentDocName arg <>
+      maybe "" ("=" <>) (argumentDocDefault arg) <>
+      maybe "" ((" : " <>) . goTy) (argumentDocType arg)
+
+    goArgDesc :: ArgumentDoc -> [Text]
+    goArgDesc arg =
+      [ "[@" <> argumentDocName arg <> "@]:" <> argumentDocDescription arg ]
 
     goDocumentedItem :: Maybe Text -> Text -> (Identifier, ProcedureDoc) -> String
     goDocumentedItem namespaceMay prefix (name, d) =
       let qualifiedName = maybe "" (<> ".") namespaceMay <> identifierName name
       in
         Text.unpack . Text.unlines $
-          goItemHeading namespaceMay prefix (identifierName name <> "()") ++
+          goItemHeading namespaceMay prefix
+            (identifierName name)
+            ++
+          [ ""
+          , "@" <> identifierName name
+                <> "(" <> (Text.intercalate ", " . map goArgSig . Vector.toList $ procedureDocArgs d) <> ")"
+                <> maybe "" ((" → " <>) . goTy) (procedureDocReturnType d)
+                <> "@"
+          , ""
+          ]
+            ++
           ( if qualifiedName /= procedureDocName d &&
                identifierName name /= procedureDocName d then
               [ "Alias for [" <> procedureDocName d <> "](#" <> prefix <> procedureDocName d <> ")"
               ]
             else
-              [ ""
-              , "__Arguments:__"
-              ] ++
               ( if Vector.null (procedureDocArgs d) then
-                  [ "none"
-                  , ""
-                  ]
+                  [ ]
                 else
-                  [ "" ] ++
-                  [ "* @" <> argumentDocName arg
-                  <> case argumentDocDefault arg of
-                      Nothing -> ""
-                      Just defval -> "=" <> defval
-                  <> "@"
-                  <> maybe "" ((" : " <>) . goTy) (argumentDocType arg)
-                  <> case argumentDocDefault arg of
-                      Nothing -> " __(required)__"
-                      Just _ -> ""
-                  <> (if argumentDocDescription arg /= "" then
-                        " - " <> markdownToHaddock (argumentDocDescription arg)
-                      else
-                        ""
-                     )
-                  | arg <- Vector.toList (procedureDocArgs d)
-                  ]
+                  [ ""
+                  , "==== Arguments"
+                  , ""
+                  ] ++
+                  (concatMap goArgDesc . Vector.toList $ procedureDocArgs d) ++
+                  [ "" ]
               ) ++
               [ ""
-              , "__Return type:__ " <> maybe "n/a" goTy (procedureDocReturnType d)
-              , ""
               , markdownToHaddock $ procedureDocDescription d
               ]
           )
@@ -197,6 +193,8 @@ builtinsAutodoc = do
 
     goItem namespaceMay prefix (name, ProcedureV (NativeProcedure _ (Just d) _)) =
       goDocumentedItem namespaceMay prefix (name, d)
+    goItem namespaceMay prefix (name, ProcedureV NamespaceProcedure) =
+      goDocumentedItem namespaceMay prefix (name, namespaceProcedureDoc)
     goItem namespaceMay prefix (name, FilterV (NativeFilter (Just d) _)) =
       goDocumentedItem namespaceMay prefix (name, d)
     goItem namespaceMay prefix (name, TestV (NativeTest (Just d) _)) =

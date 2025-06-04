@@ -349,6 +349,33 @@ data Procedure m
   | GingerProcedure !(Env m) ![(Identifier, Maybe (Value m))] !Expr
   | NamespaceProcedure
 
+namespaceProcedureDoc :: ProcedureDoc
+namespaceProcedureDoc =
+  ProcedureDoc
+    { procedureDocName = "namespace"
+    , procedureDocArgs = mempty
+    , procedureDocReturnType = Just $ TypeDocSingle "namespace"
+    , procedureDocDescription = Text.unlines
+        [ "Create a namespace object."
+        , "Namespace objects are mutable dictionary-like objects; the main " <>
+          "use case for these is to work around the fact that `{% for %}` " <>
+          "loops, macros, and other constructs establish local scopes, " <>
+          "which means that any `{% set %}` invocations inside those will " <>
+          "not propagate to the containing scope."
+        , ""
+        , "Using a namespace object, this problem can be solved like in this example:"
+        , ""
+        , "```"
+        , "{% set ns = namespace() %}"
+        , "{% for x in items %}"
+        , "  {{ x.bar }}"
+        , "  {% set ns.foo = x.foo %}"
+        , "{% endfor %}"
+        , "{{ ns.foo }}"
+        , "```"
+        ]
+    }
+
 instance Ord (Procedure m) where
   compare NamespaceProcedure NamespaceProcedure = EQ
   compare NamespaceProcedure _ = GT

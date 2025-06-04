@@ -2,7 +2,7 @@
 
 - Initial release
 
-*NEXT VERSION*
+2.1.0.0
 
 - Improved documentation.
 - Added support for `{% elif %}`.
@@ -14,5 +14,9 @@
     - min()
     - max()
     - sum()
+    - reject()
+- Added some built-in string, dict, and list methods
 - Made truthiness checks more lenient, so that things like `{% if [] %}` work
-  like in Jinja
+  like in Jinja.
+- Added an RNG state to the execution environment; this is necessary in order to
+  support the random() function.

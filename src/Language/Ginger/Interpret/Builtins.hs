@@ -1,12 +1,9 @@
-{-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
@@ -30,7 +27,11 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.Char (isUpper, isLower, isAlphaNum, isPrint, isSpace, isAlpha, isDigit, ord)
 import Data.Foldable (asum)
+#if MIN_VERSION_base(4,20,0)
 import Data.List (sortBy, minimumBy, maximumBy)
+#else
+import Data.List (sortBy, minimumBy, maximumBy, foldl')
+#endif
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, listToMaybe, catMaybes, isJust)

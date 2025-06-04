@@ -30,7 +30,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.Char (isUpper, isLower, isAlphaNum, isPrint, isSpace, isAlpha, isDigit, ord)
 import Data.Foldable (asum)
-import Data.List (sortBy)
+import Data.List (sortBy, minimumBy, maximumBy)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, listToMaybe, catMaybes, isJust)
@@ -179,8 +179,8 @@ builtinGlobals evalE = Map.fromList $
                 )
                 Text.toLower)
   , ("map", FilterV $ fnMap evalE)
-  -- , ("max", undefined)
-  -- , ("min", undefined)
+  , ("max", ProcedureV fnMax)
+  , ("min", ProcedureV fnMin)
   , ("namespace", ProcedureV NamespaceProcedure)
   , ("odd", intBuiltin
               "builtin:odd"
@@ -230,7 +230,7 @@ builtinGlobals evalE = Map.fromList $
   , ("split", ProcedureV fnStrSplit)
   , ("string", ProcedureV fnToString)
   -- , ("striptags", undefined)
-  -- , ("sum", undefined)
+  , ("sum", ProcedureV fnSum)
   , ("title", textBuiltin
                 "builtin:title"
                 (Just ProcedureDoc
@@ -870,6 +870,122 @@ fnToString = mkFn1 "string"
               (Just $ TypeDocSingle "string")
   $ \value ->
     stringify value
+
+fnMin :: forall m. Monad m => Procedure m
+fnMin = mkFn3 "min"
+              "Get the minimum value from a list"
+              ( "value"
+              , Nothing
+              , Just $ TypeDocSingle "list"
+              , ""
+              )
+              ( "case_sensitive"
+              , Just False
+              , Just $ TypeDocSingle "bool"
+              , "Treat upper and lowercase strings as distinct."
+              )
+              ( "attr"
+              , Just (Nothing :: Maybe Text)
+              , Just $ TypeDocSingle "string"
+              , "Get the object with the min value of this attribute."
+              )
+              (Just TypeDocAny)
+  $ \xs caseSensitive attrMay -> do
+      let caseProjection =
+            if caseSensitive then
+              id
+            else
+              caseFoldValue
+          attrProjection =
+            case attrMay of
+              Nothing -> pure
+              Just attr -> fmap (fromMaybe NoneV) . eitherExceptM . flip getAttrOrItemRaw (Identifier attr)
+      xs' <- mapM (fmap caseProjection . attrProjection) $ V.toList xs
+      if null xs' then
+        pure NoneV
+      else
+        pure . snd . minimumBy (\a b -> compare (fst a) (fst b)) $ zip xs' (V.toList xs)
+
+fnMax :: forall m. Monad m => Procedure m
+fnMax = mkFn3 "max"
+              "Get the maximum value from a list"
+              ( "value"
+              , Nothing
+              , Just $ TypeDocSingle "list"
+              , ""
+              )
+              ( "case_sensitive"
+              , Just False
+              , Just $ TypeDocSingle "bool"
+              , "Treat upper and lowercase strings as distinct."
+              )
+              ( "attr"
+              , Just (Nothing :: Maybe Identifier)
+              , Just $ TypeDocSingle "string"
+              , "Get the object with the max value of this attribute."
+              )
+              (Just TypeDocAny)
+  $ \xs caseSensitive attrMay -> do
+      let caseProjection =
+            if caseSensitive then
+              id
+            else
+              caseFoldValue
+          attrProjection =
+            case attrMay of
+              Nothing -> pure
+              Just attr -> fmap (fromMaybe NoneV) . eitherExceptM . flip getAttrOrItemRaw attr
+      xs' <- mapM (fmap caseProjection . attrProjection) $ V.toList xs
+      if null xs' then
+        pure NoneV
+      else
+        pure . snd . maximumBy (\a b -> compare (fst a) (fst b)) $ zip xs' (V.toList xs)
+
+fnSum :: forall m. Monad m => Procedure m
+fnSum = mkFn3 "sum"
+              "Get the sum of the values in a list"
+              ( "value"
+              , Nothing
+              , Just $ TypeDocSingle "list"
+              , ""
+              )
+              ( "attr"
+              , Just (Nothing :: Maybe Identifier)
+              , Just $ TypeDocSingle "string"
+              , "Use this attribute from each object in the list"
+              )
+              ( "start"
+              , Just (Nothing :: Maybe Int)
+              , Just $ TypeDocSingle "int"
+              , "Start at this offset into the list"
+              )
+              (Just TypeDocAny)
+  $ \xs attrMay startMay -> do
+      let startTransform =
+            case startMay of
+              Nothing -> id
+              Just start -> V.drop start
+          attrProjection =
+            case attrMay of
+              Nothing -> pure
+              Just attr -> fmap (fromMaybe NoneV) . eitherExceptM . flip getAttrOrItemRaw attr
+      xs' <- mapM attrProjection . V.toList . startTransform $ xs
+      pure . valueSum $ xs'
+
+valueSum :: [Value m] -> Value m
+valueSum = foldl' valueAdd NoneV
+
+valueAdd :: Value m -> Value m -> Value m
+valueAdd (IntV a) (IntV b) = IntV (a + b)
+valueAdd NoneV x = x
+valueAdd x NoneV = x
+valueAdd (FloatV x) (FloatV y) = FloatV (x + y)
+valueAdd x y = FloatV (asFloatValLenient 0 x + asFloatValLenient 0 y)
+
+caseFoldValue :: Value m -> Value m
+caseFoldValue (StringV t) = StringV (Text.toCaseFold t)
+caseFoldValue (EncodedV (Encoded t)) = EncodedV (Encoded (Text.toCaseFold t))
+caseFoldValue x = x
 
 fnReverse :: forall m. Monad m => Procedure m
 fnReverse = mkFn1 "reverse"

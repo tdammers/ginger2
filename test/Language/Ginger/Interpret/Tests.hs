@@ -25,23 +25,24 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust, isNothing)
 import Data.Monoid (Any (..))
 import Data.Proxy (Proxy (..))
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Word (Word8, Word16, Word32, Word64)
+import Test.QuickCheck.Instances ()
 import Test.Tasty
 import Test.Tasty.QuickCheck hiding ((.&.))
-import Test.QuickCheck.Instances ()
 
 import Language.Ginger.AST
 import Language.Ginger.Interpret
 import Language.Ginger.Interpret.DefEnv (htmlEncode)
 import Language.Ginger.Render
+import Language.Ginger.SourcePosition
 import Language.Ginger.TestUtils
 import Language.Ginger.Value
-import Language.Ginger.SourcePosition
 
 tests :: TestTree
 tests = testGroup "Language.Ginger.Interpret"
@@ -263,6 +264,24 @@ tests = testGroup "Language.Ginger.Interpret"
                       "kiB"
                   )
             ]
+        , testProperty "min" $
+            prop_eval
+              (\xs ->
+                  FilterE (ListE (V.fromList . map IntLitE $ xs)) (VarE "min") [] []
+              )
+              (\xs -> if null xs then NoneV else IntV (minimum xs))
+        , testProperty "max" $
+            prop_eval
+              (\xs ->
+                  FilterE (ListE (V.fromList . map IntLitE $ xs)) (VarE "max") [] []
+              )
+              (\xs -> if null xs then NoneV else IntV (maximum xs))
+        , testProperty "sum" $
+            prop_eval
+              (\xs ->
+                  FilterE (ListE (V.fromList . map IntLitE $ xs)) (VarE "sum") [] []
+              )
+              (\xs -> if null xs then NoneV else IntV (sum xs))
         , testProperty "length (string)" $
             prop_eval
               (\(ArbitraryText t) ->

@@ -44,6 +44,7 @@ import Data.Word
 import GHC.Float (float2Double)
 import Test.Tasty.QuickCheck (Arbitrary (..))
 import qualified Test.Tasty.QuickCheck as QC
+import Text.Read (readMaybe)
 
 import Language.Ginger.AST
 import Language.Ginger.RuntimeError
@@ -53,7 +54,7 @@ data Env m =
     { envVars :: !(Map Identifier (Value m))
     , envRootMay :: Maybe (Env m)
     }
-  deriving (Eq)
+  deriving (Eq, Ord)
 
 envRoot :: Env m -> Env m
 envRoot e =
@@ -168,6 +169,7 @@ data Value m
   | TestV !(Test m)
   | FilterV !(Filter m)
   | MutableRefV !RefID
+  deriving (Ord)
 
 instance FromJSON (Value m) where
   parseJSON v@JSON.Object {} = DictV <$> parseJSON v
@@ -241,7 +243,7 @@ pattern FloatV :: Double -> Value m
 pattern FloatV v = ScalarV (FloatScalar v)
 
 newtype ObjectID = ObjectID { unObjectID :: Text }
-  deriving (Eq)
+  deriving (Eq, Ord)
 
 instance IsString ObjectID where
   fromString = ObjectID . Text.pack
@@ -251,7 +253,7 @@ data TypeDoc
   | TypeDocAny
   | TypeDocSingle !Text
   | TypeDocAlternatives !(Vector Text)
-  deriving (Show)
+  deriving (Show, Eq)
 
 instance ToValue TypeDoc m where
   toValue TypeDocNone = StringV "none"
@@ -267,7 +269,7 @@ data ArgumentDoc =
     , argumentDocDefault :: !(Maybe Text)
     , argumentDocDescription :: !Text
     }
-    deriving (Show)
+    deriving (Show, Eq)
 
 instance ToValue ArgumentDoc m where
   toValue a =
@@ -285,7 +287,10 @@ data ProcedureDoc =
     , procedureDocReturnType :: !(Maybe TypeDoc)
     , procedureDocDescription :: !Text
     }
-    deriving (Show)
+    deriving (Show, Eq)
+
+instance Ord ProcedureDoc where
+  compare = compareBy procedureDocName
 
 instance ToValue ProcedureDoc m where
   toValue d =
@@ -306,6 +311,17 @@ data Procedure m
          )
   | GingerProcedure !(Env m) ![(Identifier, Maybe (Value m))] !Expr
   | NamespaceProcedure
+
+instance Ord (Procedure m) where
+  compare NamespaceProcedure NamespaceProcedure = EQ
+  compare NamespaceProcedure _ = GT
+  compare _ NamespaceProcedure = LT
+  compare (GingerProcedure e1 args1 body1) (GingerProcedure e2 args2 body2) =
+    compare (e1, args1, body1) (e2, args2, body2)
+  compare GingerProcedure {} _ = GT
+  compare _ GingerProcedure {} = LT
+  compare (NativeProcedure oid1 _ _) (NativeProcedure oid2 _ _) =
+    compare oid1 oid2
 
 instance Eq (Procedure m) where
   NativeProcedure a _ _ == NativeProcedure b _ _ =
@@ -419,15 +435,28 @@ data Test m =
     , runTest :: !(TestFunc m)
     }
 
+instance Eq (Test m) where
+  a == b = compare a b == EQ
+
+instance Ord (Test m) where
+  compare = compareBy testDoc
+
 data Filter m =
   NativeFilter
     { filterDoc :: !(Maybe ProcedureDoc)
     , runFilter :: !(FilterFunc m)
     }
 
+instance Ord (Filter m) where
+  compare = compareBy filterDoc
+
+instance Eq (Filter m) where
+  a == b = compare a b == EQ
+
 data NativeObject m =
   NativeObject
-    { nativeObjectGetFieldNames :: m [Scalar]
+    { nativeObjectID :: ObjectID
+    , nativeObjectGetFieldNames :: m [Scalar]
     , nativeObjectGetField :: Scalar -> m (Maybe (Value m))
     , nativeObjectGetAttribute :: Identifier -> m (Maybe (Value m))
     , nativeObjectStringified :: m Text
@@ -442,6 +471,15 @@ data NativeObject m =
                      -> NativeObject m
                      -> m (Either RuntimeError Bool)
     }
+
+instance Eq (NativeObject m) where
+  a == b = compare a b == EQ
+
+instance Ord (NativeObject m) where
+  compare = compareBy nativeObjectID
+
+compareBy :: Ord b => (a -> b) -> a -> a -> Ordering
+compareBy f a b = compare (f a) (f b)
 
 nativeObjectAsDict :: Monad m
                    => NativeObject m
@@ -459,10 +497,11 @@ nativeObjectAsDict o = do
 (-->) :: obj -> (obj -> obj -> a) -> a
 obj --> field = field obj obj
 
-defNativeObject :: Monad m => NativeObject m
-defNativeObject =
+defNativeObject :: Monad m => ObjectID -> NativeObject m
+defNativeObject oid =
   NativeObject
-    { nativeObjectGetFieldNames = pure []
+    { nativeObjectID = oid
+    , nativeObjectGetFieldNames = pure []
     , nativeObjectGetField = \_ -> pure Nothing
     , nativeObjectGetAttribute = \_ -> pure Nothing
     , nativeObjectStringified = pure "<native object>"
@@ -578,6 +617,9 @@ instance Applicative m => FromValue Scalar m where
 
 instance Applicative m => FromValue Text m where
   fromValue = pure . asTextVal
+
+instance Applicative m => FromValue Identifier m where
+  fromValue = pure . fmap Identifier . asTextVal
 
 instance Applicative m => FromValue Integer m where
   fromValue = pure . asIntVal "conversion to int"
@@ -698,6 +740,9 @@ instance ToValue ByteString a where
   toValue = ScalarV . toScalar
 
 instance ToValue LBS.ByteString a where
+  toValue = ScalarV . toScalar
+
+instance ToValue Identifier a where
   toValue = ScalarV . toScalar
 
 --------------------------------------------------------------------------------
@@ -936,6 +981,12 @@ asFloatVal :: Text -> Value m -> Either RuntimeError Double
 asFloatVal _ (FloatV a) = Right a
 asFloatVal _ (IntV a) = Right (fromInteger a)
 asFloatVal context x = Left $ TagError context "float" (tagNameOf x)
+
+asFloatValLenient :: Double -> Value m -> Double
+asFloatValLenient _ (FloatV a) = a
+asFloatValLenient _ (IntV a) = fromInteger a
+asFloatValLenient def (StringV a) = fromMaybe def $ readMaybe (Text.unpack a)
+asFloatValLenient def _ = def
 
 asBoolVal :: Text -> Value m -> Either RuntimeError Bool
 asBoolVal _ (BoolV a) = Right a
@@ -1251,13 +1302,13 @@ arbitraryNativeProcedure = do
 
 arbitraryNative :: Monad m => QC.Gen (NativeObject m)
 arbitraryNative = do
-  objectID <- arbitrary
-  pure defNativeObject
+  objectID <- ObjectID . identifierName <$> arbitrary
+  pure (defNativeObject objectID)
     { nativeObjectGetFieldNames = pure ["id"]
     , nativeObjectGetField = \case
-        "id" -> pure . Just . toValue . identifierName $ objectID
+        "id" -> pure . Just . toValue . unObjectID $ objectID
         _ -> pure Nothing
-    , nativeObjectStringified = pure $ identifierName objectID
+    , nativeObjectStringified = pure $ unObjectID objectID
     , nativeObjectEq = \self other -> do
         otherID <- nativeObjectGetField other "id"
         selfID <- nativeObjectGetField self "id"

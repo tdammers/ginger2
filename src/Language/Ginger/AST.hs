@@ -77,12 +77,12 @@ data Block =
     , blockScoped :: !Scoped
     , blockRequired :: !Required
     }
-    deriving (Show, Eq)
+    deriving (Show, Eq, Ord)
 
 data SetTarget
   = SetVar !Identifier
   | SetMutable !Identifier !Identifier
-  deriving (Show, Eq)
+  deriving (Show, Eq, Ord)
 
 -- | A statement in the template language.
 data Statement
@@ -162,7 +162,7 @@ data Statement
   | -- | Group of statements; not parsed, but needed for combining statements
     -- sequentially.
     GroupS ![Statement]
-  deriving (Show, Eq)
+  deriving (Show, Eq, Ord)
 
 data IncludeMissingPolicy
   = RequireMissing
@@ -378,7 +378,7 @@ data Expr
     -- | @TernaryE cond yes no@
   | TernaryE !Expr !Expr !Expr
   | VarE !Identifier
-  deriving (Show, Eq)
+  deriving (Show, Eq, Ord)
 
 pattern TrueE :: Expr
 pattern TrueE = BoolE True

@@ -10,7 +10,7 @@ data SourcePosition =
     , sourceLine :: !Int
     , sourceColumn :: !Int
     }
-    deriving (Show, Eq)
+    deriving (Show, Eq, Ord)
 
 prettySourcePosition :: SourcePosition -> String
 prettySourcePosition s =

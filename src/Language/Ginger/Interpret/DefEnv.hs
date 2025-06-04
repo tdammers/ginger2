@@ -18,8 +18,8 @@ import Language.Ginger.AST
 import Language.Ginger.Interpret.Builtins
 import Language.Ginger.Interpret.Eval
 import Language.Ginger.Interpret.Type
-import Language.Ginger.RuntimeError
 import Language.Ginger.Render
+import Language.Ginger.RuntimeError
 import Language.Ginger.Value
 
 import Control.Monad.Except
@@ -32,6 +32,7 @@ import qualified Data.Text.Lazy as LText
 import Data.Text.Lazy.Builder (Builder)
 import qualified Data.Text.Lazy.Builder as Builder
 import qualified Data.Vector as V
+import qualified System.Random as R
 
 defEnv :: Monad m => Env m
 defEnv =
@@ -344,8 +345,9 @@ isCallable :: Monad m => Value m -> Value m
 isCallable = BoolV . isCallable'
 
 isFilter :: Monad m => TestFunc m
-isFilter expr _ ctx env = do
-  result <- runGingerT (evalE expr) ctx env
+isFilter expr _ ctx env rng = do
+  let (rngL, rngR) = R.splitGen rng
+  result <- runGingerT (evalE expr) ctx env rngL
   case result of
     Right (StringV name) -> do
       let exists =
@@ -356,7 +358,7 @@ isFilter expr _ ctx env = do
           (asBool ""
               =<< eval
                   (InE (StringLitE name) (DotE (VarE "__jinja__") "filters")))
-          ctx env
+          ctx env rngR
       pure $ (exists ||) <$> existsExt
     Right a ->
       pure . Left $ TagError "filter name" "string" (tagNameOf a)
@@ -380,8 +382,8 @@ isSequence (ListV {}) = TrueV
 isSequence _ = FalseV
 
 isTest :: Monad m => TestFunc m
-isTest expr _ ctx env = do
-  result <- runGingerT (evalE expr) ctx env
+isTest expr _ ctx env rng = do
+  result <- runGingerT (evalE expr) ctx env rng
   case result of
     Right NoneV -> pure . Right $ True
     Right BoolV {} -> pure . Right $ True
@@ -446,8 +448,8 @@ defaultFilter =
           "`value` otherwise."
       }
     ) $
-    \expr args ctx env -> do
-      calleeEither <- runGingerT (evalE expr) ctx env
+    \expr args ctx env rng -> do
+      calleeEither <- runGingerT (evalE expr) ctx env rng
       let resolvedArgsEither = resolveArgs
                                 "default"
                                 [("default_value", Just (StringV "")), ("boolean", Just FalseV)]
@@ -467,85 +469,90 @@ defaultFilter =
         (Left err, _) ->
           pure . Left $ err
 
-isDefined :: Monad m => TestFunc m
-isDefined _ (_:_) _ _ = pure $ Left $ ArgumentError "defined" "0" "end of arguments" "argument"
-isDefined (PositionedE _ e) [] ctx env =
-  isDefined e [] ctx env
-isDefined (VarE name) [] ctx env =
-  pure . Right $
-    name `Map.member` (envVars env) ||
-    name `Map.member` (contextVars ctx)
-isDefined NoneE [] _ _ = pure . Right $ True
-isDefined BoolE {} [] _ _ = pure . Right $ True
-isDefined StringLitE {} [] _ _ = pure . Right $ True
-isDefined IntLitE {} [] _ _ = pure . Right $ True
-isDefined FloatLitE {} [] _ _ = pure . Right $ True
-isDefined (SliceE slicee startMay endMay) [] ctx env = do
-  definedSlicee <- isDefined slicee [] ctx env
-  definedStart <- maybe (pure . Right $ True) (\start -> isDefined start [] ctx env) startMay
-  definedEnd <- maybe (pure . Right $ True) (\end -> isDefined end [] ctx env) endMay
-  pure $ allEitherBool [ definedSlicee, definedStart, definedEnd ]
-isDefined (IndexE parent selector) [] ctx env = do
-  definedParent <- isDefined parent [] ctx env
-  case definedParent of
-    Right True -> do
-      result <- runGingerT (evalE (InE selector parent)) ctx env
-      case result of
-        Left (NotInScopeError {}) -> pure . Right $ False
-        Left err -> pure . Left $ err
-        Right (BoolV b) -> pure . Right $ b
-        Right _ -> pure . Left $ FatalError "Evaluating an 'in' expression produced non-boolean result"
-    x -> pure x
-isDefined (UnaryE _ a) [] ctx env =
-  isDefined a [] ctx env
-isDefined (BinaryE _ a b) [] ctx env = do
-  definedA <- isDefined a [] ctx env
-  definedB <- isDefined b [] ctx env
-  pure $ (&&) <$> definedA <*> definedB
-isDefined (DotE a _b) [] ctx env = do
-  isDefined a [] ctx env
-isDefined (TernaryE c a b) [] ctx env = do
-  definedA <- isDefined a [] ctx env
-  definedB <- isDefined b [] ctx env
-  definedC <- isDefined c [] ctx env
-  pure $ allEitherBool [definedA, definedB, definedC]
-isDefined (ListE v) [] ctx env =
-  case V.uncons v of
-    Nothing -> pure . Right $ True
-    Just (x, xs) -> do
-      definedX <- isDefined x [] ctx env
-      definedXS <- isDefined (ListE xs) [] ctx env
-      pure $ allEitherBool [definedX, definedXS]
-isDefined (DictE []) [] _ _ = pure . Right $ True
-isDefined (DictE ((k, v):xs)) [] ctx env = do
-  definedK <- isDefined k [] ctx env
-  definedV <- isDefined v [] ctx env
-  definedXS <- isDefined (DictE xs) [] ctx env
-  pure $ allEitherBool [definedK, definedV, definedXS]
-isDefined (IsE {}) [] _ _ = pure . Right $ True
-isDefined (StatementE {}) [] _ _ = pure . Right $ True
-isDefined (FilterE posArg0 callee posArgs kwArgs) [] ctx env = do
-  definedPosArg0 <- isDefined posArg0 [] ctx env
-  definedCallee <- isDefined callee [] ctx env
-  definedPosArgs <- allEitherBool <$> mapM (\x -> isDefined x [] ctx env) posArgs
-  definedKWArgs <- allEitherBool <$> mapM (\(_, x) -> isDefined x [] ctx env) kwArgs
-  pure $ allEitherBool [definedPosArg0, definedCallee, definedPosArgs, definedKWArgs]
-isDefined (CallE callee posArgs kwArgs) [] ctx env = do
-  definedCallee <- isDefined callee [] ctx env
-  definedPosArgs <- allEitherBool <$> mapM (\x -> isDefined x [] ctx env) posArgs
-  definedKWArgs <- allEitherBool <$> mapM (\(_, x) -> isDefined x [] ctx env) kwArgs
-  pure $ allEitherBool [definedCallee, definedPosArgs, definedKWArgs]
+isDefined :: forall m. Monad m => TestFunc m
+isDefined _ (_:_) _ _ _ = pure $ Left $ ArgumentError "defined" "0" "end of arguments" "argument"
+isDefined value [] ctx env rng = go value
+  where
+    go :: Expr -> m (Either RuntimeError Bool)
+    go (PositionedE _ e) =
+      go e
+    go (VarE name) =
+      pure . Right $
+        name `Map.member` (envVars env) ||
+        name `Map.member` (contextVars ctx)
+    go NoneE = pure . Right $ True
+    go BoolE {} = pure . Right $ True
+    go StringLitE {} = pure . Right $ True
+    go IntLitE {} = pure . Right $ True
+    go FloatLitE {} = pure . Right $ True
+    go (SliceE slicee startMay endMay) = do
+      definedSlicee <- go slicee
+      definedStart <- maybe (pure . Right $ True) (\start -> go start) startMay
+      definedEnd <- maybe (pure . Right $ True) (\end -> go end) endMay
+      pure $ allEitherBool [ definedSlicee, definedStart, definedEnd ]
+    go (IndexE parent selector) = do
+      definedParent <- go parent
+      case definedParent of
+        Right True -> do
+          result <- runGingerT (evalE (InE selector parent)) ctx env rng
+          case result of
+            Left (NotInScopeError {}) -> pure . Right $ False
+            Left err -> pure . Left $ err
+            Right (BoolV b) -> pure . Right $ b
+            Right _ -> pure . Left $ FatalError "Evaluating an 'in' expression produced non-boolean result"
+        x -> pure x
+    go (UnaryE _ a) =
+      go a
+    go (BinaryE _ a b) = do
+      definedA <- go a
+      definedB <- go b
+      pure $ (&&) <$> definedA <*> definedB
+    go (DotE a _b) = do
+      go a
+    go (TernaryE c a b) = do
+      definedA <- go a
+      definedB <- go b
+      definedC <- go c
+      pure $ allEitherBool [definedA, definedB, definedC]
+    go (ListE v) =
+      case V.uncons v of
+        Nothing -> pure . Right $ True
+        Just (x, xs) -> do
+          definedX <- go x
+          definedXS <- go (ListE xs)
+          pure $ allEitherBool [definedX, definedXS]
+    go (DictE []) = pure . Right $ True
+    go (DictE ((k, v):xs)) = do
+      definedK <- go k
+      definedV <- go v
+      definedXS <- go (DictE xs)
+      pure $ allEitherBool [definedK, definedV, definedXS]
+    go (IsE {}) = pure . Right $ True
+    go (StatementE {}) = pure . Right $ True
+    go (FilterE posArg0 callee posArgs kwArgs) = do
+      definedPosArg0 <- go posArg0
+      definedCallee <- go callee
+      definedPosArgs <- allEitherBool <$> mapM (\x -> go x) posArgs
+      definedKWArgs <- allEitherBool <$> mapM (\(_, x) -> go x) kwArgs
+      pure $ allEitherBool [definedPosArg0, definedCallee, definedPosArgs, definedKWArgs]
+    go (CallE callee posArgs kwArgs) = do
+      definedCallee <- go callee
+      definedPosArgs <- allEitherBool <$> mapM (\x -> go x) posArgs
+      definedKWArgs <- allEitherBool <$> mapM (\(_, x) -> go x) kwArgs
+      pure $ allEitherBool [definedCallee, definedPosArgs, definedKWArgs]
 
 isUndefined :: Monad m => TestFunc m
-isUndefined expr args ctx env = do
-  defined <- isDefined expr args ctx env
+isUndefined expr args ctx env rng = do
+  defined <- isDefined expr args ctx env rng
   pure $ not <$> defined
 
 isEqual :: Monad m => TestFunc m
-isEqual expr args ctx env = runGingerT go ctx env
+isEqual expr args ctx env rng =
+  runGingerT go ctx env rng
   where
     go = do
-      definedLHS <- native $ isDefined expr args ctx env
+      rng' <- splitRNG
+      definedLHS <- native $ isDefined expr args ctx env rng'
       if definedLHS then do
         val <- eval expr
         equals <- mapM (valuesEqual val . snd) args

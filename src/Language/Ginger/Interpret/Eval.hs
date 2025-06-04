@@ -28,6 +28,7 @@ module Language.Ginger.Interpret.Eval
 , getItem
 , getItemRaw
 , loadTemplate
+, splitRNG
 )
 where
 
@@ -37,8 +38,8 @@ import Language.Ginger.Interpret.Type
 import Language.Ginger.Parse (parseGinger)
 import qualified Language.Ginger.Parse as Parse
 import Language.Ginger.RuntimeError
-import Language.Ginger.Value
 import Language.Ginger.SourcePosition
+import Language.Ginger.Value
 
 import Control.Monad (foldM, forM, void)
 import Control.Monad.Except
@@ -46,21 +47,22 @@ import Control.Monad.Except
   , throwError
   )
 import Control.Monad.Reader (ask , asks, local, MonadReader (..))
-import Control.Monad.State (gets)
+import Control.Monad.State (gets, modify)
 import Control.Monad.Trans (lift, MonadTrans (..))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LBS
+import Data.Digest.Pure.SHA (sha256, showDigest)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes, fromMaybe)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as Text
+import Data.Text.Encoding (encodeUtf8)
 import Data.Vector (Vector)
 import qualified Data.Vector as V
-import Data.Digest.Pure.SHA (sha256, showDigest)
-import Data.Text.Encoding (encodeUtf8)
+import qualified System.Random as R
 
 hashShow :: Show a => a -> Text
 hashShow = Text.pack . showDigest . sha256 . LBS.fromStrict . encodeUtf8 . Text.show
@@ -135,6 +137,13 @@ evalCallArgs posArgsExpr namedArgsExpr = do
   namedArgs <- mapM evalNamedArg namedArgsExpr
   pure $ zip (repeat Nothing) posArgs ++ namedArgs
 
+splitRNG :: Monad m => GingerT m SomePRNG
+splitRNG = do
+  rng <- gets evalPRNG
+  let (rngL, rngR) = R.splitGen rng
+  modify (\e -> e { evalPRNG = rngL })
+  pure rngR
+
 callTest :: Monad m => Value m -> Expr -> [Expr] -> [(Identifier, Expr)] -> GingerT m (Value m)
 callTest testV scrutinee posArgsExpr namedArgsExpr = do
   case testV of
@@ -142,7 +151,8 @@ callTest testV scrutinee posArgsExpr namedArgsExpr = do
       args <- evalCallArgs posArgsExpr namedArgsExpr
       ctx <- ask
       env <- gets evalEnv
-      BoolV <$> native (runTest t scrutinee args ctx env)
+      rng <- splitRNG
+      BoolV <$> native (runTest t scrutinee args ctx env rng)
 
     ScalarV {} -> do
       BoolV <$> (valuesEqual testV =<< evalE scrutinee)
@@ -160,7 +170,8 @@ callFilter filterV scrutinee posArgsExpr namedArgsExpr = do
       args <- evalCallArgs posArgsExpr namedArgsExpr
       ctx <- ask
       env <- gets evalEnv
-      native (runFilter f scrutinee args ctx env)
+      rng <- splitRNG
+      native (runFilter f scrutinee args ctx env rng)
 
     ScalarV {} -> do
       BoolV <$> (valuesEqual filterV =<< evalE scrutinee)
@@ -179,7 +190,8 @@ call callerMay callable posArgsExpr namedArgsExpr = do
     ProcedureV (NativeProcedure _ _ f) ->
       withEnv mempty $ do
         ctx <- ask
-        native $ f args ctx
+        rng <- splitRNG
+        native $ f args ctx rng
     ProcedureV (GingerProcedure env argsSig f) -> do
       withEnv env $ do
         maybe (pure ()) (setVar "caller") callerMay
@@ -602,7 +614,7 @@ evalS (CallS name posArgsExpr namedArgsExpr bodyS) = whenOutputPolicy $ do
                   "current macro."
               }
             )
-            (const . const . pure . Right $ callerVal)
+            (const . const . const . pure . Right $ callerVal)
   call (Just caller) callee posArgsExpr namedArgsExpr
 evalS (FilterS name posArgsExpr namedArgsExpr bodyS) = whenOutputPolicy $ do
   callee <- lookupVar name
@@ -719,6 +731,7 @@ makeSuper Nothing = pure NoneV
 makeSuper (Just lblock) = do
   ctx <- ask
   env <- gets evalEnv
+  rng <- splitRNG
   parent <- makeSuper (loadedBlockParent lblock)
   pure $ dictV
     [ "__call__" .=
@@ -731,6 +744,7 @@ makeSuper (Just lblock) = do
                   (evalS . blockBody . loadedBlock $ lblock)
                   ctx
                   env
+                  rng
           )
     , "super" .= parent
     ]
@@ -843,7 +857,7 @@ evalLoop loopKeyMay loopName iteree loopCondMay recursivity bodyS elseSMay recur
                 "Recurse one level deeper into the iteree"
             }
           )
-          $ \args ctx -> do
+          $ \args ctx rng -> do
                 case args of
                   [(_, iteree')] ->
                     runGingerT
@@ -858,6 +872,7 @@ evalLoop loopKeyMay loopName iteree loopCondMay recursivity bodyS elseSMay recur
                         (succ recursionLevel))
                       ctx
                       env
+                      rng
                   [] -> pure . Left $
                           ArgumentError "loop()" "1" "argument" "end of arguments"
                   _ -> pure . Left $
@@ -884,7 +899,7 @@ evalLoop loopKeyMay loopName iteree loopCondMay recursivity bodyS elseSMay recur
                 "cycle(items) will return items[n % length(items)]."
             }
           )
-          $ \args _ctx -> do
+          $ \args _ctx _rng -> do
               case args of
                 [(_, items)] ->
                   case items of

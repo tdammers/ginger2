@@ -69,6 +69,7 @@ import Control.Monad.Except (runExceptT, throwError)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Map.Strict (Map)
+import System.Random (SplitGen)
 
 data JinjaDialect
   = DialectGinger2
@@ -76,7 +77,7 @@ data JinjaDialect
   deriving (Show, Eq, Ord, Enum, Bounded)
 
 -- | One-stop function for parsing and interpreting a template.
-ginger :: forall m. Monad m
+ginger :: forall m g. (Monad m, SplitGen g)
        => TemplateLoader m
           -- ^ Template loader to use for loading the initial template and
           -- any included templates. For most use cases, 'fileLoader' should
@@ -86,6 +87,7 @@ ginger :: forall m. Monad m
        -> JinjaDialect
           -- ^ Jinja dialect; currently determines which built-in globals to
           -- load into the initial namespace.
+       -> g
        -> Encoder m
           -- ^ Encoder to use for automatic encoding. Use 'htmlEncoder' for
           -- HTML templates.
@@ -96,7 +98,7 @@ ginger :: forall m. Monad m
        -> Map Identifier (Value m)
           -- ^ Variables defined in the initial namespace.
        -> m (Either RuntimeError Encoded)
-ginger loader parserOptions dialect encoder templateName vars = runExceptT $ do
+ginger loader parserOptions dialect rng encoder templateName vars = runExceptT $ do
   templateSrc <- maybe
                   (throwError $ TemplateFileNotFoundError templateName)
                   pure
@@ -124,6 +126,7 @@ ginger loader parserOptions dialect encoder templateName vars = runExceptT $ do
     (evalT template >>= encode)
     ctx
     env
+    rng
 
 $(addHaddockFromFile "src/Language/Ginger.haddock")
 $(builtinsAutodoc)

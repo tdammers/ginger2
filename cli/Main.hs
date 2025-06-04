@@ -22,6 +22,7 @@ import Options.Applicative
 import System.Directory (getCurrentDirectory)
 import System.FilePath (takeDirectory, takeFileName, takeExtension, (</>) )
 import System.IO (hPutStrLn, stderr)
+import qualified System.Random as R
 
 import qualified Data.Yaml as YAML
 
@@ -188,6 +189,7 @@ runWithOptions po = do
             ".txt" -> textEncoder
             ".text" -> textEncoder
             _ -> htmlEncoder
+  rng <- R.initStdGen
   ginger
     (fileOrStdinLoader baseDir)
     defPOptions
@@ -195,6 +197,7 @@ runWithOptions po = do
       , pstateStripBlocks = poStripBlocks po
       }
     (poDialect po)
+    rng
     encoder
     templateName
     (vars <> extensions) >>= printResultTo (poOutputFile po)

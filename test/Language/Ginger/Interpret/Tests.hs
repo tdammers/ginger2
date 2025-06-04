@@ -35,6 +35,7 @@ import Data.Word (Word8, Word16, Word32, Word64)
 import Test.QuickCheck.Instances ()
 import Test.Tasty
 import Test.Tasty.QuickCheck hiding ((.&.))
+import System.Random (mkStdGen, splitGen, uniformR)
 
 import Language.Ginger.AST
 import Language.Ginger.Interpret
@@ -305,6 +306,21 @@ tests = testGroup "Language.Ginger.Interpret"
               )
               (\(PositiveInt i) -> toValue i)
 
+        , testGroup "random"
+            [ testProperty "random pick" $
+                prop_evalRNG
+                  (\(xs :: Vector Integer) ->
+                    FilterE (ListE (V.map IntLitE xs)) (VarE "random") [] []
+                  )
+                  (\seed xs ->
+                    let rng = mkStdGen seed
+                        (_rngL, rngR) = splitGen rng
+                        (i, _) = uniformR (0, V.length xs - 1) rngR
+                    in if V.null xs then
+                          NoneV
+                       else (V.map IntV xs) V.! i
+                  )
+            ]
         , testGroup "escape"
             [ testProperty "string" $
                 prop_eval
@@ -1071,7 +1087,7 @@ tests = testGroup "Language.Ginger.Interpret"
 
 prop_noBottoms :: (Eval Identity a, Arbitrary a) => a -> Bool
 prop_noBottoms e =
-  runGingerIdentityEither (eval e) `seq` True
+  runGingerIdentityEither 0 (eval e) `seq` True
 
 isProcedure :: Value m -> Bool
 isProcedure ProcedureV {} = True
@@ -1079,7 +1095,7 @@ isProcedure _ = False
 
 prop_setVarLookupVar :: Identifier -> Value Identity -> Property
 prop_setVarLookupVar k v =
-  let (w, equal) = runGingerIdentity program
+  let (w, equal) = runGingerIdentity 0 program
 
       program :: GingerT Identity (Value Identity, Bool)
       program = do
@@ -1095,18 +1111,18 @@ prop_setVarLookupVar k v =
 prop_stringifyString :: String -> Property
 prop_stringifyString str =
   let expected = Text.pack str
-      actual = runGingerIdentity (stringify (StringV expected))
+      actual = runGingerIdentity 0 (stringify (StringV expected))
   in
     expected === actual
 
 prop_stringifyNone :: Property
 prop_stringifyNone =
-  runGingerIdentity (stringify NoneV) === ""
+  runGingerIdentity 0 (stringify NoneV) === ""
 
 prop_stringifyShow :: (ToValue a Identity, Show a) => Proxy a -> a -> Property
 prop_stringifyShow _ i =
   let expected = Text.show i
-      actual = runGingerIdentity (stringify $ toValue i)
+      actual = runGingerIdentity 0 (stringify $ toValue i)
   in
     expected === actual
 
@@ -1117,7 +1133,7 @@ prop_scopedVarsDisappear (name1, val1) (name2, val2) =
   name1 /= name2 ==>
   varOK name1 ==>
   varOK name2 ==>
-  property . runGingerIdentity $ do
+  property . runGingerIdentity 0 $ do
     setVar name1 val1
     exists1a <- isJust <$> lookupVarMaybe name1
     exists2 <- scoped $ do
@@ -1139,7 +1155,7 @@ prop_sliceListStart items start =
                     toValue $ drop (length items + start) items
                  else
                     toValue $ drop start items
-      actual = runGingerIdentity $ do
+      actual = runGingerIdentity 0 $ do
                 setVar "items" (toValue items)
                 setVar "start" (toValue start)
                 eval (SliceE (VarE "items") (Just $ VarE "start") Nothing)
@@ -1154,7 +1170,7 @@ prop_sliceListEnd items end =
                     toValue $ take (length items + end) items
                  else
                     toValue $ take end items
-      actual = runGingerIdentity $ do
+      actual = runGingerIdentity 0 $ do
                 setVar "items" (toValue items)
                 setVar "end" (toValue end)
                 eval (SliceE (VarE "items") Nothing (Just $ VarE "end"))
@@ -1169,7 +1185,7 @@ prop_sliceListBoth items start end =
   let start' = if start < 0 then length items + start else start
       end' = if end < 0 then length items - start' + end else end
       expected = toValue . take end' . drop start' $ items
-      actual = runGingerIdentity $ do
+      actual = runGingerIdentity 0 $ do
                 setVar "items" (toValue items)
                 setVar "start" (toValue start)
                 setVar "end" (toValue end)
@@ -1185,7 +1201,7 @@ prop_sliceStringStart (ArbitraryText items) start =
                     toValue $ Text.drop (Text.length items + start) items
                  else
                     toValue $ Text.drop start items
-      actual = runGingerIdentity $ do
+      actual = runGingerIdentity 0 $ do
                 setVar "items" (toValue items)
                 setVar "start" (toValue start)
                 eval (SliceE (VarE "items") (Just $ VarE "start") Nothing)
@@ -1200,7 +1216,7 @@ prop_sliceStringEnd (ArbitraryText items) end =
                     toValue $ Text.take (Text.length items + end) items
                  else
                     toValue $ Text.take end items
-      actual = runGingerIdentity $ do
+      actual = runGingerIdentity 0 $ do
                 setVar "items" (toValue items)
                 setVar "end" (toValue end)
                 eval (SliceE (VarE "items") Nothing (Just $ VarE "end"))
@@ -1215,7 +1231,7 @@ prop_sliceStringBoth (ArbitraryText items) start end =
   let start' = if start < 0 then Text.length items + start else start
       end' = if end < 0 then Text.length items - start' + end else end
       expected = toValue . Text.take end' . Text.drop start' $ items
-      actual = runGingerIdentity $ do
+      actual = runGingerIdentity 0 $ do
                 setVar "items" (toValue items)
                 setVar "start" (toValue start)
                 setVar "end" (toValue end)
@@ -1231,7 +1247,7 @@ prop_sliceBytesStart (ArbitraryByteString items) start =
                     toValue $ BS.drop (BS.length items + start) items
                  else
                     toValue $ BS.drop start items
-      actual = runGingerIdentity $ do
+      actual = runGingerIdentity 0 $ do
                 setVar "items" (toValue items)
                 setVar "start" (toValue start)
                 eval (SliceE (VarE "items") (Just $ VarE "start") Nothing)
@@ -1246,7 +1262,7 @@ prop_sliceBytesEnd (ArbitraryByteString items) end =
                     toValue $ BS.take (BS.length items + end) items
                  else
                     toValue $ BS.take end items
-      actual = runGingerIdentity $ do
+      actual = runGingerIdentity 0 $ do
                 setVar "items" (toValue items)
                 setVar "end" (toValue end)
                 eval (SliceE (VarE "items") Nothing (Just $ VarE "end"))
@@ -1261,7 +1277,7 @@ prop_sliceBytesBoth (ArbitraryByteString items) start end =
   let start' = if start < 0 then BS.length items + start else start
       end' = if end < 0 then BS.length items - start' + end else end
       expected = toValue . BS.take end' . BS.drop start' $ items
-      actual = runGingerIdentity $ do
+      actual = runGingerIdentity 0 $ do
                 setVar "items" (toValue items)
                 setVar "start" (toValue start)
                 setVar "end" (toValue end)
@@ -1284,7 +1300,7 @@ prop_unopCond :: (ToValue a' Identity, ToValue b Identity)
                -> Property
 prop_unopCond fX unop f x' =
   let x = fX x'
-      resultG = runGingerIdentity $ do
+      resultG = runGingerIdentity 0 $ do
                   setVar "a" (toValue x)
                   eval (UnaryE unop (VarE "a"))
       resultH = toValue $ f <$> x
@@ -1311,7 +1327,7 @@ prop_binopCond :: (ToValue a' Identity, ToValue b' Identity, ToValue c Identity)
 prop_binopCond fX fY binop f x' y' =
   let x = fX x'
       y = fY y'
-      resultG = runGingerIdentity $ do
+      resultG = runGingerIdentity 0 $ do
                   setVar "a" (toValue x)
                   setVar "b" (toValue y)
                   eval (BinaryE binop (VarE "a") (VarE "b"))
@@ -1323,7 +1339,7 @@ prop_binopCond fX fY binop f x' y' =
 
 prop_intDivByZero :: Integer -> Property
 prop_intDivByZero i =
-  let result = runGingerIdentityEither $ do
+  let result = runGingerIdentityEither 0 $ do
                   setVar "i" (toValue i)
                   eval (BinaryE BinopIntDiv (IntLitE i) (IntLitE 0))
   in
@@ -1332,7 +1348,7 @@ prop_intDivByZero i =
 
 prop_divByZero :: Double -> Property
 prop_divByZero d =
-  let result = runGingerIdentityEither $ do
+  let result = runGingerIdentityEither 0 $ do
                   setVar "d" (toValue d)
                   eval (BinaryE BinopDiv (FloatLitE d) (FloatLitE 0))
   in
@@ -1341,7 +1357,7 @@ prop_divByZero d =
 
 prop_divToNaN :: Property
 prop_divToNaN =
-  let result = runGingerIdentityEither $ do
+  let result = runGingerIdentityEither 0 $ do
                   eval (BinaryE BinopDiv (FloatLitE 0) (FloatLitE 0))
   in
     result === leftPRE (NumericError "/" "not a number")
@@ -1352,14 +1368,14 @@ prop_literal = prop_literalWith id
 prop_literalWith :: ToValue b Identity => (a -> b) -> (b -> Expr) -> a -> Property
 prop_literalWith f mkExpr val =
   let expr = mkExpr (f val)
-      result = runGingerIdentity (eval expr)
+      result = runGingerIdentity 0 (eval expr)
   in
     result === toValue (f val)
 
 prop_ternary :: Bool -> Integer -> Integer -> Property
 prop_ternary cond yes no =
   let expr = TernaryE (BoolE cond) (IntLitE yes) (IntLitE no)
-      resultG = runGingerIdentity (eval expr)
+      resultG = runGingerIdentity 0 (eval expr)
       resultH = if cond then yes else no
   in
     resultG === toValue resultH
@@ -1367,14 +1383,14 @@ prop_ternary cond yes no =
 prop_var :: Identifier -> Integer -> Property
 prop_var name val =
   let expr = VarE name
-      resultG = runGingerIdentity (setVar name (toValue val) >> eval expr)
+      resultG = runGingerIdentity 0 (setVar name (toValue val) >> eval expr)
   in
     resultG === toValue val
 
 prop_varNeg :: Identifier -> Integer -> Identifier -> Property
 prop_varNeg name1 val1 name2 =
   let expr = VarE name2
-      resultG = runGingerIdentityEither (setVar name1 (toValue val1) >> eval expr)
+      resultG = runGingerIdentityEither 0 (setVar name1 (toValue val1) >> eval expr)
   in
     name1 /= name2 ==>
     resultG === leftPRE (NotInScopeError (identifierName name2))
@@ -1382,9 +1398,9 @@ prop_varNeg name1 val1 name2 =
 prop_nativeNullary :: Identifier -> Integer -> Property
 prop_nativeNullary varName constVal =
   let fVal = ProcedureV . NativeProcedure "testsuite:nativeNullary" Nothing $
-              const . const . pure @Identity . Right . toValue $ constVal
+              const . const . const . pure @Identity . Right . toValue $ constVal
       expr = CallE (VarE varName) [] []
-      result = runGingerIdentity (setVar varName fVal >> eval expr)
+      result = runGingerIdentity 0 (setVar varName fVal >> eval expr)
   in
     result === toValue constVal
 
@@ -1396,7 +1412,7 @@ prop_nativeIdentity varName argVarName arg =
                 (id :: Value Identity -> Value Identity)
       argVal = toValue arg
       expr = CallE (VarE varName) [VarE argVarName] []
-      result = runGingerIdentity $ do
+      result = runGingerIdentity 0 $ do
                 setVar varName fVal
                 setVar argVarName argVal
                 eval expr
@@ -1409,10 +1425,10 @@ prop_nativeIdentity varName argVarName arg =
 prop_userNullary :: Identifier -> Expr -> Property
 prop_userNullary varName bodyExpr =
   let fVal = ProcedureV $ GingerProcedure mempty [] bodyExpr
-      resultCall = runGingerIdentityEither $ do
+      resultCall = runGingerIdentityEither 0 $ do
                     setVar varName fVal
                     eval $ CallE (VarE varName) [] []
-      resultDirect = runGingerIdentityEither $ do
+      resultDirect = runGingerIdentityEither 0 $ do
                         eval bodyExpr
   in
     resultCall === resultDirect
@@ -1427,14 +1443,14 @@ prop_namespaceSetGet nsName attrName val =
                   , PositionedS (SourcePosition "test" 3 1) $
                       InterpolationS (DotE (VarE nsName) attrName)
                   ]
-      result = runGingerIdentity $ eval program
+      result = runGingerIdentity 0 $ eval program
   in
     counterexample (Text.unpack $ renderSyntaxText program) $
     result === IntV val
 
 prop_isDefinedTrue :: Identifier -> Integer -> Property
 prop_isDefinedTrue name val =
-  let result = runGingerIdentity $ do
+  let result = runGingerIdentity 0 $ do
                 setVar name (toValue val)
                 eval $ IsE (VarE name) (VarE "defined") [] []
   in
@@ -1442,7 +1458,7 @@ prop_isDefinedTrue name val =
 
 prop_isDefinedFalse :: Identifier -> Property
 prop_isDefinedFalse name =
-  let result = runGingerIdentity $ do
+  let result = runGingerIdentity 0 $ do
                 eval $ IsE (VarE name) (VarE "defined") [] []
   in
     varOK name ==>
@@ -1450,7 +1466,7 @@ prop_isDefinedFalse name =
 
 prop_isDefinedTrueDict :: Identifier -> Identifier -> Integer -> Property
 prop_isDefinedTrueDict name selector val =
-  let result = runGingerIdentity $ do
+  let result = runGingerIdentity 0 $ do
                 setVar name (dictV [toScalar (identifierName selector) .= val])
                 eval $ IsE (IndexE (VarE name) (StringLitE $ identifierName selector)) (VarE "defined") [] []
   in
@@ -1463,17 +1479,26 @@ prop_is testName expected val =
                 "true" -> TrueE
                 "false" -> FalseE
                 t -> VarE t
-      result = runGingerIdentity $ do
+      result = runGingerIdentity 0 $ do
                   setVar "v" (toValue val)
                   eval $ IsE (VarE "v") testE [] []
   in
     result === BoolV expected
 
 prop_eval :: (Arbitrary a, Show a, Show e, Eval Identity e) => (a -> e) -> (a -> Value Identity) -> a -> Property
-prop_eval mkEvaluable mkExpected x =
+prop_eval mkEvaluable mkExpected =
+  prop_evalRNG mkEvaluable (const mkExpected) 0
+
+prop_evalRNG :: (Arbitrary a, Show a, Show e, Eval Identity e)
+             => (a -> e)
+             -> (Int -> a -> Value Identity)
+             -> Int
+             -> a
+             -> Property
+prop_evalRNG mkEvaluable mkExpected seed x =
   let e = mkEvaluable x
-      expected = mkExpected x
-      result = runGingerIdentity $ eval e
+      expected = mkExpected seed x
+      result = runGingerIdentity seed $ eval e
   in
     counterexample (show e) $
     result === expected
@@ -1519,21 +1544,21 @@ prop_string_method methodName mkArgs mkExpected =
 prop_immediateStatementOutput :: Encoded -> Property
 prop_immediateStatementOutput str =
   let stmt = ImmediateS str
-      result = runGingerIdentity (eval stmt)
+      result = runGingerIdentity 0 (eval stmt)
   in
     result === EncodedV str
 
 prop_commentStatementOutput :: String -> Property
 prop_commentStatementOutput str =
   let stmt = CommentS (Text.pack str)
-      result = runGingerIdentity (eval stmt)
+      result = runGingerIdentity 0 (eval stmt)
   in
     result === NoneV
 
 prop_interpolationStatementOutput :: Expr -> Property
 prop_interpolationStatementOutput expr =
-  let resultS = runGingerIdentityEither (eval $ InterpolationS expr)
-      resultE = runGingerIdentityEither (eval expr)
+  let resultS = runGingerIdentityEither 0 (eval $ InterpolationS expr)
+      resultE = runGingerIdentityEither 0 (eval expr)
   in
     isRight resultE ==>
     either (const True) (not . getAny . traverseValue (Any . isProcedure)) resultE ==>
@@ -1541,10 +1566,10 @@ prop_interpolationStatementOutput expr =
 
 prop_ifStatementOutput :: Bool -> Statement -> Statement -> Property
 prop_ifStatementOutput cond yes no =
-  let resultYes = runGingerIdentityEither (eval yes)
-      resultNo = runGingerIdentityEither (eval no)
+  let resultYes = runGingerIdentityEither 0 (eval yes)
+      resultNo = runGingerIdentityEither 0 (eval no)
       resultE = if cond then resultYes else resultNo
-      resultIf = runGingerIdentityEither (eval $ IfS (BoolE cond) yes (Just no))
+      resultIf = runGingerIdentityEither 0 (eval $ IfS (BoolE cond) yes (Just no))
       hasProcedure = case resultE of
                         Left _ -> False
                         Right v -> getAny (traverseValue (Any . isProcedure) v)
@@ -1555,10 +1580,10 @@ prop_ifStatementOutput cond yes no =
 
 prop_ifStatementString :: ArbitraryText -> Statement -> Statement -> Property
 prop_ifStatementString (ArbitraryText condText) yes no =
-  let resultYes = runGingerIdentityEither (eval yes)
-      resultNo = runGingerIdentityEither (eval no)
+  let resultYes = runGingerIdentityEither 0 (eval yes)
+      resultNo = runGingerIdentityEither 0 (eval no)
       resultE = if not (Text.null condText) then resultYes else resultNo
-      resultIf = runGingerIdentityEither (eval $ IfS (StringLitE condText) yes (Just no))
+      resultIf = runGingerIdentityEither 0 (eval $ IfS (StringLitE condText) yes (Just no))
       hasProcedure = case resultE of
                         Left _ -> False
                         Right v -> getAny (traverseValue (Any . isProcedure) v)
@@ -1571,7 +1596,7 @@ prop_forStatementSimple :: Identifier -> Identifier -> [String] -> Property
 prop_forStatementSimple itereeName varName strItems =
   let items = ListV . V.fromList $ map (StringV . Text.pack) strItems
       expected = StringV . Text.pack . mconcat $ strItems
-      resultFor = runGingerIdentity $ do
+      resultFor = runGingerIdentity 0 $ do
                     setVar itereeName items
                     eval $ ForS
                             Nothing -- loop key var
@@ -1590,7 +1615,7 @@ prop_forStatementWithKey itereeName varName keyName strItems =
   let items = ListV . V.fromList $ map (StringV . Text.pack) strItems
       expected = StringV . Text.pack . mconcat $
                   [ show k ++ v | (k, v) <- zip [(0 :: Int) ..] strItems ]
-      resultFor = runGingerIdentity $ do
+      resultFor = runGingerIdentity 0 $ do
                     setVar itereeName items
                     eval $ ForS
                             (Just keyName) -- loop key var
@@ -1611,8 +1636,8 @@ prop_forStatementWithKey itereeName varName keyName strItems =
 
 prop_forStatementEmpty :: Statement -> Property
 prop_forStatementEmpty body =
-  let resultDirect = runGingerIdentityEither (eval body)
-      resultFor = runGingerIdentityEither
+  let resultDirect = runGingerIdentityEither 0 (eval body)
+      resultFor = runGingerIdentityEither 0
                     (eval $ ForS
                       Nothing
                       "item"
@@ -1629,7 +1654,7 @@ prop_forStatementFilter :: [Integer] -> Property
 prop_forStatementFilter intItems =
   let items = ListV . V.fromList $ map IntV intItems
       expected = StringV . Text.pack . mconcat $ [ show i | i <- intItems, i > 0 ]
-      resultFor = runGingerIdentity $ do
+      resultFor = runGingerIdentity 0 $ do
                     setVar "items" items
                     eval $ ForS
                             Nothing
@@ -1650,7 +1675,7 @@ prop_forStatementLoopVars intItems =
           [ show (succ i) ++ show (i :: Int) ++ show v
           | (i, v) <- zip [0..] intItems
           ]
-      resultFor = runGingerIdentity $ do
+      resultFor = runGingerIdentity 0 $ do
                     setVar "items" items
                     eval $ ForS
                             Nothing
@@ -1690,7 +1715,7 @@ prop_forStatementNamespace intItems =
                       Nothing
                   , InterpolationS (DotE (VarE "ns") "sum")
                   ]
-      resultFor = runGingerIdentity $ do
+      resultFor = runGingerIdentity 0 $ do
                     setVar "items" items
                     eval program
   in
@@ -1700,9 +1725,9 @@ prop_forStatementNamespace intItems =
 
 prop_callNoArgs :: Expr -> Property
 prop_callNoArgs body =
-  let resultDirect = runGingerIdentityEither $ do
+  let resultDirect = runGingerIdentityEither 0 $ do
                       eval body
-      resultCall = runGingerIdentityEither $ do
+      resultCall = runGingerIdentityEither 0 $ do
                       setVar "f" $ ProcedureV (GingerProcedure mempty [] body)
                       eval $ CallS "f" [] [] (InterpolationS NoneE)
       cat = case resultDirect of
@@ -1721,9 +1746,9 @@ prop_callIdentity body =
                               [ SetS (SetVar "f") NoneE
                               , InterpolationS body
                               ]
-      resultDirect = runGingerIdentityEither $
+      resultDirect = runGingerIdentityEither 0 $
                       eval body'
-      resultCall = runGingerIdentityEither $ do
+      resultCall = runGingerIdentityEither 0 $ do
                       setVar "f" $
                         fnToValue
                           "testsuite:callIdentity"
@@ -1746,9 +1771,9 @@ prop_callEcho body =
                  [ SetS (SetVar "f") NoneE
                  , InterpolationS body
                  ]
-      resultDirect = runGingerIdentityEither $
+      resultDirect = runGingerIdentityEither 0 $
                       eval body'
-      resultCall = runGingerIdentityEither $ do
+      resultCall = runGingerIdentityEither 0 $ do
                       env <- gets evalEnv
                       setVar "f" $
                         ProcedureV $
@@ -1770,12 +1795,12 @@ prop_callMacro body =
                  [ SetS (SetVar "f") NoneE
                  , body
                  ]
-      resultDirect = runGingerIdentityEither $
+      resultDirect = runGingerIdentityEither 0 $
                       eval $ GroupS
                         [ ImmediateS $ Encoded "Hello, "
                         , body'
                         ]
-      resultCall = runGingerIdentityEither $
+      resultCall = runGingerIdentityEither 0 $
                       eval $
                         GroupS
                           [ MacroS "f" [] $ GroupS
@@ -1795,12 +1820,12 @@ prop_callMacro body =
 prop_include :: ArbitraryText -> Statement -> Property
 prop_include (ArbitraryText name) body =
   let bodySrc = renderSyntaxText body
-      resultDirect = runGingerIdentityEither $
+      resultDirect = runGingerIdentityEither 0 $
                       encode =<< eval body
       loader = mockLoader [(name, bodySrc)]
       includeS = IncludeS (StringLitE name) RequireMissing WithContext
       includeSrc = renderSyntaxText includeS
-      resultInclude = runGingerIdentityEitherWithLoader loader $
+      resultInclude = runGingerIdentityEitherWithLoader loader 0 $
                         encode =<< eval includeS
   in
     counterexample ("BODY:\n" ++ Text.unpack bodySrc) $
@@ -1811,10 +1836,10 @@ prop_include (ArbitraryText name) body =
 prop_includeInto :: ArbitraryText -> Statement -> Statement -> Property
 prop_includeInto (ArbitraryText name) body parent =
   let bodySrc = renderSyntaxText body
-      resultDirect = runGingerIdentityEither $
+      resultDirect = runGingerIdentityEither 0 $
                       eval (GroupS [ body, parent ])
       loader = mockLoader [(name, bodySrc)]
-      resultInclude = runGingerIdentityEitherWithLoader loader $
+      resultInclude = runGingerIdentityEitherWithLoader loader 0 $
                         eval (
                           GroupS
                             [ IncludeS (StringLitE name) RequireMissing WithContext
@@ -1829,7 +1854,7 @@ prop_includeMacro :: ArbitraryText -> Identifier -> Statement -> Property
 prop_includeMacro (ArbitraryText name) macroName body =
   let bodySrc = renderSyntaxText $
                   MacroS macroName [] body
-      resultDirect = runGingerIdentityEither $
+      resultDirect = runGingerIdentityEither 0 $
                       encode =<< eval body
       loader = mockLoader [(name, bodySrc)]
       includeS = GroupS
@@ -1837,7 +1862,7 @@ prop_includeMacro (ArbitraryText name) macroName body =
                   , CallS macroName [] [] (InterpolationS NoneE)
                   ]
       includeSrc = renderSyntaxText includeS
-      resultInclude = runGingerIdentityEitherWithLoader loader $
+      resultInclude = runGingerIdentityEitherWithLoader loader 0 $
                         encode =<< eval includeS
   in
     counterexample ("BODY:\n" ++ Text.unpack bodySrc) $
@@ -1850,7 +1875,7 @@ prop_includeMacroWithoutContext :: ArbitraryText -> Identifier -> Statement -> P
 prop_includeMacroWithoutContext (ArbitraryText name) macroName body =
   let bodySrc = renderSyntaxText $
                   MacroS macroName [] body
-      resultDirect = runGingerIdentityEither $
+      resultDirect = runGingerIdentityEither 0 $
                       encode =<< eval body
       loader = mockLoader [(name, bodySrc)]
       
@@ -1859,7 +1884,7 @@ prop_includeMacroWithoutContext (ArbitraryText name) macroName body =
                     , CallS macroName [] [] (InterpolationS NoneE)
                     ]
       includeSrc = renderSyntaxText includeS
-      resultInclude = runGingerIdentityEitherWithLoader loader $
+      resultInclude = runGingerIdentityEitherWithLoader loader 0 $
                         encode =<< eval includeS
   in
     counterexample ("BODY:\n" ++ Text.unpack bodySrc) $
@@ -1873,10 +1898,10 @@ prop_includeSet :: ArbitraryText -> Identifier -> ArbitraryText -> Property
 prop_includeSet (ArbitraryText name) varName (ArbitraryText varValue) =
   let bodySrc = renderSyntaxText $
                   SetS (SetVar varName) (StringLitE varValue)
-      resultDirect = runGingerIdentityEither $
+      resultDirect = runGingerIdentityEither 0 $
                       eval (StringLitE varValue)
       loader = mockLoader [(name, bodySrc)]
-      resultInclude = runGingerIdentityEitherWithLoader loader $
+      resultInclude = runGingerIdentityEitherWithLoader loader 0 $
                         eval (
                           GroupS
                             [ IncludeS (StringLitE name) RequireMissing WithContext
@@ -1891,7 +1916,7 @@ prop_includeWithContext :: ArbitraryText -> Identifier -> ArbitraryText -> Prope
 prop_includeWithContext (ArbitraryText name) varName (ArbitraryText varValue) =
   let bodySrc = renderSyntaxText $
                   InterpolationS (VarE varName)
-      resultDirect = runGingerIdentityEither $
+      resultDirect = runGingerIdentityEither 0 $
                       eval (StringLitE varValue)
       loader = mockLoader [(name, bodySrc)]
       includeS = GroupS
@@ -1899,7 +1924,7 @@ prop_includeWithContext (ArbitraryText name) varName (ArbitraryText varValue) =
                   , IncludeS (StringLitE name) RequireMissing WithContext
                   ]
       includeSrc = renderSyntaxText includeS
-      resultInclude = runGingerIdentityEitherWithLoader loader $
+      resultInclude = runGingerIdentityEitherWithLoader loader 0 $
                         eval includeS
   in
     counterexample ("BODY:\n" ++ Text.unpack bodySrc) $
@@ -1917,7 +1942,7 @@ prop_includeWithoutContext (ArbitraryText name) varName (ArbitraryText varValue)
                     , IncludeS (StringLitE name) RequireMissing WithoutContext
                     ]
       includeSrc = renderSyntaxText includeS
-      resultInclude = runGingerIdentityEitherWithLoader loader $
+      resultInclude = runGingerIdentityEitherWithLoader loader 0 $
                         eval includeS
       expected = Left . PrettyRuntimeError $ NotInScopeError (identifierName varName)
   in
@@ -1929,9 +1954,9 @@ prop_includeWithoutContext (ArbitraryText name) varName (ArbitraryText varValue)
 prop_importValue :: ArbitraryText -> Identifier -> Expr -> Property
 prop_importValue (ArbitraryText name) varName valE =
   let bodySrc = renderSyntaxText (SetS (SetVar varName) valE)
-      resultDirect = runGingerIdentityEither $ eval valE
+      resultDirect = runGingerIdentityEither 0 $ eval valE
       loader = mockLoader [(name, bodySrc)]
-      resultImport = runGingerIdentityEitherWithLoader loader . eval $
+      resultImport = runGingerIdentityEitherWithLoader loader 0 . eval $
                         GroupS
                           [ ImportS (StringLitE name) Nothing Nothing RequireMissing WithoutContext
                           , InterpolationS (VarE varName)
@@ -1944,9 +1969,9 @@ prop_importValue (ArbitraryText name) varName valE =
 prop_importValueAlias :: ArbitraryText -> Identifier -> Identifier -> Expr -> Property
 prop_importValueAlias (ArbitraryText name) alias varName valE =
   let bodySrc = renderSyntaxText (SetS (SetVar varName) valE)
-      resultDirect = runGingerIdentityEither $ eval valE
+      resultDirect = runGingerIdentityEither 0 $ eval valE
       loader = mockLoader [(name, bodySrc)]
-      resultImport = runGingerIdentityEitherWithLoader loader . eval $
+      resultImport = runGingerIdentityEitherWithLoader loader 0 . eval $
                         GroupS
                           [ ImportS (StringLitE name) (Just alias) Nothing RequireMissing WithoutContext
                           , InterpolationS $
@@ -1964,14 +1989,14 @@ prop_importValueAlias (ArbitraryText name) alias varName valE =
 prop_importMacro :: ArbitraryText -> Identifier -> Statement -> Property
 prop_importMacro (ArbitraryText name) varName bodyS =
   let bodySrc = renderSyntaxText (MacroS varName [] bodyS)
-      resultDirect = runGingerIdentityEither $ encode =<< eval bodyS
+      resultDirect = runGingerIdentityEither 0 $ encode =<< eval bodyS
       loader = mockLoader [(name, bodySrc)]
       importS = GroupS
                   [ ImportS (StringLitE name) Nothing Nothing RequireMissing WithoutContext
                   , CallS varName [] [] (InterpolationS NoneE)
                   ]
       importSrc = renderSyntaxText importS
-      resultImport = runGingerIdentityEitherWithLoader loader $ encode =<< eval importS
+      resultImport = runGingerIdentityEitherWithLoader loader 0 $ encode =<< eval importS
   in
     counterexample ("BODY:\n" ++ Text.unpack bodySrc) $
     counterexample ("IMPORTER:\n" ++ Text.unpack importSrc) $
@@ -1990,11 +2015,11 @@ prop_importWithoutContext (ArbitraryText name) macroName varName bodyE =
                     (MacroS macroName []
                       (InterpolationS
                         (VarE varName)))
-      resultDirect = runGingerIdentityEither $ do
+      resultDirect = runGingerIdentityEither 0 $ do
                       void $ eval bodyE
                       throwError $ NotInScopeError (identifierName varName)
       loader = mockLoader [(name, bodySrc)]
-      resultImport = runGingerIdentityEitherWithLoader loader $ do
+      resultImport = runGingerIdentityEitherWithLoader loader 0 $ do
                         encode =<< eval (
                           GroupS
                             [ SetS (SetVar varName) bodyE
@@ -2014,9 +2039,9 @@ prop_importWithContext (ArbitraryText name) macroName varName bodyE =
                     (MacroS macroName []
                       (InterpolationS
                         (VarE varName)))
-      resultDirect = runGingerIdentityEither $ eval bodyE
+      resultDirect = runGingerIdentityEither 0 $ eval bodyE
       loader = mockLoader [(name, bodySrc)]
-      resultImport = runGingerIdentityEitherWithLoader loader . eval $
+      resultImport = runGingerIdentityEitherWithLoader loader 0 . eval $
                         GroupS
                           [ SetS (SetVar varName) bodyE
                           , ImportS (StringLitE name) Nothing Nothing RequireMissing WithContext
@@ -2047,7 +2072,7 @@ prop_importExplicit (NonEmptyText name)
                   [ InterpolationS body2E
                   , InterpolationS body3E
                   ]
-      resultDirect = runGingerIdentityEither $ do
+      resultDirect = runGingerIdentityEither 0 $ do
                         void $ eval $ InterpolationS body3E
                         void $ eval $ InterpolationS body1E
                         eval $ directS
@@ -2060,7 +2085,7 @@ prop_importExplicit (NonEmptyText name)
                 , InterpolationS (VarE varName2)
                 , InterpolationS (VarE varName1)
                 ]
-      resultImport = runGingerIdentityEitherWithLoader loader . eval $ mainS
+      resultImport = runGingerIdentityEitherWithLoader loader 0 . eval $ mainS
       importerSrc = renderSyntaxText $ mainS
   in
     counterexample ("DIRECT SOURCE:\n" ++ Text.unpack directSrc) $
@@ -2096,9 +2121,9 @@ prop_extendSimple (NonEmptyText parentName) blockName body body' =
       mainSrc = renderSyntaxText $
                   templateBody mainT
       loader = mockLoader [(parentName, parentSrc)]
-      resultDirect = runGingerIdentityEither $ do
+      resultDirect = runGingerIdentityEither 0 $ do
         evalS directS
-      resultExtends = runGingerIdentityEitherWithLoader loader $ do
+      resultExtends = runGingerIdentityEitherWithLoader loader 0 $ do
         evalT mainT
       cat = case resultDirect of
               Left err -> unwords . take 1 . words $ show err
@@ -2144,9 +2169,9 @@ prop_extendSuper (NonEmptyText parentName) blockName body body' =
       mainSrc = renderSyntaxText $
                   templateBody mainT
       loader = mockLoader [(parentName, parentSrc)]
-      resultDirect = runGingerIdentityEither $ do
+      resultDirect = runGingerIdentityEither 0 $ do
         evalS directS
-      resultExtends = runGingerIdentityEitherWithLoader loader $ do
+      resultExtends = runGingerIdentityEitherWithLoader loader 0 $ do
         evalT mainT
       cat = case resultDirect of
               Left err -> unwords . take 1 . words $ show err
@@ -2188,9 +2213,9 @@ prop_extendWithContext (NonEmptyText parentName) blockName varName varExpr =
 
       loader = mockLoader [(parentName, parentSrc)]
 
-      resultDirect = runGingerIdentityEither $ do
+      resultDirect = runGingerIdentityEither 0 $ do
         evalS directS
-      resultExtends = runGingerIdentityEitherWithLoader loader $ do
+      resultExtends = runGingerIdentityEitherWithLoader loader 0 $ do
         evalT childT
       cat = case resultDirect of
               Left err -> unwords . take 1 . words $ show err
@@ -2233,9 +2258,9 @@ prop_extendWithoutContext (NonEmptyText parentName) blockName varName varExpr du
 
       loader = mockLoader [(parentName, parentSrc)]
 
-      resultDirect = runGingerIdentityEither $ do
+      resultDirect = runGingerIdentityEither 0 $ do
         evalS directS
-      resultExtends = runGingerIdentityEitherWithLoader loader $ do
+      resultExtends = runGingerIdentityEitherWithLoader loader 0 $ do
         evalT childT
       cat = case resultDirect of
               Left (PrettyRuntimeError (NotInScopeError n)) | Identifier n == varName -> "OK (NotInScope, expected)"

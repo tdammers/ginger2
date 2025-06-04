@@ -12,6 +12,7 @@ import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Map.Strict as Map
 import Test.Tasty.QuickCheck
+import System.Random (mkStdGen)
 
 import Language.Ginger.Interpret
 import Language.Ginger.Value
@@ -97,27 +98,34 @@ instance Show PrettyRuntimeError where
   show (PrettyRuntimeError (TemplateParseError _ err)) = Text.unpack err
   show (PrettyRuntimeError e) = show e
 
-runGingerIdentity :: GingerT Identity a -> a
-runGingerIdentity action =
-  either (error . show) id $ runGingerIdentityEither action
+runGingerIdentity :: Int -> GingerT Identity a -> a
+runGingerIdentity rngSeed action =
+  either (error . show) id $ runGingerIdentityEither rngSeed action
 
-runGingerIdentityEither :: GingerT Identity a -> Either PrettyRuntimeError a
-runGingerIdentityEither action =
+runGingerIdentityEither :: Int -> GingerT Identity a -> Either PrettyRuntimeError a
+runGingerIdentityEither rngSeed action =
   mapLeft (PrettyRuntimeError . unPositionedError) $
-    runIdentity (runGingerT action defContext defEnv)
+    runIdentity (runGingerT action defContext defEnv (mkStdGen rngSeed))
 
 runGingerIdentityWithLoader :: TemplateLoader Identity
-                                  -> GingerT Identity a
-                                  -> a
-runGingerIdentityWithLoader loader action =
-  either (error . show) id $ runGingerIdentityEitherWithLoader loader action
+                            -> Int
+                            -> GingerT Identity a
+                            -> a
+runGingerIdentityWithLoader loader rngSeed action =
+  either (error . show) id $ runGingerIdentityEitherWithLoader loader rngSeed action
 
 runGingerIdentityEitherWithLoader :: TemplateLoader Identity
+                                  -> Int
                                   -> GingerT Identity a
                                   -> Either PrettyRuntimeError a
-runGingerIdentityEitherWithLoader loader action =
+runGingerIdentityEitherWithLoader loader rngSeed action =
   mapLeft (PrettyRuntimeError . unPositionedError) $
-    runIdentity (runGingerT action defContext { contextLoadTemplateFile = loader } defEnv)
+    runIdentity
+      (runGingerT
+        action
+        defContext { contextLoadTemplateFile = loader }
+        defEnv
+        (mkStdGen rngSeed))
 
 mockLoader :: [(Text, Text)] -> TemplateLoader Identity
 mockLoader entries name =

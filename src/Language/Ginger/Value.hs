@@ -194,9 +194,24 @@ instance Show (Value m) where
   show (ListV xs) = "ListV " ++ show xs
   show (DictV m) = "DictV " ++ show (Map.toAscList m)
   show (NativeV {}) = "<<native>>"
+  show (ProcedureV (NativeProcedure oid _ _)) = "<<procedure:" ++ Text.unpack (unObjectID oid) ++ ">>"
   show (ProcedureV {}) = "<<procedure>>"
-  show (TestV {}) = "<<test>>"
-  show (FilterV {}) = "<<filter>>"
+  show (TestV t) =
+    "<<test" ++
+      Text.unpack (
+        maybe ""
+          ((":" <>) . procedureDocName)
+          (testDoc t)
+      ) ++
+      ">>"
+  show (FilterV f) =
+    "<<filter" ++
+      Text.unpack (
+        maybe ""
+          ((":" <>) . procedureDocName)
+          (filterDoc f)
+      ) ++
+      ">>"
   show (MutableRefV i) = show i
 
 instance Eq (Value m) where
@@ -1217,12 +1232,8 @@ stringify (DictV m) = do
   pure $ Text.intercalate ", " elems
 stringify (NativeV n) =
   native (Right <$> nativeObjectStringified n)
-stringify (ProcedureV (NativeProcedure oid _ _)) =
-  pure $ "[[procedure " <> unObjectID oid <> "]]"
-stringify (ProcedureV (GingerProcedure {})) =
+stringify (ProcedureV {}) =
   pure $ "[[procedure]]"
-stringify (ProcedureV NamespaceProcedure) =
-  pure $ "[[procedure namespace]]"
 stringify (TestV _) =
   pure "[[test]]"
 stringify (FilterV _) =

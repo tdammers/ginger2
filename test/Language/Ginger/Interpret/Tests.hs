@@ -1115,10 +1115,8 @@ prop_scopedVarsDisappear :: (Identifier, Value Identity)
                          -> Property
 prop_scopedVarsDisappear (name1, val1) (name2, val2) =
   name1 /= name2 ==>
-  not (name1 `Map.member` envVars (defEnv @Identity)) ==>
-  not (name1 == "e") ==>
-  not (name2 `Map.member` envVars (defEnv @Identity)) ==>
-  not (name2 == "e") ==>
+  varOK name1 ==>
+  varOK name2 ==>
   property . runGingerIdentity $ do
     setVar name1 val1
     exists1a <- isJust <$> lookupVarMaybe name1
@@ -1447,8 +1445,7 @@ prop_isDefinedFalse name =
   let result = runGingerIdentity $ do
                 eval $ IsE (VarE name) (VarE "defined") [] []
   in
-    not (name `Map.member` envVars (defEnv @Identity)) ==>
-    not (name == "e") ==>
+    varOK name ==>
     result === FalseV
 
 prop_isDefinedTrueDict :: Identifier -> Identifier -> Integer -> Property
@@ -1799,12 +1796,12 @@ prop_include :: ArbitraryText -> Statement -> Property
 prop_include (ArbitraryText name) body =
   let bodySrc = renderSyntaxText body
       resultDirect = runGingerIdentityEither $
-                      eval body
+                      encode =<< eval body
       loader = mockLoader [(name, bodySrc)]
       includeS = IncludeS (StringLitE name) RequireMissing WithContext
       includeSrc = renderSyntaxText includeS
       resultInclude = runGingerIdentityEitherWithLoader loader $
-                        eval includeS
+                        encode =<< eval includeS
   in
     counterexample ("BODY:\n" ++ Text.unpack bodySrc) $
     counterexample ("INCLUDER:\n" ++ Text.unpack includeSrc) $
@@ -1833,7 +1830,7 @@ prop_includeMacro (ArbitraryText name) macroName body =
   let bodySrc = renderSyntaxText $
                   MacroS macroName [] body
       resultDirect = runGingerIdentityEither $
-                      eval body
+                      encode =<< eval body
       loader = mockLoader [(name, bodySrc)]
       includeS = GroupS
                   [ IncludeS (StringLitE name) RequireMissing WithContext
@@ -1841,13 +1838,12 @@ prop_includeMacro (ArbitraryText name) macroName body =
                   ]
       includeSrc = renderSyntaxText includeS
       resultInclude = runGingerIdentityEitherWithLoader loader $
-                        eval includeS
+                        encode =<< eval includeS
   in
     counterexample ("BODY:\n" ++ Text.unpack bodySrc) $
     counterexample ("INCLUDER:\n" ++ Text.unpack includeSrc) $
     isRight resultDirect ==>
-    not (macroName `Map.member` envVars (defEnv @Identity)) ==>
-    not (macroName == "e") ==>
+    varOK macroName ==>
     resultInclude === resultDirect
 
 prop_includeMacroWithoutContext :: ArbitraryText -> Identifier -> Statement -> Property
@@ -1855,7 +1851,7 @@ prop_includeMacroWithoutContext (ArbitraryText name) macroName body =
   let bodySrc = renderSyntaxText $
                   MacroS macroName [] body
       resultDirect = runGingerIdentityEither $
-                      eval body
+                      encode =<< eval body
       loader = mockLoader [(name, bodySrc)]
       
       includeS = GroupS
@@ -1864,13 +1860,12 @@ prop_includeMacroWithoutContext (ArbitraryText name) macroName body =
                     ]
       includeSrc = renderSyntaxText includeS
       resultInclude = runGingerIdentityEitherWithLoader loader $
-                        eval includeS
+                        encode =<< eval includeS
   in
     counterexample ("BODY:\n" ++ Text.unpack bodySrc) $
     counterexample ("INCLUDER:\n" ++ Text.unpack includeSrc) $
     name /= identifierName macroName ==>
-    not (macroName `Map.member` envVars (defEnv @Identity)) ==>
-    not (macroName == "e") ==>
+    varOK macroName ==>
     isRight resultDirect ==>
     resultInclude === resultDirect
 
@@ -1909,8 +1904,7 @@ prop_includeWithContext (ArbitraryText name) varName (ArbitraryText varValue) =
   in
     counterexample ("BODY:\n" ++ Text.unpack bodySrc) $
     counterexample ("INCLUDER:\n" ++ Text.unpack includeSrc) $
-    not (varName `Map.member` envVars (defEnv @Identity)) ==>
-    not (varName == "e") ==>
+    varOK varName ==>
     resultInclude === resultDirect
 
 prop_includeWithoutContext :: ArbitraryText -> Identifier -> ArbitraryText -> Property
@@ -1929,8 +1923,7 @@ prop_includeWithoutContext (ArbitraryText name) varName (ArbitraryText varValue)
   in
     counterexample ("BODY:\n" ++ Text.unpack bodySrc) $
     counterexample ("INCLUDER:\n" ++ Text.unpack includeSrc) $
-    not (varName `Map.member` envVars (defEnv @Identity)) ==>
-    not (varName == "e") ==>
+    varOK varName ==>
     resultInclude === expected
 
 prop_importValue :: ArbitraryText -> Identifier -> Expr -> Property
@@ -1945,8 +1938,7 @@ prop_importValue (ArbitraryText name) varName valE =
                           ]
   in
     counterexample ("SOURCE:\n" ++ Text.unpack bodySrc) $
-    not (varName `Map.member` envVars (defEnv @Identity)) ==>
-    not (varName == "e") ==>
+    varOK varName ==>
     resultImport === resultDirect
 
 prop_importValueAlias :: ArbitraryText -> Identifier -> Identifier -> Expr -> Property
@@ -1965,30 +1957,32 @@ prop_importValueAlias (ArbitraryText name) alias varName valE =
   in
     counterexample ("SOURCE:\n" ++ Text.unpack bodySrc) $
     isRight resultDirect ==>
-    not (varName `Map.member` envVars (defEnv @Identity)) ==>
-    not (varName == "e") ==>
-    not (alias `Map.member` envVars (defEnv @Identity)) ==>
-    not (alias == "e") ==>
+    varOK varName ==>
+    varOK alias ==>
     resultImport === resultDirect
 
 prop_importMacro :: ArbitraryText -> Identifier -> Statement -> Property
 prop_importMacro (ArbitraryText name) varName bodyS =
   let bodySrc = renderSyntaxText (MacroS varName [] bodyS)
-      resultDirect = runGingerIdentityEither $ eval bodyS
+      resultDirect = runGingerIdentityEither $ encode =<< eval bodyS
       loader = mockLoader [(name, bodySrc)]
       importS = GroupS
                   [ ImportS (StringLitE name) Nothing Nothing RequireMissing WithoutContext
                   , CallS varName [] [] (InterpolationS NoneE)
                   ]
       importSrc = renderSyntaxText importS
-      resultImport = runGingerIdentityEitherWithLoader loader . eval $ importS
+      resultImport = runGingerIdentityEitherWithLoader loader $ encode =<< eval importS
   in
     counterexample ("BODY:\n" ++ Text.unpack bodySrc) $
     counterexample ("IMPORTER:\n" ++ Text.unpack importSrc) $
     isRight resultDirect ==>
-    not (varName `Map.member` envVars (defEnv @Identity)) ==>
-    not (varName == "e") ==>
+    varOK varName ==>
     resultImport === resultDirect
+
+varOK :: Identifier -> Bool
+varOK varName =
+    not (varName `Map.member` envVars (defEnv @Identity)) &&
+    not (varName `Set.member` ["e", "loop", "caller"])
 
 prop_importWithoutContext :: ArbitraryText -> Identifier -> Identifier -> Expr -> Property
 prop_importWithoutContext (ArbitraryText name) macroName varName bodyE =
@@ -2000,19 +1994,18 @@ prop_importWithoutContext (ArbitraryText name) macroName varName bodyE =
                       void $ eval bodyE
                       throwError $ NotInScopeError (identifierName varName)
       loader = mockLoader [(name, bodySrc)]
-      resultImport = runGingerIdentityEitherWithLoader loader . eval $
-                        GroupS
-                          [ SetS (SetVar varName) bodyE
-                          , ImportS (StringLitE name) Nothing Nothing RequireMissing WithoutContext
-                          , CallS macroName [] [] (InterpolationS NoneE)
-                          ]
+      resultImport = runGingerIdentityEitherWithLoader loader $ do
+                        encode =<< eval (
+                          GroupS
+                            [ SetS (SetVar varName) bodyE
+                            , ImportS (StringLitE name) Nothing Nothing RequireMissing WithoutContext
+                            , CallS macroName [] [] (InterpolationS NoneE)
+                            ])
   in
     counterexample ("SOURCE:\n" ++ Text.unpack bodySrc) $
     macroName /= varName ==>
-    not (varName `Map.member` envVars (defEnv @Identity)) ==>
-    not (varName == "e") ==>
-    not (macroName `Map.member` envVars (defEnv @Identity)) ==>
-    not (macroName == "e") ==>
+    varOK varName ==>
+    varOK macroName ==>
     resultImport === resultDirect
 
 prop_importWithContext :: ArbitraryText -> Identifier -> Identifier -> Expr -> Property
@@ -2032,10 +2025,8 @@ prop_importWithContext (ArbitraryText name) macroName varName bodyE =
   in
     counterexample ("SOURCE:\n" ++ Text.unpack bodySrc) $
     macroName /= varName ==>
-    not (varName `Map.member` envVars (defEnv @Identity)) ==>
-    not (varName == "e") ==>
-    not (macroName `Map.member` envVars (defEnv @Identity)) ==>
-    not (macroName == "e") ==>
+    varOK varName ==>
+    varOK macroName ==>
     resultImport === resultDirect
 
 prop_importExplicit :: NonEmptyText
@@ -2076,10 +2067,8 @@ prop_importExplicit (NonEmptyText name)
     counterexample ("IMPORTED SOURCE:\n" ++ Text.unpack bodySrc) $
     counterexample ("MAIN SOURCE:\n" ++ Text.unpack importerSrc) $
     varName1 /= varName2 ==>
-    not (varName1 `Map.member` envVars (defEnv @Identity)) ==>
-    not (varName1 == "e") ==>
-    not (varName2 `Map.member` envVars (defEnv @Identity)) ==>
-    not (varName2 == "e") ==>
+    varOK varName1 ==>
+    varOK varName2 ==>
     resultImport === resultDirect
 
 prop_extendSimple :: NonEmptyText
@@ -2211,8 +2200,7 @@ prop_extendWithContext (NonEmptyText parentName) blockName varName varExpr =
     counterexample ("PARENT SOURCE:\n" ++ Text.unpack parentSrc) $
     counterexample ("CHILD SOURCE:\n" ++ Text.unpack childSrc) $
     counterexample ("DIRECT SOURCE:\n" ++ Text.unpack directSrc) $
-    not (varName `Map.member` envVars (defEnv @Identity)) ==>
-    not (varName == "e") ==>
+    varOK varName ==>
     resultExtends === resultDirect
 
 prop_extendWithoutContext :: NonEmptyText
@@ -2259,6 +2247,5 @@ prop_extendWithoutContext (NonEmptyText parentName) blockName varName varExpr du
     counterexample ("CHILD SOURCE:\n" ++ Text.unpack childSrc) $
     counterexample ("DIRECT SOURCE:\n" ++ Text.unpack directSrc) $
     varName /= dummyVarName ==>
-    not (varName `Map.member` envVars (defEnv @Identity)) ==>
-    not (varName == "e") ==>
+    varOK varName ==>
     resultExtends === resultDirect

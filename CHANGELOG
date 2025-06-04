@@ -9,3 +9,10 @@
 - Fixed some spurious test failures.
 - Moved `date` builtin to ginger extensions (its alias, `dateformat`, was
   an extension already).
+- Added built-ins:
+    - random()
+    - min()
+    - max()
+    - sum()
+- Made truthiness checks more lenient, so that things like `{% if [] %}` work
+  like in Jinja

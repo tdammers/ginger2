@@ -694,6 +694,46 @@ tests = testGroup "Language.Ginger.Interpret"
                 FilterE (ListE (V.replicate (i * j) NoneE)) (VarE "batch") [IntLitE $ fromIntegral j] [])
               (\(PositiveInt i, PositiveInt j) ->
                 ListV (V.replicate i (ListV (V.replicate j NoneV))))
+        , testProperty "groupby" $
+            prop_eval
+              (\(Identifier a, Identifier b, itemsA, itemsB) ->
+                FilterE
+                  (ListE $
+                    V.fromList
+                      [ DictE
+                          [ (StringLitE "foo", StringLitE a)
+                          , (StringLitE "bar", IntLitE val)
+                          ]
+                      | val <- itemsA
+                      ]
+                    <>
+                    V.fromList
+                      [ DictE
+                          [ (StringLitE "foo", StringLitE b)
+                          , (StringLitE "bar", IntLitE val)
+                          ]
+                      | val <- itemsB
+                      ]
+                  )
+                  (VarE "groupby")
+                  [StringLitE "foo"]
+                  [])
+              (\(Identifier a, Identifier b, itemsA, itemsB) ->
+                DictV $
+                  Map.fromList $
+                    ( if null itemsA then
+                        []
+                      else
+                        [ (StringScalar a, ListV $ V.fromList [ DictV $ Map.fromList [ ("foo", StringV a), ("bar", IntV val) ] | val <- itemsA ] )
+                        ]
+                    ) ++
+                    ( if null itemsB then
+                        []
+                      else
+                        [ (StringScalar b, ListV $ V.fromList [ DictV $ Map.fromList [ ("foo", StringV b), ("bar", IntV val) ] | val <- itemsB ] )
+                        ]
+                    )
+              )
         , testProperty "batch with fill" $
             prop_eval
               (\(PositiveInt i, PositiveInt j, PositiveInt x, f) ->
@@ -1393,6 +1433,8 @@ prop_varNeg name1 val1 name2 =
       resultG = runGingerIdentityEither 0 (setVar name1 (toValue val1) >> eval expr)
   in
     name1 /= name2 ==>
+    varOK name1 ==>
+    varOK name2 ==>
     resultG === leftPRE (NotInScopeError (identifierName name2))
 
 prop_nativeNullary :: Identifier -> Integer -> Property
@@ -1485,11 +1527,11 @@ prop_is testName expected val =
   in
     result === BoolV expected
 
-prop_eval :: (Arbitrary a, Show a, Show e, Eval Identity e) => (a -> e) -> (a -> Value Identity) -> a -> Property
+prop_eval :: (Arbitrary a, Show a, RenderSyntax e, Eval Identity e) => (a -> e) -> (a -> Value Identity) -> a -> Property
 prop_eval mkEvaluable mkExpected =
   prop_evalRNG mkEvaluable (const mkExpected) 0
 
-prop_evalRNG :: (Arbitrary a, Show a, Show e, Eval Identity e)
+prop_evalRNG :: (Arbitrary a, Show a, RenderSyntax e, Eval Identity e)
              => (a -> e)
              -> (Int -> a -> Value Identity)
              -> Int
@@ -1500,7 +1542,7 @@ prop_evalRNG mkEvaluable mkExpected seed x =
       expected = mkExpected seed x
       result = runGingerIdentity seed $ eval e
   in
-    counterexample (show e) $
+    counterexample (Text.unpack $ renderSyntaxText e) $
     result === expected
 
 prop_attr :: (Arbitrary a, Show a, ToValue b Identity)

@@ -18,6 +18,7 @@ import Language.Ginger.Render (renderSyntaxText)
 import Language.Ginger.RuntimeError
 import Language.Ginger.Value
 
+import Control.Applicative ( (<|>) )
 import Control.Monad.Except
 import Control.Monad.Trans (lift)
 import qualified Data.Aeson as JSON
@@ -155,7 +156,7 @@ builtinGlobals evalE = Map.fromList $
   , ("float", ProcedureV fnToFloat)
   -- , ("forceescape", undefined)
   -- , ("format", undefined)
-  -- , ("groupby", undefined)
+  , ("groupby", ProcedureV fnGroupBy)
   -- , ("indent", undefined)
   , ("int", ProcedureV fnToInt)
   , ("items", ProcedureV fnItems)
@@ -1893,6 +1894,77 @@ fnFilesizeFormat = mkFn2 "filesizeformat"
             unit
       | otherwise
       = go multiplier units (value `div` multiplier)
+
+fnGroupBy :: forall m. Monad m => Procedure m
+fnGroupBy = mkFn4 "groupby"
+              (Text.unlines
+                [ "Group a list of objects by an attribute."
+                , "The attribute can use dot notation for nested access, " <>
+                  "e.g. `'address.city'`."
+                ]
+              )
+              ( "value"
+              , Nothing :: Maybe [Value m]
+              , Just $ TypeDocAny
+              , ""
+              )
+              ( "attribute"
+              , Nothing
+              , Just $ TypeDocAlternatives [ "string", "int" ]
+              , "Attribute to group by."
+              )
+              ( "default"
+              , Just Nothing
+              , Just $ TypeDocAny
+              , "Default value to use if an object doesn't have the " <>
+                "requested attribute."
+              )
+              ( "case_sensitive"
+              , Just True
+              , Just $ TypeDocSingle "bool"
+              , "Use case-sensitive comparisons for grouping objects."
+              )
+              (Just $ TypeDocSingle "dict")
+  $ \value attrib (defValMay :: Maybe (Value m)) caseSensitive -> do
+    let getAttribPath :: Value m -> [Text] -> ExceptT RuntimeError m (Maybe (Value m))
+        getAttribPath o [] = pure $ Just o
+        getAttribPath o (p:ps) = do
+          o'May <- eitherExceptM $ getAttrOrItemRaw o (Identifier p)
+          case o'May of
+            Just o' -> getAttribPath o' ps
+            Nothing -> pure $ Nothing
+
+    let attribProjection :: Value m -> ExceptT RuntimeError m (Maybe (Value m))
+        attribProjection = fmap (maybe (Just NoneV) Just) . case attrib of
+          Left i -> \obj ->
+            lift $ getItemRaw obj (IntV i)
+          Right t -> \obj ->
+            getAttribPath obj $ Text.splitOn "." t
+
+        attribCaseFold :: Scalar -> Scalar
+        attribCaseFold (StringScalar t) =
+          if caseSensitive then
+            StringScalar t
+          else
+            StringScalar (Text.toCaseFold t)
+        attribCaseFold x = x
+
+        append :: Map Scalar [Value m] -> Maybe (Scalar, Value m) -> Map Scalar [Value m]
+        append m Nothing = m
+        append m (Just (k, v)) =
+          Map.insertWith (flip (++)) k [v] m
+
+        prepare :: Value m -> ExceptT RuntimeError m (Maybe (Scalar, Value m))
+        prepare v = do
+          kMay <- attribProjection v
+          skMay <- mapM
+                    (fmap attribCaseFold . eitherExcept . asScalarVal)
+                    (kMay <|> defValMay)
+          case skMay of
+            Nothing -> pure Nothing
+            Just k -> pure $ Just (k, v)
+
+    foldl' append mempty <$> mapM prepare value
 
 fnBatch :: forall m. Monad m => Procedure m
 fnBatch = mkFn3 "batch"

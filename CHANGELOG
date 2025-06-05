@@ -20,3 +20,14 @@
   like in Jinja.
 - Added an RNG state to the execution environment; this is necessary in order to
   support the random() function.
+
+2.1.0.1
+
+- Fix build errors on GHC 9.2 through 9.10
+
+2.2.0.0
+
+- Added built-ins:
+    - groupby()
+- Added printf-style % string formatting
+- Fixed some spurious test failures

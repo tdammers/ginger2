@@ -32,10 +32,11 @@ import qualified Data.Text.Encoding as Text
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Word (Word8, Word16, Word32, Word64)
+import System.Random (mkStdGen, splitGen, uniformR)
 import Test.QuickCheck.Instances ()
 import Test.Tasty
 import Test.Tasty.QuickCheck hiding ((.&.))
-import System.Random (mkStdGen, splitGen, uniformR)
+import Text.Printf (printf)
 
 import Language.Ginger.AST
 import Language.Ginger.Interpret
@@ -106,6 +107,34 @@ tests = testGroup "Language.Ginger.Interpret"
       , testProperty "Integer division by zero" prop_intDivByZero
       , testProperty "Integer modulo" (prop_binopCond @Integer Just justNonzero BinopMod mod)
       , testProperty "Integer power" (prop_binopCond @Integer @Integer justPositive justPositive BinopPower (^))
+
+      , testGroup "Printf formatting operator"
+        [ testProperty "single integer arg, %i"
+            (prop_binop @Text @Integer @Text BinopMod
+              (\fmt val -> Text.pack $ printf (Text.unpack fmt) val)
+              "%i"
+            )
+        , testProperty "single string arg, %s"
+            (prop_binop @Text @Text @Text BinopMod
+              (\fmt val -> Text.pack $ printf (Text.unpack fmt) val)
+              "%s"
+            )
+        , testProperty "int + string args, %d %s"
+            (prop_binop @Text @(Integer, Text) @Text BinopMod
+              (\fmt (i, s) -> Text.pack $ printf (Text.unpack fmt) i s)
+              "%d %s"
+            )
+        , testProperty "single string arg, a%s"
+            (prop_binop @Text @Text @Text BinopMod
+              (\fmt val -> Text.pack $ printf (Text.unpack fmt) val)
+              "a%s"
+            )
+        , testProperty "single string arg, %%%s"
+            (prop_binop @Text @Text @Text BinopMod
+              (\fmt val -> Text.pack $ printf (Text.unpack fmt) val)
+              "%%%s"
+            )
+        ]
 
       , testProperty "Double addition" (prop_binop @Double BinopPlus (+))
       , testProperty "Double subtraction" (prop_binop @Double BinopMinus (-))

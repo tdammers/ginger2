@@ -39,6 +39,7 @@ import Language.Ginger.Parse (parseGinger)
 import qualified Language.Ginger.Parse as Parse
 import Language.Ginger.RuntimeError
 import Language.Ginger.SourcePosition
+import Language.Ginger.StringFormatting
 import Language.Ginger.Value
 
 import Control.Monad (foldM, forM, void)
@@ -398,7 +399,6 @@ boolBinop :: Monad m
          -> GingerT m (Value m)
 boolBinop f a b = native . pure $ boolFunc2 f a b
 
-
 valuesEqual :: Monad m
             => Value m
             -> Value m
@@ -436,6 +436,12 @@ valueComparison f a b = do
   ordering <- compareValues a b
   pure $ BoolV (f ordering)
 
+printfValues :: Monad m => Text -> Value m -> GingerT m (Value m)
+printfValues fmtText (ListV args) = do
+  pure . StringV . Text.pack $ printfList (Text.unpack fmtText) (V.toList args)
+printfValues fmtText x = do
+  pure . StringV . Text.pack $ printfList (Text.unpack fmtText) [x]
+
 dictsEqual :: forall m. Monad m
            => Map Scalar (Value m)
            -> Map Scalar (Value m)
@@ -457,6 +463,7 @@ evalBinary BinopPlus a b = numericBinop (+) (+) a b
 evalBinary BinopMinus a b = numericBinop (-) (-) a b
 evalBinary BinopDiv a b = floatBinop safeDiv a b
 evalBinary BinopIntDiv a b = intBinop safeIntDiv a b
+evalBinary BinopMod (StringV a) b = printfValues a b
 evalBinary BinopMod a b = intBinop safeIntMod a b
 evalBinary BinopMul a b = numericBinop (*) (*) a b
 evalBinary BinopPower a b = numericBinopCatch safeIntPow (\x y -> Right (x ** y)) a b

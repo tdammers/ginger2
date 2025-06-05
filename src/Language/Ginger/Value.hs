@@ -46,6 +46,7 @@ import GHC.Float (float2Double)
 import System.Random (RandomGen (..), SplitGen (..))
 import Test.Tasty.QuickCheck (Arbitrary (..))
 import qualified Test.Tasty.QuickCheck as QC
+import Text.Printf (PrintfArg (..))
 import Text.Read (readMaybe)
 
 import Language.Ginger.AST
@@ -192,6 +193,33 @@ data Value m
   | MutableRefV !RefID
   deriving (Ord)
 
+pattern NoneV :: Value m
+pattern NoneV = ScalarV NoneScalar
+
+pattern BoolV :: Bool -> Value m
+pattern BoolV b = ScalarV (BoolScalar b)
+
+pattern TrueV :: Value m
+pattern TrueV = BoolV True
+
+pattern FalseV :: Value m
+pattern FalseV = BoolV False
+
+pattern StringV :: Text -> Value m
+pattern StringV v = ScalarV (StringScalar v)
+
+pattern EncodedV :: Encoded -> Value m
+pattern EncodedV v = ScalarV (EncodedScalar v)
+
+pattern BytesV :: ByteString -> Value m
+pattern BytesV v = ScalarV (BytesScalar v)
+
+pattern IntV :: Integer -> Value m
+pattern IntV v = ScalarV (IntScalar v)
+
+pattern FloatV :: Double -> Value m
+pattern FloatV v = ScalarV (FloatScalar v)
+
 instance FromJSON (Value m) where
   parseJSON v@JSON.Object {} = DictV <$> parseJSON v
   parseJSON v@JSON.Array {} = ListV <$> parseJSON v
@@ -202,13 +230,6 @@ instance ToJSON (Value m) where
   toJSON (ListV xs) = toJSON xs
   toJSON (DictV d) = toJSON d
   toJSON x = toJSON (show x)
-
-traverseValue :: Monoid a => (Value m -> a) -> Value m -> a
-traverseValue p v@(ListV xs) =
-  p v <> fold (fmap (traverseValue p) xs)
-traverseValue p v@(DictV m) =
-  p v <> mconcat (map (traverseValue p . snd) $ Map.toList m)
-traverseValue p v = p v
 
 instance Show (Value m) where
   show (ScalarV s) = show s
@@ -241,6 +262,21 @@ instance Eq (Value m) where
   DictV a == DictV b = a == b
   _ == _ = False
 
+instance PrintfArg (Value m) where
+  formatArg (BoolV b) = formatArg (fromEnum b)
+  formatArg (IntV i) = formatArg i
+  formatArg (FloatV f) = formatArg f
+  formatArg (StringV t) = formatArg t
+  formatArg (EncodedV (Encoded t)) = formatArg t
+  formatArg ScalarV {} = formatArg ("" :: String)
+  formatArg (ListV xs) = \fmt x -> foldr (flip formatArg fmt) x xs
+  formatArg (DictV xs) = formatArg . ListV . V.fromList . Map.elems $ xs
+  formatArg (NativeV {}) = formatArg ("[[object]]" :: String)
+  formatArg (ProcedureV {}) = formatArg ("[[procedure]]" :: String)
+  formatArg (FilterV {}) = formatArg ("[[filter]]" :: String)
+  formatArg (TestV {}) = formatArg ("[[test]]" :: String)
+  formatArg (MutableRefV {}) = formatArg ("[[ref]]" :: String)
+
 tagNameOf :: Value m -> Text
 tagNameOf ScalarV {} = "scalar"
 tagNameOf ListV {} = "list"
@@ -251,32 +287,12 @@ tagNameOf TestV {} = "test"
 tagNameOf FilterV {} = "filter"
 tagNameOf MutableRefV {} = "mutref"
 
-pattern NoneV :: Value m
-pattern NoneV = ScalarV NoneScalar
-
-pattern BoolV :: Bool -> Value m
-pattern BoolV b = ScalarV (BoolScalar b)
-
-pattern TrueV :: Value m
-pattern TrueV = BoolV True
-
-pattern FalseV :: Value m
-pattern FalseV = BoolV False
-
-pattern StringV :: Text -> Value m
-pattern StringV v = ScalarV (StringScalar v)
-
-pattern EncodedV :: Encoded -> Value m
-pattern EncodedV v = ScalarV (EncodedScalar v)
-
-pattern BytesV :: ByteString -> Value m
-pattern BytesV v = ScalarV (BytesScalar v)
-
-pattern IntV :: Integer -> Value m
-pattern IntV v = ScalarV (IntScalar v)
-
-pattern FloatV :: Double -> Value m
-pattern FloatV v = ScalarV (FloatScalar v)
+traverseValue :: Monoid a => (Value m -> a) -> Value m -> a
+traverseValue p v@(ListV xs) =
+  p v <> fold (fmap (traverseValue p) xs)
+traverseValue p v@(DictV m) =
+  p v <> mconcat (map (traverseValue p . snd) $ Map.toList m)
+traverseValue p v = p v
 
 newtype ObjectID = ObjectID { unObjectID :: Text }
   deriving (Eq, Ord)

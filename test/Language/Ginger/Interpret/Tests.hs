@@ -918,32 +918,36 @@ tests = testGroup "Language.Ginger.Interpret"
               (\(NonEmptyText needle, _) -> [StringLitE needle])
               (\_ -> TrueV)
         , testProperty "string split (no sep)" $
-            prop_method "split"
+            prop_methodCond "split"
+              (\(NonEmptyText sep, NonEmptyText item) ->
+                not (sep `Text.isInfixOf` item)
+              )
               (\(NonEmptyText _sep, NonEmptyText item) ->
                 StringLitE item
               )
               (\(NonEmptyText sep, NonEmptyText _item) ->
                 [StringLitE sep]
               )
-              (\(NonEmptyText sep, NonEmptyText item) ->
-                if sep `Text.isInfixOf` item then
-                  ListV (fmap StringV . V.fromList $ Text.splitOn sep item)
-                else
+              (\(NonEmptyText _sep, NonEmptyText item) ->
                   ListV $ V.singleton (StringV item)
               )
         , testProperty "string split" $
-            prop_method "split"
+            prop_methodCond "split"
+              (\(NonEmptyText sep, NonEmptyText item, PositiveInt _i) ->
+                not
+                  ( sep `Text.isInfixOf` item
+                  || Text.take 1 sep `Text.isSuffixOf` item
+                  || Text.takeEnd 1 sep `Text.isPrefixOf` item
+                  )
+              )
               (\(NonEmptyText sep, NonEmptyText item, PositiveInt i) ->
                 StringLitE (Text.intercalate sep $ replicate (i + 1) item)
               )
               (\(NonEmptyText sep, NonEmptyText _item, PositiveInt _i) ->
                 [StringLitE sep]
               )
-              (\(NonEmptyText sep, NonEmptyText item, PositiveInt i) ->
-                if sep `Text.isInfixOf` item then
-                  ListV $ V.concat $ replicate (i + 1) (fmap StringV . V.fromList $ Text.splitOn sep item)
-                else
-                  ListV $ V.replicate (i + 1) (StringV item)
+              (\(NonEmptyText _sep, NonEmptyText item, PositiveInt i) ->
+                ListV $ V.replicate (i + 1) (StringV item)
               )
         , testProperty "string splitlines" $
             prop_method "splitlines"
@@ -1591,8 +1595,19 @@ prop_method :: (Arbitrary a, Show a)
             -> (a -> Value Identity)
             -> a
             -> Property
-prop_method methodName mkSelf mkArgs mkExpected t =
+prop_method methodName = prop_methodCond methodName (const True)
+
+prop_methodCond :: (Arbitrary a, Show a)
+            => Identifier
+            -> (a -> Bool)
+            -> (a -> Expr)
+            -> (a -> [Expr])
+            -> (a -> Value Identity)
+            -> a
+            -> Property
+prop_methodCond methodName valid mkSelf mkArgs mkExpected t =
   counterexample (show $ mkArgs t) $
+  valid t ==>
   prop_eval (\t' -> CallE (DotE (mkSelf t) methodName) (mkArgs t') [])
             mkExpected
             t

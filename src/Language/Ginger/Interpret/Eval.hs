@@ -39,7 +39,6 @@ import Language.Ginger.Parse (parseGinger)
 import qualified Language.Ginger.Parse as Parse
 import Language.Ginger.RuntimeError
 import Language.Ginger.SourcePosition
-import Language.Ginger.StringFormatting
 import Language.Ginger.Value
 
 import Control.Monad (foldM, forM, void)
@@ -435,12 +434,6 @@ valueComparison :: Monad m => (Ordering -> Bool) -> Value m -> Value m -> Ginger
 valueComparison f a b = do
   ordering <- compareValues a b
   pure $ BoolV (f ordering)
-
-printfValues :: Monad m => Text -> Value m -> GingerT m (Value m)
-printfValues fmtText (ListV args) = do
-  pure . StringV . Text.pack $ printfList (Text.unpack fmtText) (V.toList args)
-printfValues fmtText x = do
-  pure . StringV . Text.pack $ printfList (Text.unpack fmtText) [x]
 
 dictsEqual :: forall m. Monad m
            => Map Scalar (Value m)

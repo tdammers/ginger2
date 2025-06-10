@@ -40,6 +40,8 @@ library
                    , Language.Ginger.RuntimeError
                    , Language.Ginger.SourcePosition
                    , Language.Ginger.StringFormatting
+                   , Language.Ginger.StringFormatting.Printf
+                   , Language.Ginger.StringFormatting.Python
     -- other-modules:
     -- other-extensions:
     build-depends: base >=4.14.0.0 && <5

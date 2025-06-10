@@ -17,10 +17,11 @@ import Language.Ginger.Interpret.Type
 import Language.Ginger.Render (renderSyntaxText)
 import Language.Ginger.RuntimeError
 import Language.Ginger.Value
+import Language.Ginger.StringFormatting (FormatArgVT (..), FormattingGroup (..))
 
 import Control.Applicative ( (<|>) )
 import Control.Monad.Except
-import Control.Monad.Trans (lift)
+import Control.Monad.Trans (lift, MonadTrans (..))
 import qualified Data.Aeson as JSON
 import qualified Data.Array as Array
 import Data.Bits (popCount)
@@ -155,7 +156,7 @@ builtinGlobals evalE = Map.fromList $
   , ("first", ProcedureV fnFirst)
   , ("float", ProcedureV fnToFloat)
   -- , ("forceescape", undefined)
-  -- , ("format", undefined)
+  , ("format", ProcedureV fnFormat)
   , ("groupby", ProcedureV fnGroupBy)
   -- , ("indent", undefined)
   , ("int", ProcedureV fnToInt)
@@ -398,7 +399,7 @@ builtinStringAttribs = Map.fromList
   , ("endswith", textProcAttrib fnStrEndswith)
   -- , ("expandtabs", ?)
   -- , ("find", ?)
-  -- , ("format", ?)
+  , ("format", textProcAttrib fnStrFormat)
   -- , ("format_map", ?)
   -- , ("index", ?)
   , ("isalnum", textAttrib
@@ -1208,8 +1209,8 @@ fnSelectReject invert procName procDescName evalE =
           funcName
           []
           args
-      varargs <- fnArg funcName "varargs" argValues
-      (kwargs :: Map Scalar (Value m)) <- fnArg funcName "kwargs" argValues
+      varargs <- fnArg funcName "*" argValues
+      (kwargs :: Map Scalar (Value m)) <- fnArg funcName "**" argValues
       (scrutinee :: Value m) <- eitherExceptM $
                                   runGingerT (evalE scrutineeE) ctx env rng
       (xs :: Vector (Value m)) <- eitherExceptM $ fromValue scrutinee
@@ -1335,8 +1336,8 @@ fnMap evalE =
         funcName
         []
         args
-    varargs <- fnArg funcName "varargs" argValues
-    (kwargs :: Map Scalar (Value m)) <- fnArg funcName "kwargs" argValues
+    varargs <- fnArg funcName "*" argValues
+    (kwargs :: Map Scalar (Value m)) <- fnArg funcName "**" argValues
     (scrutinee :: Value m) <- eitherExceptM $ runGingerT (evalE scrutineeE) ctx env rng
     (xs :: Vector (Value m)) <- eitherExceptM $ fromValue scrutinee
 
@@ -1854,6 +1855,69 @@ instance Monad m => FromValue FileSize m where
         pure . Right $ FileSize i
   fromValue x =
     pure . Left $ ArgumentError "int" "value" "numeric value" (tagNameOf x)
+
+
+fnFormat :: Monad m => Procedure m
+fnFormat = mkFn2 "format"
+            "Apply printf-style formatting"
+            ( "value"
+            , Nothing
+            , Just $ TypeDocSingle "string"
+            , "`printf`-style formatting string."
+            )
+            ( "*args"
+            , Nothing :: Maybe (Value m)
+            , Just $ TypeDocAny
+            , ""
+            )
+            (Just $ TypeDocSingle "string")
+  $ \fmt args -> do
+    printfValues fmt args
+
+fnStrFormat :: Monad m => Procedure m
+fnStrFormat = mkFn3 "format"
+            "Apply python-style formatting"
+            ( "value"
+            , Nothing
+            , Just $ TypeDocSingle "string"
+            , "Python `str.format()`-style formatting string."
+            )
+            ( "*args"
+            , Just [] :: Maybe [Value m]
+            , Just $ TypeDocAny
+            , ""
+            )
+            ( "**kwargs"
+            , Just mempty :: Maybe (Map Scalar (Value m))
+            , Just $ TypeDocAny
+            , ""
+            )
+            (Just $ TypeDocSingle "string")
+  $ \fmt args kwargs -> do
+    let allArgs = [ (Nothing, v) | v <- args ] ++
+                  (Map.toList $ Map.mapKeys (Just . scalarToText) kwargs)
+    formatValues valueFormatArgVT fmt allArgs
+
+valueFormatArgVT :: ( Monad m
+                    , MonadTrans t
+                    , MonadError RuntimeError (t m)
+                    )
+                 => FormatArgVT (t m) (Value m)
+valueFormatArgVT =
+  FormatArgVT
+    { lookupAttrib = \k v -> eitherExceptM $ getAttrRaw v (Identifier k)
+    , lookupItem = \k v -> lift $ getItemRaw v (StringV k)
+    , lookupIndex = \k v -> lift $ getItemRaw v (IntV k)
+    , argAsString = stringify
+    , argAsRepr = stringify
+    , argAsASCII = stringify -- TODO
+    , argAsInt = pure . asMaybeIntVal
+    , argAsFloat = pure . asMaybeFloatVal
+    , formattingGroup = \case
+        IntV {} -> pure FormatAsInt
+        FloatV {} -> pure FormatAsFloat
+        _ -> pure FormatAsString
+    }
 
 fnFilesizeFormat :: Monad m => Procedure m
 fnFilesizeFormat = mkFn2 "filesizeformat"

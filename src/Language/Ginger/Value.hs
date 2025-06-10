@@ -51,6 +51,7 @@ import Text.Read (readMaybe)
 
 import Language.Ginger.AST
 import Language.Ginger.RuntimeError
+import Language.Ginger.StringFormatting
 
 data SomePRNG =
   forall g. (SplitGen g) => SomePRNG { unPRNG :: g }
@@ -994,39 +995,44 @@ resolveArgs context specs args =
       varargs0 = [v | (Nothing, v) <- args]
   in go specs kwargs0 varargs0
   where
-    go ((argName, defVal):xs) kwargs varargs =
-      case Map.lookup argName kwargs of
-        Nothing ->
-          -- positional argument
-          case varargs of
-            [] ->
-              -- No more arguments passed, look for default value
-              maybe
-                -- No default, argument required
-                (Left $
-                  ArgumentError
-                    context
-                    (identifierName argName)
-                    "argument"
-                    "end of arguments"
-                )
-                -- Default exists, use it.
-                (\val ->
-                  Map.insert argName val <$> go xs kwargs varargs
-                )
-                defVal
-            (v:varargs') ->
-              -- Argument passed, use it.
-              Map.insert argName v <$> go xs kwargs varargs'
-        Just v ->
-          -- Keyword argument found.
-          Map.insert argName v <$> go xs (Map.delete argName kwargs) varargs
+    go ((argName, defVal):xs) kwargs varargs
+      | "**" `Text.isPrefixOf` identifierName argName
+      = Map.insert argName (toValue kwargs) <$> go xs mempty varargs
+      | "*" `Text.isPrefixOf` identifierName argName
+      = Map.insert argName (toValue varargs) <$> go xs kwargs mempty
+      | otherwise
+      = case Map.lookup argName kwargs of
+          Nothing ->
+            -- positional argument
+            case varargs of
+              [] ->
+                -- No more arguments passed, look for default value
+                maybe
+                  -- No default, argument required
+                  (Left $
+                    ArgumentError
+                      context
+                      (identifierName argName)
+                      "argument"
+                      "end of arguments"
+                  )
+                  -- Default exists, use it.
+                  (\val ->
+                    Map.insert argName val <$> go xs kwargs varargs
+                  )
+                  defVal
+              (v:varargs') ->
+                -- Argument passed, use it.
+                Map.insert argName v <$> go xs kwargs varargs'
+          Just v ->
+            -- Keyword argument found.
+            Map.insert argName v <$> go xs (Map.delete argName kwargs) varargs
 
     go [] kwargs varargs =
         -- Map remaining arguments to @varargs@ and @kwargs@.
         Right $ Map.fromList
-          [ ("varargs", ListV $ V.fromList varargs)
-          , ("kwargs", DictV (Map.mapKeys (toScalar . identifierName) kwargs))
+          [ ("*", ListV $ V.fromList varargs)
+          , ("**", DictV (Map.mapKeys (toScalar . identifierName) kwargs))
           ]
 
 leftNaN :: Double -> Either RuntimeError Double
@@ -1062,6 +1068,12 @@ asIntVal :: Text -> Value m -> Either RuntimeError Integer
 asIntVal _ (IntV a) = Right a
 asIntVal context x = Left $ TagError context "int" (tagNameOf x)
 
+asMaybeIntVal :: Value m -> Maybe Integer
+asMaybeIntVal (IntV a) = Just a
+asMaybeIntVal (FloatV a) = Just $ round a
+asMaybeIntVal (StringV a) = readMaybe (Text.unpack a)
+asMaybeIntVal _ = Nothing
+
 asFloatVal :: Text -> Value m -> Either RuntimeError Double
 asFloatVal _ (FloatV a) = Right a
 asFloatVal _ (IntV a) = Right (fromInteger a)
@@ -1072,6 +1084,12 @@ asFloatValLenient _ (FloatV a) = a
 asFloatValLenient _ (IntV a) = fromInteger a
 asFloatValLenient def (StringV a) = fromMaybe def $ readMaybe (Text.unpack a)
 asFloatValLenient def _ = def
+
+asMaybeFloatVal :: Value m -> Maybe Double
+asMaybeFloatVal (IntV a) = Just (fromInteger a)
+asMaybeFloatVal (FloatV a) = Just a
+asMaybeFloatVal (StringV a) = readMaybe (Text.unpack a)
+asMaybeFloatVal _ = Nothing
 
 asBoolVal :: Text -> Value m -> Either RuntimeError Bool
 asBoolVal _ (BoolV a) = Right a
@@ -1321,6 +1339,23 @@ stringifyKV (k, v) = do
   kStr <- stringify (ScalarV k)
   vStr <- stringify v
   pure $ kStr <> ": " <> vStr
+
+printfValues :: (Monad m, MonadTrans t) => Text -> Value m -> t m (Value m)
+printfValues fmtText (ListV args) = do
+  pure . StringV . Text.pack $ printfList (Text.unpack fmtText) (V.toList args)
+printfValues fmtText x = do
+  pure . StringV . Text.pack $ printfList (Text.unpack fmtText) [x]
+
+formatValues :: ( Monad m
+                , MonadTrans t
+                , MonadError RuntimeError (t m)
+                )
+             => FormatArgVT (t m) (Value m)
+             -> Text
+             -> [(Maybe Text, Value m)]
+             -> t m (Value m)
+formatValues vt fmtText x = do
+  either (throwError . GenericError . Text.pack) (pure . StringV) =<< formatList vt fmtText x
 
 
 --------------------------------------------------------------------------------

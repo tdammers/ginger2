@@ -136,6 +136,7 @@ tests = testGroup "Language.Ginger.Interpret"
             )
         ]
 
+
       , testProperty "Double addition" (prop_binop @Double BinopPlus (+))
       , testProperty "Double subtraction" (prop_binop @Double BinopMinus (-))
       , testProperty "Double multiplication" (prop_binop @Double BinopMul (*))
@@ -792,6 +793,53 @@ tests = testGroup "Language.Ginger.Interpret"
         -- reverse
         -- dateformat
 
+        , testGroup "format()"
+          [ testProperty "single integer arg, %i" $
+              prop_eval
+                (\val -> FilterE
+                    (StringLitE "%i")
+                    (VarE "format")
+                    [IntLitE val]
+                    []
+                )
+                (\val -> StringV . Text.pack $ printf "%i" val)
+          , testProperty "single string arg, %s" $
+              prop_eval
+                (\val -> FilterE
+                    (StringLitE "%s")
+                    (VarE "format")
+                    [StringLitE val]
+                    []
+                )
+                (\val -> StringV . Text.pack $ printf "%s" val)
+          , testProperty "int + string args, %d %s" $
+              prop_eval
+                (\(i, s) -> FilterE
+                    (StringLitE "%d %s")
+                    (VarE "format")
+                    [IntLitE i, StringLitE s]
+                    []
+                )
+                (\(i, s) -> StringV . Text.pack $ printf "%d %s" i s)
+          , testProperty "single string arg, a%s" $
+              prop_eval
+                (\val -> FilterE
+                    (StringLitE "a%s")
+                    (VarE "format")
+                    [StringLitE val]
+                    []
+                )
+                (\val -> StringV . Text.pack $ printf "a%s" val)
+          , testProperty "single string arg, %%%s" $
+              prop_eval
+                (\val -> FilterE
+                    (StringLitE "%%%s")
+                    (VarE "format")
+                    [StringLitE val]
+                    []
+                )
+                (\val -> StringV . Text.pack $ printf "%%%s" val)
+          ]
         ]
     , testGroup "DotE"
       [ testGroup "StringV"
@@ -1031,6 +1079,79 @@ tests = testGroup "Language.Ginger.Interpret"
                 else
                   StringV (Text.replicate i " " <> Text.stripEnd item)
               )
+        , testGroup "string format"
+            [ testProperty "{0:s} string arg" $
+                prop_stringFormat
+                  "{0:s}"
+                  (\(ArbitraryText t) -> ([StringLitE t], []))
+                  unArbitraryText
+            , testProperty "{} string arg" $
+                prop_stringFormat
+                  "{}"
+                  (\(ArbitraryText t) -> ([StringLitE t], []))
+                  unArbitraryText
+            , testProperty "{0} string arg" $
+                prop_stringFormat
+                  "{0}"
+                  (\(ArbitraryText t) -> ([StringLitE t], []))
+                  unArbitraryText
+            , testProperty "---{0} string arg" $
+                prop_stringFormat
+                  "---{0}"
+                  (\(ArbitraryText t) -> ([StringLitE t], []))
+                  (\(ArbitraryText t) -> "---" <> t)
+            , testProperty "{name} string arg" $
+                \(k :: Identifier) -> prop_stringFormat
+                  ("{" <> identifierName k <> "}")
+                  (\(ArbitraryText t) -> ([], [(k, StringLitE t)]))
+                  unArbitraryText
+            , testProperty "{:s} string arg" $
+                prop_stringFormat
+                  "{:s}"
+                  (\(ArbitraryText t) -> ([StringLitE t], []))
+                  unArbitraryText
+            , testProperty "{} {} string args" $
+                prop_stringFormat
+                  "{} {}"
+                  (\(ArbitraryText t, ArbitraryText u) ->
+                      ([StringLitE t, StringLitE u], [])
+                  )
+                  (\(ArbitraryText t, ArbitraryText u) ->
+                    t <> " " <> u
+                  )
+            , testProperty "{1} {0} string args" $
+                prop_stringFormat
+                  "{1} {0}"
+                  (\(ArbitraryText t, ArbitraryText u) ->
+                      ([StringLitE t, StringLitE u], [])
+                  )
+                  (\(ArbitraryText t, ArbitraryText u) ->
+                    u <> " " <> t
+                  )
+            , testProperty "{} int arg" $
+                prop_stringFormat
+                  "{}"
+                  (\i -> ([IntLitE i], []))
+                  Text.show
+            , testProperty "{} float arg" $
+                prop_stringFormat
+                  "{}"
+                  (\f -> ([FloatLitE f], []))
+                  Text.show
+            , testProperty "{0:10s} string arg" $
+                prop_stringFormat
+                  "{0:10s}"
+                  (\(ArbitraryText t) -> ([StringLitE t], []))
+                  (\(ArbitraryText t) ->
+                    let pw = max 0 (10 - Text.length t)
+                    in t <> Text.replicate pw " "
+                  )
+            , testProperty "{:0,d}" $
+                prop_stringFormat
+                  "{:0,d}"
+                  (\(i :: Word8, j :: Word8) -> ([IntLitE $ (fromIntegral i + 1) * 1000 + fromIntegral j + 100], []))
+                  (\(i, j) -> Text.show (fromIntegral i + 1 :: Integer) <> "," <> Text.show (fromIntegral j + 100 :: Integer))
+            ]
         ]
       ]
     , testGroup "IsE"
@@ -1219,6 +1340,26 @@ prop_scopedVarsDisappear (name1, val1) (name2, val2) =
 --------------------------------------------------------------------------------
 -- Expression properties
 --------------------------------------------------------------------------------
+
+prop_stringFormat :: (Arbitrary a, Show a)
+                  => Text
+                  -> (a -> ([Expr], [(Identifier, Expr)]))
+                  -> (a -> Text)
+                  -> a
+                  -> Property
+prop_stringFormat fmt mkArgs mkResult =
+  prop_eval
+    (\val ->
+        let (args, kwargs) = mkArgs val
+        in
+          CallE
+            (DotE (StringLitE fmt) (Identifier "format"))
+            args
+            kwargs
+    )
+    (\val -> 
+      StringV (mkResult val)
+    )
 
 prop_sliceListStart :: [Int]
                         -> Int

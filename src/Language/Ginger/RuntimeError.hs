@@ -33,6 +33,8 @@ data RuntimeError
       Text -- ^ Error message
   | FatalError
       Text
+  | GenericError
+      Text
   | PositionedError
       !SourcePosition
       !RuntimeError
@@ -67,6 +69,9 @@ prettyRuntimeError (TemplateFileNotFoundError name) =
 prettyRuntimeError (TemplateParseError name msg) =
   printf "Template parser error in %s:\n%s"
     name msg
+prettyRuntimeError (GenericError what) =
+  printf "Error: %s"
+    what
 prettyRuntimeError (FatalError what) =
   printf "FATAL ERROR: %s"
     what

@@ -25,6 +25,9 @@ newtype Identifier =
   Identifier { identifierName :: Text }
   deriving (Show, Eq, Ord, ToJSON, ToJSONKey, FromJSON, FromJSONKey)
 
+mapIdentifier :: (Text -> Text) -> Identifier -> Identifier
+mapIdentifier f (Identifier t) = Identifier (f t)
+
 instance IsString Identifier where
   fromString = Identifier . Text.pack
 

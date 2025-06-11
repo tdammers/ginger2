@@ -367,6 +367,12 @@ renderFormatItem defPosition args kwargs (FieldFormatItem field) = do
       FormatAsFloat -> formatAsFloat
       FormatInvalid -> Left "Cannot format non-scalar as 'general'"
 
+    FieldTypeNumber -> case fgroup of
+      FormatAsString -> formatAsString
+      FormatAsInt -> formatAsInt
+      FormatAsFloat -> formatAsFloat
+      FormatInvalid -> Left "Cannot format non-scalar as 'number'"
+
     FieldTypeDecimalInt -> formatAsInt
 
     FieldTypeHex -> formatAsHex

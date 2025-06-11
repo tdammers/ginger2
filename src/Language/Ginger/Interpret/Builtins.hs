@@ -1877,7 +1877,30 @@ fnFormat = mkFn2 "format"
 
 fnStrFormat :: Monad m => Procedure m
 fnStrFormat = mkFn3 "format"
-            "Apply python-style formatting"
+            (Text.unlines
+              [ "Apply python-style string formatting."
+              , "Formatting string syntax by and large follows " <>
+                "[the Python formatstring specification]" <>
+                "(https://docs.python.org/3/library/string.html#formatstrings)."
+              , "Notable differences:"
+              , "* The `!r` modifier does not always produce the same " <>
+                "output as the `repr()` function in Python would. " <>
+                "However, strings will be quoted, and lists and " <>
+                "dictionaries will be rendered in Python-like syntax, not " <>
+                "Haskell `show` syntax."
+              , "* The `!a` modifier simply uses the same conversion as " <>
+                "`!s`, and then deletes all non-ASCII characters."
+              , "* Locale-aware number formatting (`n` formatting type) " <>
+                "is not supported; `n` is exactly equivalent to `g`."
+              , "* Floating-point precisions, if not specified explicitly, " <>
+                "may default to different values than they do in Python."
+              , "* When formatting floating-point numbers using the `g` " <>
+                "(general) format, the cutoff point between fixed-point " <>
+                "notation and scientific notation may not be the same as in " <>
+                "Python."
+              , "* No difference is made between attributes and items."
+              ]
+            )
             ( "value"
             , Nothing
             , Just $ TypeDocSingle "string"

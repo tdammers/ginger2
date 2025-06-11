@@ -1878,11 +1878,20 @@ fnFormat = mkFn2 "format"
 fnStrFormat :: Monad m => Procedure m
 fnStrFormat = mkFn3 "format"
             (Text.unlines
-              [ "Apply python-style string formatting."
+              [ "Apply python-style string formatting (`str.format()`)."
+              , ""
               , "Formatting string syntax by and large follows " <>
                 "[the Python formatstring specification]" <>
                 "(https://docs.python.org/3/library/string.html#formatstrings)."
+              , ""
+              , "Example:"
+              , ""
+              , "```"
+              , "'{user.name:s} has {user.numItems:d} items'.format(user={'name':'tdammers', 'numItems':12})"
+              , "```"
+              , ""
               , "Notable differences:"
+              , ""
               , "* The `!r` modifier does not always produce the same " <>
                 "output as the `repr()` function in Python would. " <>
                 "However, strings will be quoted, and lists and " <>
@@ -1904,7 +1913,7 @@ fnStrFormat = mkFn3 "format"
             ( "value"
             , Nothing
             , Just $ TypeDocSingle "string"
-            , "Python `str.format()`-style formatting string."
+            , "Format string."
             )
             ( "*args"
             , Just [] :: Maybe [Value m]

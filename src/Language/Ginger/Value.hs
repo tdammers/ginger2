@@ -1350,13 +1350,14 @@ formatValues :: ( Monad m
                 , MonadTrans t
                 , MonadError RuntimeError (t m)
                 )
-             => FormatArgVT (t m) (Value m)
+             => (Value m -> t m FormatArg)
              -> Text
              -> [(Maybe Text, Value m)]
              -> t m (Value m)
-formatValues vt fmtText x = do
-  either (throwError . GenericError . Text.pack) (pure . StringV) =<< formatList vt fmtText x
-
+formatValues toFormatArg fmtText xs = do
+  args <- mapM (\(k, v) -> (k,) <$> toFormatArg v) xs
+  either (throwError . GenericError . Text.pack) (pure . StringV) $
+    formatList fmtText args
 
 --------------------------------------------------------------------------------
 -- Dictionary helpers

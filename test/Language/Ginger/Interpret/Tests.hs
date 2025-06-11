@@ -13,10 +13,10 @@ import Control.Monad (void)
 import Control.Monad.Except (throwError)
 import Control.Monad.Identity
 import Control.Monad.State (gets)
-import Data.Bits ((.&.))
+import Data.Bits ((.&.), shiftR)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
-import Data.Char (isControl, isSpace, isAlpha, isAlphaNum, chr)
+import Data.Char (isControl, isSpace, isAlpha, isAlphaNum, isAscii, chr)
 import Data.Either (isRight)
 import Data.Int (Int8, Int16, Int32, Int64)
 import Data.List (sort, sortOn, intersperse)
@@ -1110,6 +1110,21 @@ tests = testGroup "Language.Ginger.Interpret"
                   "{:s}"
                   (\(ArbitraryText t) -> ([StringLitE t], []))
                   unArbitraryText
+            , testProperty "{0!s:s} string arg" $
+                prop_stringFormat
+                  "{0!s:s}"
+                  (\(ArbitraryText t) -> ([StringLitE t], []))
+                  unArbitraryText
+            , testProperty "{0!r:s} string arg" $
+                prop_stringFormat
+                  "{0!r:s}"
+                  (\(ArbitraryText t) -> ([StringLitE t], []))
+                  (Text.show . unArbitraryText)
+            , testProperty "{!a} string arg" $
+                prop_stringFormat
+                  "{!a}"
+                  (\(ArbitraryText t) -> ([StringLitE t], []))
+                  (Text.filter isAscii . unArbitraryText)
             , testProperty "{} {} string args" $
                 prop_stringFormat
                   "{} {}"
@@ -1133,6 +1148,83 @@ tests = testGroup "Language.Ginger.Interpret"
                   "{}"
                   (\i -> ([IntLitE i], []))
                   Text.show
+            , testProperty "{:o} int arg" $
+                prop_stringFormat
+                  "{:o}"
+                  (\(i :: Word16) -> ([IntLitE $ fromIntegral i], []))
+                  (Text.pack . printf "%o")
+            , testProperty "{:b} int arg" $
+                prop_stringFormat
+                  "{:b}"
+                  (\(i :: Word16) -> ([IntLitE $ fromIntegral i], []))
+                  (Text.pack . printf "%b")
+            , testProperty "{:x} int arg" $
+                prop_stringFormat
+                  "{:x}"
+                  (\(i :: Word16) -> ([IntLitE $ fromIntegral i], []))
+                  (Text.pack . printf "%x")
+            , testProperty "{:#x} int arg" $
+                prop_stringFormat
+                  "{:#x}"
+                  (\(i :: Word16) -> ([IntLitE $ fromIntegral i], []))
+                  (Text.pack . printf "0x%x")
+            , testProperty "{:#X} int arg" $
+                prop_stringFormat
+                  "{:#X}"
+                  (\(i :: Word16) -> ([IntLitE $ fromIntegral i], []))
+                  (Text.pack . printf "0X%X")
+            , testProperty "{:#o} int arg" $
+                prop_stringFormat
+                  "{:#o}"
+                  (\(i :: Word16) -> ([IntLitE $ fromIntegral i], []))
+                  (Text.pack . printf "0o%o")
+            , testProperty "{:#b} int arg" $
+                prop_stringFormat
+                  "{:#b}"
+                  (\(i :: Word16) -> ([IntLitE $ fromIntegral i], []))
+                  (Text.pack . printf "0b%b")
+            , testProperty "{!s} int arg" $
+                prop_stringFormat
+                  "{!s}"
+                  (\i -> ([IntLitE i], []))
+                  Text.show
+            , testProperty "{:_x} int arg" $
+                prop_stringFormat
+                  "{:_x}"
+                  (\(i :: Word32) -> ([IntLitE $ fromIntegral i], []))
+                  (\i -> if i > 0xFFFF then
+                            Text.pack $ printf "%x_%04x" (i `shiftR` 16) (i .&. 0xFFFF)
+                         else
+                            Text.pack $ printf "%x" i
+                  )
+            , testProperty "{!r} int arg" $
+                prop_stringFormat
+                  "{!r}"
+                  (\i -> ([IntLitE i], []))
+                  Text.show
+            , testProperty "{!a} int arg" $
+                prop_stringFormat
+                  "{!a}"
+                  (\i -> ([IntLitE i], []))
+                  Text.show
+            , testProperty "{!s:100s} int arg" $
+                prop_stringFormat
+                  "{!s:100s}"
+                  (\i -> ([IntLitE i], []))
+                  (\i ->
+                    let t = Text.show i
+                        pw = max 0 (100 - Text.length t)
+                    in t <> Text.replicate pw " "
+                  )
+            , testProperty "{:100s} int arg" $
+                prop_stringFormat
+                  "{:100s}"
+                  (\i -> ([IntLitE i], []))
+                  (\i ->
+                    let t = Text.show i
+                        pw = max 0 (100 - Text.length t)
+                    in Text.replicate pw " " <> t
+                  )
             , testProperty "{} float arg" $
                 prop_stringFormat
                   "{}"
@@ -1151,6 +1243,62 @@ tests = testGroup "Language.Ginger.Interpret"
                   "{:0,d}"
                   (\(i :: Word8, j :: Word8) -> ([IntLitE $ (fromIntegral i + 1) * 1000 + fromIntegral j + 100], []))
                   (\(i, j) -> Text.show (fromIntegral i + 1 :: Integer) <> "," <> Text.show (fromIntegral j + 100 :: Integer))
+
+            , testProperty "{0[1]} [int] arg" $
+                prop_stringFormat
+                  "{0[1]}"
+                  (\i -> ([ListE [IntLitE 0, IntLitE i]], []))
+                  Text.show
+
+            , testProperty "{0.name} [int] arg" $
+                prop_stringFormat
+                  "{0.name}"
+                  (\i -> ([DictE [(StringLitE "foo", IntLitE 0), (StringLitE "name", IntLitE i)]], []))
+                  Text.show
+
+            , testProperty "{foo.bar} [int] arg" $
+                prop_stringFormat
+                  "{foo.bar}"
+                  (\i -> ([], [("foo", DictE [(StringLitE "foo", IntLitE 0), (StringLitE "bar", IntLitE i)])]))
+                  Text.show
+
+            , testProperty "{:d} bytestring arg" $
+                prop_stringFormatWith
+                  "{:d}"
+                  (\(i :: Word16) -> [("x", BytesV $ BS.pack [fromIntegral (i `shiftR` 8), fromIntegral i])])
+                  (\_ -> ([VarE "x"], []))
+                  Text.show
+            , testProperty "{0[0]:d} bytestring index arg" $
+                prop_stringFormatWith
+                  "{0[0]:d}"
+                  (\(i :: Word16) -> [("x", BytesV $ BS.pack [fromIntegral (i `shiftR` 8), fromIntegral i])])
+                  (\_ -> ([VarE "x"], []))
+                  (\i -> Text.show (i `shiftR` 8))
+            , testProperty "{0[1]:d} bytestring index arg" $
+                prop_stringFormatWith
+                  "{0[1]:d}"
+                  (\(i :: Word16) -> [("x", BytesV $ BS.pack [fromIntegral (i `shiftR` 8), fromIntegral i])])
+                  (\_ -> ([VarE "x"], []))
+                  (\i -> Text.show (i .&. 0xff))
+            , testProperty "{:s} bytestring arg" $
+                prop_stringFormatWith
+                  "{:s}"
+                  (\(ArbitraryText t) -> [("x", BytesV $ Text.encodeUtf8 t)])
+                  (\_ -> ([VarE "x"], []))
+                  unArbitraryText
+            , testProperty "{!s:d} bytestring arg" $
+                -- This takes a valid numeric string (derived from an arbitrary
+                -- integer), converts that to a byte array using UTF-8
+                -- encoding, then passes that to @format@, but forces the value
+                -- to string (@!s@), which should cause the bytestring to be
+                -- interpreted as a numeric string, rather than a big integer
+                -- in binary encoding, thus producing the string representation
+                -- of the original number.
+                prop_stringFormatWith
+                  "{!s:d}"
+                  (\(i :: Integer) -> [("x", BytesV $ Text.encodeUtf8 $ Text.show i)])
+                  (\_ -> ([VarE "x"], []))
+                  Text.show
             ]
         ]
       ]
@@ -1347,8 +1495,18 @@ prop_stringFormat :: (Arbitrary a, Show a)
                   -> (a -> Text)
                   -> a
                   -> Property
-prop_stringFormat fmt mkArgs mkResult =
-  prop_eval
+prop_stringFormat fmt = prop_stringFormatWith fmt (const [])
+
+prop_stringFormatWith :: (Arbitrary a, Show a)
+                      => Text
+                      -> (a -> [(Identifier, Value Identity)])
+                      -> (a -> ([Expr], [(Identifier, Expr)]))
+                      -> (a -> Text)
+                      -> a
+                      -> Property
+prop_stringFormatWith fmt vars mkArgs mkResult =
+  prop_evalWith
+    vars
     (\val ->
         let (args, kwargs) = mkArgs val
         in
@@ -1701,9 +1859,22 @@ prop_is testName expected val =
   in
     result === BoolV expected
 
-prop_eval :: (Arbitrary a, Show a, RenderSyntax e, Eval Identity e) => (a -> e) -> (a -> Value Identity) -> a -> Property
+prop_eval :: (Arbitrary a, Show a, RenderSyntax e, Eval Identity e)
+          => (a -> e)
+          -> (a -> Value Identity)
+          -> a
+          -> Property
 prop_eval mkEvaluable mkExpected =
   prop_evalRNG mkEvaluable (const mkExpected) 0
+
+prop_evalWith :: (Arbitrary a, Show a, RenderSyntax e, Eval Identity e)
+          => (a -> [(Identifier, Value Identity)])
+          -> (a -> e)
+          -> (a -> Value Identity)
+          -> a
+          -> Property
+prop_evalWith vars mkEvaluable mkExpected =
+  prop_evalRNGWith vars mkEvaluable (const mkExpected) 0
 
 prop_evalRNG :: (Arbitrary a, Show a, RenderSyntax e, Eval Identity e)
              => (a -> e)
@@ -1711,10 +1882,21 @@ prop_evalRNG :: (Arbitrary a, Show a, RenderSyntax e, Eval Identity e)
              -> Int
              -> a
              -> Property
-prop_evalRNG mkEvaluable mkExpected seed x =
+prop_evalRNG =
+  prop_evalRNGWith (const [])
+
+prop_evalRNGWith :: (Arbitrary a, Show a, RenderSyntax e, Eval Identity e)
+                 => (a -> [(Identifier, Value Identity)])
+                 -> (a -> e)
+                 -> (Int -> a -> Value Identity)
+                 -> Int
+                 -> a
+                 -> Property
+prop_evalRNGWith mkVars mkEvaluable mkExpected seed x =
   let e = mkEvaluable x
       expected = mkExpected seed x
-      result = runGingerIdentity seed $ eval e
+      vars = mkVars x
+      result = runGingerIdentity seed $ mapM_ (\(k, v) -> setVar k v) vars >> eval e
   in
     counterexample (Text.unpack $ renderSyntaxText e) $
     result === expected

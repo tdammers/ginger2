@@ -4,4 +4,4 @@ module Language.Ginger.StringFormatting
 where
 
 import Language.Ginger.StringFormatting.Printf as M (printfList)
-import Language.Ginger.StringFormatting.Python as M (formatList, FormatArgVT (..), FormattingGroup (..))
+import Language.Ginger.StringFormatting.Python as M (formatList, FormatArg (..), FormattingGroup (..))

@@ -4,16 +4,42 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
+-- | Python-style string formatting.
+-- See https://docs.python.org/3/library/string.html#formatstrings for spec.
 module Language.Ginger.StringFormatting.Python
+( -- * Running
+  formatList
+, FormattingGroup (..)
+, FormatArg (..)
+  -- * Parsing
+, parseFormat
+  -- * Rendering
+, renderFormat
+, renderFormatItem
+  -- * AST
+, FormatItem (..)
+, FormatField (..)
+, FieldName (..)
+, FieldConversion (..)
+, FieldZeroCoercion (..)
+, FieldAlternateForm (..)
+, FieldZeroPadding (..)
+, FieldGrouping (..)
+, FieldSign (..)
+, FieldType (..)
+, FieldAlign (..)
+, OrDefault (..)
+, fromDefault
+, FieldSpec (..)
+, defFieldSpec
+)
 where
 
 import Control.Monad (void)
-import Control.Monad.Trans (lift)
-import Control.Monad.Except (ExceptT (..), runExceptT, throwError)
 import qualified Text.Megaparsec as P
 import qualified Text.Megaparsec.Char as P
 import Data.Void (Void)
-import Data.Char (isDigit, GeneralCategory (..), generalCategory)
+import Data.Char (isDigit, GeneralCategory (..), generalCategory, isAscii)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Set (Set)
@@ -23,35 +49,173 @@ import qualified Data.Vector as Vector
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import GHC.Float (floatToDigits)
+import Text.Read (readMaybe)
+import Text.Printf (printf)
 
-data FormatArgVT m a =
-  FormatArgVT
-    { lookupAttrib :: Text -> a -> m (Maybe a)
-    , lookupItem :: Text -> a -> m (Maybe a)
-    , lookupIndex :: Integer -> a -> m (Maybe a)
-    , argAsString :: a -> m Text
-    , argAsRepr :: a -> m Text
-    , argAsASCII :: a -> m Text
-    , argAsInt :: a -> m (Maybe Integer)
-    , argAsFloat :: a -> m (Maybe Double)
-    , formattingGroup :: a -> m FormattingGroup
-    }
+--------------------------------------------------------------------------------
+-- Formatting / Running
+--------------------------------------------------------------------------------
 
+-- | Formattable argument. We reduce potential inputs to a limited set of
+-- representations; it is the responsibility of the caller to convert whatever
+-- values they want to use as formatting args to this type.
+data FormatArg
+  = IntArg !Integer
+    -- ^ Integer arguments
+  | FloatArg !Double
+    -- ^ Floating-point arguments
+  | StringArg !Text
+    -- ^ Any scalar argument that is best represented as a string
+  | ListArg !(Vector FormatArg)
+    -- ^ List argument; cannot be formatted directly, but can be accessed
+    -- using index syntax (@{0[0]}@)
+  | DictArg !(Map Text FormatArg)
+    -- ^ Dictionary argument; cannot be formatted directly, but can be accessed
+    -- using index syntax (@{0[key]}@) or attribute syntax (@0.key@).
+  | -- | Polymorphic argument; may offer any of the available representations,
+    -- allowing the formatter to pick the most appropriate one.
+    PolyArg
+      (Maybe Text) -- ^ string representation
+      (Maybe Integer) -- ^ integer representation
+      (Maybe Double) -- ^ float representation
+      (Maybe (Vector FormatArg))
+        -- ^ list representation (equivalent to 'ListArg')
+      (Maybe (Map Text FormatArg))
+        -- ^ dictionary representation (equivalent to 'DictArg')
+  deriving (Show, Eq, Ord)
+
+-- | Convert to string, imitating Python's @str()@
+argAsString :: FormatArg -> Either String Text
+argAsString (IntArg i) = pure $ Text.show i
+argAsString (FloatArg f) = pure $ Text.show f
+argAsString (StringArg s) = pure s
+argAsString (PolyArg (Just s) _ _ _ _) = pure s
+argAsString (PolyArg _ (Just i) _ _ _) = pure $ Text.show i
+argAsString (PolyArg _ _ (Just f) _ _) = pure $ Text.show f
+argAsString _ = Left "Cannot convert argument to string"
+
+-- | Convert to string, imitating Python's @repr()@
+argAsRepr :: FormatArg -> Either String Text
+argAsRepr (IntArg i) = pure $ Text.show i
+argAsRepr (FloatArg f) = pure $ Text.show f
+argAsRepr (StringArg s) = pure $ Text.show s
+argAsRepr (ListArg xs) = do
+  inner <- mapM argAsRepr (Vector.toList xs)
+  pure $ "[" <> Text.intercalate ", " inner <> "]"
+argAsRepr (DictArg xs) = do
+  inner <- mapM (\(k, v) -> (k <>) . (": " <>) <$> argAsRepr v) (Map.toList xs)
+  pure $ "{" <> Text.intercalate ", " inner <> "}"
+argAsRepr (PolyArg (Just s) _ _ _ _) = pure $ Text.show s
+argAsRepr (PolyArg _ (Just i) _ _ _) = pure $ Text.show i
+argAsRepr (PolyArg _ _ (Just f) _ _) = pure $ Text.show f
+argAsRepr (PolyArg _ _ _ (Just xs) _) = argAsRepr (ListArg xs)
+argAsRepr (PolyArg _ _ _ _ (Just xs)) = argAsRepr (DictArg xs)
+argAsRepr _ = Left "Cannot convert argument to string"
+
+-- | Coerce to @StringArg@, imitating Python's @repr()@.
+reprArg :: FormatArg -> Either String FormatArg
+reprArg a = StringArg <$> argAsRepr a
+
+-- | Coerce to @StringArg@, imitating Python's @str()@.
+stringArg :: FormatArg -> Either String FormatArg
+stringArg a = StringArg <$> argAsString a
+
+-- | Coerce to @StringArg@, imitating Python's @ascii()@.
+asciiArg :: FormatArg -> Either String FormatArg
+asciiArg a = StringArg . Text.filter isAscii <$> argAsString a
+
+-- | Interpret formatting argument as integer, using rounding and string
+-- parsing if necessary.
+argAsInt :: FormatArg -> Either String Integer
+argAsInt (IntArg i) = pure i
+argAsInt (FloatArg f) = pure $ round f
+argAsInt (StringArg s) =
+  maybe (Left "Non-numeric string used as integer") pure .
+  readMaybe .
+  Text.unpack $
+  s
+argAsInt (PolyArg _ (Just i) _ _ _) = pure i
+argAsInt (PolyArg _ _ (Just f) _ _) = pure $ round f
+argAsInt (PolyArg (Just s) _ _ _ _) = argAsInt (StringArg s)
+argAsInt _ = Left "Cannot convert non-scalar to integer"
+
+-- | Interpret formatting argument as float, using casting and string
+-- parsing if necessary.
+argAsFloat :: FormatArg -> Either String Double
+argAsFloat (IntArg i) = pure $ fromInteger i
+argAsFloat (FloatArg f) = pure f
+argAsFloat (StringArg s) =
+  maybe (Left "Non-numeric string used as float") pure .
+  readMaybe .
+  Text.unpack $
+  s
+argAsFloat (PolyArg _ _ (Just f) _ _) = pure f
+argAsFloat (PolyArg _ (Just i) _ _ _) = pure $ fromInteger i
+argAsFloat (PolyArg (Just s) _ _ _ _) = argAsFloat (StringArg s)
+argAsFloat _ = Left "Cannot convert non-scalar to float"
+
+-- | Look up an attribute by name.
+lookupAttrib :: Text -> FormatArg -> Either String FormatArg
+lookupAttrib name (DictArg items) =
+  maybe (Left $ "Attribute " ++ show name ++ " not found")  pure .
+  Map.lookup name $
+  items
+lookupAttrib name (ListArg items) = do
+  maybe (Left $ "Attribute " ++ show name ++ " not found")  pure $ do
+    index <- readMaybe . Text.unpack $ name
+    items Vector.!? index
+lookupAttrib name (PolyArg _ _ _ _ (Just xs)) = lookupAttrib name (DictArg xs)
+lookupAttrib name (PolyArg _ _ _ (Just xs) _) = lookupAttrib name (ListArg xs)
+lookupAttrib name _ = Left $ "Cannot get attribute " ++ show name ++ " from scalar"
+
+-- | Look up an item by index.
+lookupIndex :: Integer -> FormatArg -> Either String FormatArg
+lookupIndex index (DictArg items) =
+  maybe (Left $ "Item " ++ show index ++ " not found") pure .
+  Map.lookup (Text.show index) $
+  items
+lookupIndex index (ListArg items) = do
+  maybe (Left $ "Item " ++ show index ++ " not found") pure $
+    items Vector.!? (fromInteger index)
+lookupIndex index (PolyArg _ _ _ (Just xs) _) = lookupIndex index (ListArg xs)
+lookupIndex index (PolyArg _ _ _ _ (Just xs)) = lookupIndex index (DictArg xs)
+lookupIndex index _ = Left $ "Cannot get item " ++ show index ++ " from scalar"
+
+-- | Formatting group; this determines the interpretation of formatting types
+-- such as @g@, which will behave differently depending on the type of
+-- argument.
 data FormattingGroup
   = FormatAsInt
   | FormatAsFloat
   | FormatAsString
+  | FormatInvalid
   deriving (Show, Eq, Ord, Enum, Bounded)
 
-formatList :: (Monad m)
-           => FormatArgVT m a
-           -> Text
-           -> [(Maybe Text, a)]
-           -> m (Either String Text)
-formatList vt fmt allArgs = runExceptT $ do
-  items <- either (throwError . P.errorBundlePretty) pure $
-            P.parse (P.many pFormatItem <* P.eof) "format string" fmt
-  go 0 items
+-- | Determine the formatting group of a 'FormatArg'. For 'PolyArg', the order
+-- of preference is float, int, string.
+formattingGroup :: FormatArg -> FormattingGroup
+formattingGroup StringArg {} = FormatAsString
+formattingGroup IntArg {} = FormatAsInt
+formattingGroup FloatArg {} = FormatAsFloat
+formattingGroup (PolyArg _ _ (Just _) _ _) = FormatAsFloat
+formattingGroup (PolyArg _ (Just _) _ _ _) = FormatAsInt
+formattingGroup (PolyArg (Just _) _ _ _ _) = FormatAsString
+formattingGroup _ = FormatInvalid
+
+-- | Apply format string, passing arguments as a list of optional key / value
+-- pairs. All arguments can be addressed positionally; those that have a key
+-- that is a valid identifier can also be addressed by that.
+formatList :: Text
+           -> [(Maybe Text, FormatArg)]
+           -> Either String Text
+formatList fmt allArgs = do
+  f <- parseFormat fmt
+  renderFormat f allArgs
+
+-- | Render a format string against the given arguments.
+renderFormat :: [FormatItem] -> [(Maybe Text, FormatArg)] -> Either String Text
+renderFormat xs allArgs =
+  go 0 xs
   where
     args = Vector.fromList (map snd allArgs)
     kwargs = Map.fromList [ (k, v) | (Just k, v) <- allArgs ]
@@ -59,47 +223,80 @@ formatList vt fmt allArgs = runExceptT $ do
     go _ [] = pure ""
     go n (item:items) = case item of
       PlainFormatItem {} ->
-        (<>) <$> renderFormatItem vt n args kwargs item <*> go n items
+        (<>) <$> renderFormatItem n args kwargs item <*> go n items
       _ ->
-        (<>) <$> renderFormatItem vt n args kwargs item <*> go (succ n) items
+        (<>) <$> renderFormatItem n args kwargs item <*> go (succ n) items
+
+-- | Parse a format string.
+parseFormat :: Text -> Either String [FormatItem]
+parseFormat fmt =
+  either (Left . P.errorBundlePretty) pure $
+    P.parse pFormat "format string" fmt
+
 
 padL :: Char -> Int -> Text -> Text
 padL p w t =
   let pw = max 0 $ Text.length t - w
   in Text.replicate pw (Text.singleton p) <> t
 
-renderFormatItem :: forall m a.
-                    ( Monad m
-                    )
-                 => FormatArgVT m a
-                 -> Integer
-                 -> Vector a
-                 -> Map Text a
+-- | Render a single formatting item using the provided arguments.
+renderFormatItem :: Integer
+                 -> Vector FormatArg
+                 -> Map Text FormatArg
                  -> FormatItem
-                 -> ExceptT String m Text
-renderFormatItem _ _ _ _ (PlainFormatItem txt) = pure txt
-renderFormatItem vt defPosition args kwargs (FieldFormatItem field) = do
-  val <- lookupFormatItemArg vt args kwargs (fromDefault (FieldNameNumber defPosition) $ formatFieldName field)
-  fgroup <- lift $ formattingGroup vt val
-  let spec = formatFieldSpec field
+                 -> Either String Text
+renderFormatItem _ _ _ (PlainFormatItem txt) = pure txt
+renderFormatItem defPosition args kwargs (FieldFormatItem field) = do
+  val' <- lookupFormatItemArg args kwargs (fromDefault (FieldNameNumber defPosition) $ formatFieldName field)
+  val <- case formatFieldConversion field of
+            FieldConvNone -> pure val'
+            FieldConvRepr -> reprArg val'
+            FieldConvString -> stringArg val'
+            FieldConvASCII -> asciiArg val'
+            
+  let fgroup = formattingGroup val
+      spec = formatFieldSpec field
 
-  let formatAsString =
-        lift $ argAsString vt val
+  let formatAsString :: Either String Text
+      formatAsString = argAsString val
 
+      formatAsInt :: Either String Text
       formatAsInt = do
-        i <- maybe (throwError "Invalid format argument, expected int") pure =<<
-              lift (argAsInt vt val)
+        i <- argAsInt val
         pure . applyGrouping $ Text.show i
 
+      formatAsFloat :: Either String Text
       formatAsFloat = do
-        f <- maybe (throwError "Invalid format argument, expected float") pure =<<
-              lift (argAsFloat vt val)
+        f <- argAsFloat val
         pure $ Text.show f
 
-      formatAsFixed :: ExceptT String m Text
+      formatAsHex :: Either String Text
+      formatAsHex = do
+        i <- argAsInt val
+        let hex = applyHexGrouping . Text.pack $ printf "%x" i
+        case fieldSpecAlternateForm spec of
+          AlternateForm -> pure $ "0x" <> hex
+          NormalForm -> pure hex
+
+      formatAsOctal :: Either String Text
+      formatAsOctal = do
+        i <- argAsInt val
+        let octal = applyHexGrouping . Text.pack $ printf "%o" i
+        case fieldSpecAlternateForm spec of
+          AlternateForm -> pure $ "0o" <> octal
+          NormalForm -> pure octal
+
+      formatAsBinary :: Either String Text
+      formatAsBinary = do
+        i <- argAsInt val
+        let binary = applyHexGrouping . Text.pack $ printf "%b" i
+        case fieldSpecAlternateForm spec of
+          AlternateForm -> pure $ "0b" <> binary
+          NormalForm -> pure binary
+
+      formatAsFixed :: Either String Text
       formatAsFixed = do
-        f <- maybe (throwError "Invalid format argument, expected float") pure =<<
-              lift (argAsFloat vt val)
+        f <- argAsFloat val
         let precision = (fromDefault 5 $ fieldSpecPrecision spec)
             (intpart, fracpart) = properFraction $ abs f
             intpartStr = applyGrouping $ Text.show (intpart :: Integer)
@@ -108,10 +305,9 @@ renderFormatItem vt defPosition args kwargs (FieldFormatItem field) = do
         let sign = getFloatSign f
         pure $ sign <> Text.show intpartStr <> "." <> fracpartStr
 
-      formatAsPercentage :: ExceptT String m Text
+      formatAsPercentage :: Either String Text
       formatAsPercentage = do
-        f <- maybe (throwError "Invalid format argument, expected float") (pure . (* 100)) =<<
-              lift (argAsFloat vt val)
+        f <- argAsFloat val
         let precision = (fromDefault 5 $ fieldSpecPrecision spec)
             (intpart, fracpart) = properFraction $ abs f
             intpartStr = Text.show (intpart :: Integer)
@@ -120,10 +316,9 @@ renderFormatItem vt defPosition args kwargs (FieldFormatItem field) = do
         let sign = getFloatSign f
         pure $ sign <> Text.show intpartStr <> "." <> fracpartStr <> "%"
 
-      formatAsScientific :: ExceptT String m Text
+      formatAsScientific :: Either String Text
       formatAsScientific = do
-        f <- maybe (throwError "Invalid format argument, expected float") pure =<<
-              lift (argAsFloat vt val)
+        f <- argAsFloat val
         let precision = (fromDefault 5 $ fieldSpecPrecision spec)
             (mantissaDigits, exponentInt) = floatToDigits 10 (abs f)
             sign = getFloatSign f
@@ -132,8 +327,14 @@ renderFormatItem vt defPosition args kwargs (FieldFormatItem field) = do
         pure $ sign <> "0." <> mantissaStr <> "e" <> expStr
 
       insertThousandsSep :: Text -> Text -> Text
-      insertThousandsSep sep src =
-        let chunks = reverse . map Text.reverse . Text.chunksOf 3 . Text.reverse $ src
+      insertThousandsSep = insertSep 3
+
+      insertHexSep :: Text -> Text -> Text
+      insertHexSep = insertSep 4
+
+      insertSep :: Int -> Text -> Text -> Text
+      insertSep n sep src =
+        let chunks = reverse . map Text.reverse . Text.chunksOf n . Text.reverse $ src
         in Text.intercalate sep chunks
 
       applyGrouping :: Text -> Text
@@ -142,6 +343,13 @@ renderFormatItem vt defPosition args kwargs (FieldFormatItem field) = do
           NoGrouping -> src
           GroupComma -> insertThousandsSep "," src
           GroupUnderscore -> insertThousandsSep "_" src
+
+      applyHexGrouping :: Text -> Text
+      applyHexGrouping src =
+        case fieldSpecGrouping spec of
+          NoGrouping -> src
+          GroupComma -> src
+          GroupUnderscore -> insertHexSep "_" src
 
       getFloatSign :: Double -> Text
       getFloatSign f =
@@ -157,8 +365,14 @@ renderFormatItem vt defPosition args kwargs (FieldFormatItem field) = do
       FormatAsString -> formatAsString
       FormatAsInt -> formatAsInt
       FormatAsFloat -> formatAsFloat
+      FormatInvalid -> Left "Cannot format non-scalar as 'general'"
 
     FieldTypeDecimalInt -> formatAsInt
+
+    FieldTypeHex -> formatAsHex
+    FieldTypeHexUpper -> Text.toUpper <$> formatAsHex
+    FieldTypeOctal -> formatAsOctal
+    FieldTypeBinary -> formatAsBinary
 
     FieldTypeFixedPoint -> formatAsFixed
     FieldTypeFixedPointUpper -> Text.toUpper <$> formatAsFixed
@@ -168,7 +382,7 @@ renderFormatItem vt defPosition args kwargs (FieldFormatItem field) = do
     FieldTypePercentage -> formatAsPercentage
 
     FieldTypeString -> formatAsString
-    t -> throwError $ "Field type " ++ show t ++ " not implemented"
+    t -> Left $ "Field type " ++ show t ++ " not implemented"
 
   let defAlignment = case fgroup of
         FormatAsString -> AlignLeft
@@ -201,35 +415,26 @@ align AlignZeroPad (Specific w) fill str =
   else
     align AlignRight (Specific w) fill str
 
-lookupFormatItemArg :: Monad m
-                    => FormatArgVT m a
-                    -> Vector a
-                    -> Map Text a
+lookupFormatItemArg :: Vector FormatArg
+                    -> Map Text FormatArg
                     -> FieldName
-                    -> ExceptT String m a
-lookupFormatItemArg _vt _args kwargs (FieldNameIdentifier n) =
-  maybe (throwError $ "Field not found: " ++ show n) pure $
+                    -> Either String FormatArg
+lookupFormatItemArg _args kwargs (FieldNameIdentifier n) =
+  maybe (Left $ "Field not found: " ++ show n) pure $
     Map.lookup n kwargs
-lookupFormatItemArg _vt args _kwargs (FieldNameNumber i) =
-  maybe (throwError $ "Field not found: " ++ show i) pure $
+lookupFormatItemArg args _kwargs (FieldNameNumber i) =
+  maybe (Left $ "Field not found: " ++ show i) pure $
     args Vector.!? fromInteger i
-lookupFormatItemArg vt args kwargs (FieldNameAttrib a b) =
-  lookupFormatItemArg vt args kwargs b >>=
-  lift . lookupAttrib vt a >>=
-  maybe (throwError $ "Not found: attribute " ++ show a) pure
-lookupFormatItemArg vt args kwargs (FieldNameKeyIndex a b) =
-  lookupFormatItemArg vt args kwargs b >>=
-  lift . lookupItem vt a >>=
-  maybe (throwError $ "Not found: item " ++ show a) pure
-lookupFormatItemArg vt args kwargs (FieldNameNumIndex a b) =
-  lookupFormatItemArg vt args kwargs b >>=
-  lift . lookupIndex vt a >>=
-  maybe (throwError $ "Not found: item " ++ show a) pure
+lookupFormatItemArg args kwargs (FieldNameAttrib a b) =
+  lookupFormatItemArg args kwargs b >>= lookupAttrib a
+lookupFormatItemArg args kwargs (FieldNameKeyIndex a b) =
+  lookupFormatItemArg args kwargs b >>= lookupAttrib a
+lookupFormatItemArg args kwargs (FieldNameNumIndex a b) =
+  lookupFormatItemArg args kwargs b >>= lookupIndex a
 
-class FormatArg a where
-  formatArg :: FormatField -> a -> Text
-
-type P a = P.Parsec Void Text a
+--------------------------------------------------------------------------------
+-- Format string AST
+--------------------------------------------------------------------------------
 
 data FormatItem
   = PlainFormatItem !Text
@@ -350,6 +555,15 @@ defFieldSpec =
     , fieldSpecType = FieldTypeGeneral
     }
 
+--------------------------------------------------------------------------------
+-- Parsing
+--------------------------------------------------------------------------------
+
+type P a = P.Parsec Void Text a
+
+pFormat :: P [FormatItem]
+pFormat = P.many pFormatItem <* P.eof
+
 pFormatItem :: P FormatItem
 pFormatItem = P.choice
   [ PlainFormatItem <$> P.chunk "{{"
@@ -467,6 +681,7 @@ isIdentChar c =
 
 pFieldConv :: P FieldConversion
 pFieldConv =
+  P.char '!' *>
   P.choice
     [ FieldConvRepr <$ P.char 'r'
     , FieldConvString <$ P.char 's'

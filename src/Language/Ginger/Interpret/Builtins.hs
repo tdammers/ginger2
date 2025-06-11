@@ -8,6 +8,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedLists #-}
+{-# LANGUAGE TupleSections #-}
 
 module Language.Ginger.Interpret.Builtins
 where
@@ -17,14 +18,14 @@ import Language.Ginger.Interpret.Type
 import Language.Ginger.Render (renderSyntaxText)
 import Language.Ginger.RuntimeError
 import Language.Ginger.Value
-import Language.Ginger.StringFormatting (FormatArgVT (..), FormattingGroup (..))
+import Language.Ginger.StringFormatting (FormatArg (..))
 
 import Control.Applicative ( (<|>) )
 import Control.Monad.Except
 import Control.Monad.Trans (lift, MonadTrans (..))
 import qualified Data.Aeson as JSON
 import qualified Data.Array as Array
-import Data.Bits (popCount)
+import Data.Bits (popCount, shiftL)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.Char (isUpper, isLower, isAlphaNum, isPrint, isSpace, isAlpha, isDigit, ord)
@@ -1896,28 +1897,65 @@ fnStrFormat = mkFn3 "format"
   $ \fmt args kwargs -> do
     let allArgs = [ (Nothing, v) | v <- args ] ++
                   (Map.toList $ Map.mapKeys (Just . scalarToText) kwargs)
-    formatValues valueFormatArgVT fmt allArgs
+    formatValues valueToFormatArg fmt allArgs
 
-valueFormatArgVT :: ( Monad m
+valueToFormatArg :: ( Monad m
                     , MonadTrans t
                     , MonadError RuntimeError (t m)
                     )
-                 => FormatArgVT (t m) (Value m)
-valueFormatArgVT =
-  FormatArgVT
-    { lookupAttrib = \k v -> eitherExceptM $ getAttrRaw v (Identifier k)
-    , lookupItem = \k v -> lift $ getItemRaw v (StringV k)
-    , lookupIndex = \k v -> lift $ getItemRaw v (IntV k)
-    , argAsString = stringify
-    , argAsRepr = stringify
-    , argAsASCII = stringify -- TODO
-    , argAsInt = pure . asMaybeIntVal
-    , argAsFloat = pure . asMaybeFloatVal
-    , formattingGroup = \case
-        IntV {} -> pure FormatAsInt
-        FloatV {} -> pure FormatAsFloat
-        _ -> pure FormatAsString
-    }
+               => Value m
+               -> t m FormatArg
+valueToFormatArg (IntV i) = pure $ IntArg i
+valueToFormatArg (FloatV f) = pure $ FloatArg f
+valueToFormatArg (BoolV b) = pure $ IntArg (fromIntegral $ fromEnum b)
+valueToFormatArg (StringV s) = pure $ StringArg s
+valueToFormatArg (EncodedV (Encoded s)) = pure $ StringArg s
+valueToFormatArg (BytesV bs) =
+  pure $ PolyArg
+            (Just $ Text.decodeUtf8 bs)
+            (Just $ byteStringToInteger bs)
+            Nothing
+            (Just . V.fromList . map (IntArg . fromIntegral) $ BS.unpack bs)
+            Nothing
+valueToFormatArg NoneV =
+  pure $ PolyArg
+            (Just "")
+            (Just 0)
+            Nothing
+            (Just mempty)
+            (Just mempty)
+valueToFormatArg (ListV xs) = ListArg <$> mapM valueToFormatArg xs
+valueToFormatArg (DictV xs) =
+  DictArg <$> valueDictToFormatDict xs
+valueToFormatArg (NativeV obj) = do
+  listVal <- lift (nativeObjectAsList obj) >>= mapM (V.mapM valueToFormatArg)
+  dictVal <- lift (nativeObjectAsDict obj) >>= mapM valueDictToFormatDict
+  stringVal <- lift (nativeObjectStringified obj)
+  pure $ PolyArg
+    (Just stringVal)
+    Nothing
+    Nothing
+    listVal
+    dictVal
+valueToFormatArg v = throwError . GenericError $
+   "Cannot convert " <> tagNameOf v <> " to formatting argument"
+
+valueDictToFormatDict :: ( Monad m
+                         , MonadTrans t
+                         , MonadError RuntimeError (t m)
+                         )
+                      => Map Scalar (Value m)
+                      -> t m (Map Text FormatArg)
+valueDictToFormatDict xs =
+  Map.fromList <$>
+    mapM (\(k, v) -> (,) <$> pure (scalarToText k) <*> valueToFormatArg v) (Map.toList xs)
+
+-- | Interpret bytestring as big-endian integer number
+byteStringToInteger :: BS.ByteString -> Integer
+byteStringToInteger = go 0 . BS.unpack
+  where
+    go n [] = n
+    go n (x:xs) = go ((n `shiftL` 8) + fromIntegral x) xs
 
 fnFilesizeFormat :: Monad m => Procedure m
 fnFilesizeFormat = mkFn2 "filesizeformat"

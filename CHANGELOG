@@ -31,3 +31,7 @@
     - groupby()
 - Added printf-style % string formatting
 - Fixed some spurious test failures
+
+**NEXT VERSION**
+
+- Added string.format() builtin (Python-style string formatting).

@@ -600,6 +600,20 @@ tests = testGroup "Language.Ginger.Interpret"
                   )
             ]
 
+        , testGroup "select reject"
+            [ testProperty "select odd" $
+                prop_eval
+                  (\xs -> FilterE (ListE (V.fromList $ map IntLitE xs)) (VarE "select") [StringLitE "odd"] [])
+                  (\xs -> ListV (V.fromList $ map IntV (filter odd xs)))
+            , testProperty "reject odd" $
+                prop_eval
+                  (\xs -> FilterE (ListE (V.fromList $ map IntLitE xs)) (VarE "reject") [StringLitE "odd"] [])
+                  (\xs -> ListV (V.fromList $ map IntV (filter (not . odd) xs)))
+            , testProperty "select lessthan(n)" $
+                prop_eval
+                  (\(n, xs) -> FilterE (ListE (V.fromList $ map IntLitE xs)) (VarE "select") [StringLitE "lessthan", IntLitE n] [])
+                  (\(n, xs) -> ListV (V.fromList $ map IntV (filter (< n) xs)))
+            ]
         , testGroup "join"
             [ testProperty "simple" $
                 prop_eval

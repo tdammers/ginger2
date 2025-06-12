@@ -21,6 +21,7 @@ import Language.Ginger.Value
 import Language.Ginger.StringFormatting (FormatArg (..))
 
 import Control.Applicative ( (<|>) )
+import Control.Monad ( (<=<) )
 import Control.Monad.Except
 import Control.Monad.Trans (lift, MonadTrans (..))
 import qualified Data.Aeson as JSON
@@ -205,7 +206,7 @@ builtinGlobals evalE = Map.fromList $
               odd)
   -- , ("pprint", undefined)
   , ("random", ProcedureV fnRandom)
-  -- , ("rejectattr", undefined)
+  , ("rejectattr", FilterV $ fnRejectAttr evalE)
   , ("reject", FilterV $ fnReject evalE)
   , ("replace", ProcedureV fnStrReplace)
   , ("reverse", ProcedureV fnReverse)
@@ -228,7 +229,7 @@ builtinGlobals evalE = Map.fromList $
               (EncodedV @m . Encoded)
 
     )
-  -- , ("selectattr", undefined)
+  , ("selectattr", FilterV $ fnSelectAttr evalE)
   , ("select", FilterV $ fnSelect evalE)
   -- , ("slice", undefined)
   , ("sort", ProcedureV fnSort)
@@ -1139,23 +1140,23 @@ fnDictsort = mkFn4 "dictsort"
     items' <- mapM proj itemsRaw
     pure $ map snd $ sortBy cmp' items'
 
-fnSelect :: forall m. Monad m
+fnSelectAttr :: forall m. Monad m
          => (Expr -> GingerT m (Value m))
          -> Filter m
-fnSelect = fnSelectReject False "select" "select"
+fnSelectAttr = fnSelectRejectAttr False "selectattr" "selectattr"
 
-fnReject :: forall m. Monad m
+fnRejectAttr :: forall m. Monad m
          => (Expr -> GingerT m (Value m))
          -> Filter m
-fnReject = fnSelectReject True "reject" "reject"
+fnRejectAttr = fnSelectRejectAttr True "rejectattr" "rejectattr"
 
-fnSelectReject :: forall m. Monad m
+fnSelectRejectAttr :: forall m. Monad m
                => Bool
                -> Text
                -> Text
                -> (Expr -> GingerT m (Value m))
                -> Filter m
-fnSelectReject invert procName procDescName evalE =
+fnSelectRejectAttr invert procName procDescName evalE =
   NativeFilter
     (Just ProcedureDoc
       { procedureDocName =
@@ -1167,13 +1168,6 @@ fnSelectReject invert procName procDescName evalE =
               Nothing
               ""
           , ArgumentDoc
-              "filter"
-              (Just $ TypeDocAlternatives [ "string", "filter", "test", "procedure" ])
-              (Just "none")
-              ( "A filter or test to apply to each element to determine " <>
-                "whether to " <> procDescName <> " it or not."
-              )
-          , ArgumentDoc
               "attribute"
               (Just $ TypeDocAlternatives [ "string", "none" ])
               (Just "none")
@@ -1181,10 +1175,28 @@ fnSelectReject invert procName procDescName evalE =
                 "element for testing.\n" <>
                 "This argument can only be passed by keyword, not positionally."
               )
+          , ArgumentDoc
+              "filter"
+              (Just $ TypeDocAlternatives [ "string", "filter", "test", "procedure" ])
+              (Just "none")
+              ( "A filter or test to apply to each element to determine " <>
+                "whether to " <> procDescName <> " it or not."
+              )
+          , ArgumentDoc
+              "*args"
+              (Just $ TypeDocSingle "any")
+              (Just "none")
+              "Positional arguments to pass to the filter."
+          , ArgumentDoc
+              "**args"
+              (Just $ TypeDocSingle "any")
+              (Just "none")
+              "Keyword arguments to pass to the filter."
           ]
       , procedureDocReturnType = (Just $ TypeDocSingle "list")
       , procedureDocDescription = Text.unlines
-          [ Text.toTitle procDescName <> " by a test or filter, and/or an attribute."
+          [ Text.toTitle procDescName <> " by an attribute, and, optionally, " <>
+            "a filter applied to that attribute."
           ]
       }
     ) $
@@ -1222,13 +1234,16 @@ fnSelectReject invert procName procDescName evalE =
           throwError $
             ArgumentError
               funcName
-              "attribute/callee"
-              "attribute=identifier or callable"
+              "attribute"
+              "attribute"
               "no argument"
-        (test:varargs') -> do
+        (attrib:varargs') -> do
           -- Re-pack the remaining arguments
-          let args' = zip (repeat Nothing) varargs' ++
-                      Map.toList (Map.mapKeys toIdentifier kwargs)
+          let (test, args') = case varargs' of
+                  [] ->
+                    (StringV "bool", [])
+                  arg:args'' ->
+                    (arg, zip (repeat Nothing) args'' ++ Map.toList (Map.mapKeys scalarToIdentifier kwargs))
 
           -- Determine how to handle each list element.
           let apply' testV x =
@@ -1293,15 +1308,182 @@ fnSelectReject invert procName procDescName evalE =
                           (tagNameOf test <> " " <> Text.show testV)
 
               invertFun = if invert then not else id
+
+              project :: Value m -> ExceptT RuntimeError m (Maybe (Value m))
+              project v =
+                (eitherExceptM . getAttrOrItemRaw v) =<<
+                  eitherExcept (Identifier <$> asTextVal attrib)
+
+              apply = fmap (maybe False invertFun) . mapM (apply' test) <=< project
+
+          ListV <$> V.filterM apply xs
+
+scalarToIdentifier :: Scalar -> Maybe Identifier
+scalarToIdentifier (StringScalar s) = Just $ Identifier s
+scalarToIdentifier (IntScalar i) = Just $ Identifier (Text.show i)
+scalarToIdentifier (FloatScalar f) = Just $ Identifier (Text.show f) -- dubious
+scalarToIdentifier _ = Nothing
+
+fnSelect :: forall m. Monad m
+         => (Expr -> GingerT m (Value m))
+         -> Filter m
+fnSelect = fnSelectReject False "select" "select"
+
+fnReject :: forall m. Monad m
+         => (Expr -> GingerT m (Value m))
+         -> Filter m
+fnReject = fnSelectReject True "reject" "reject"
+
+fnSelectReject :: forall m. Monad m
+               => Bool
+               -> Text
+               -> Text
+               -> (Expr -> GingerT m (Value m))
+               -> Filter m
+fnSelectReject invert procName procDescName evalE =
+  NativeFilter
+    (Just ProcedureDoc
+      { procedureDocName =
+          procName
+      , procedureDocArgs =
+          [ ArgumentDoc
+              "value"
+              (Just $ TypeDocSingle "list")
+              Nothing
+              ""
+          , ArgumentDoc
+              "test"
+              (Just $ TypeDocAlternatives [ "string", "filter", "test", "procedure" ])
+              (Just "none")
+              ( "A filter or test to apply to each element to determine " <>
+                "whether to " <> procDescName <> " it or not."
+              )
+          ]
+      , procedureDocReturnType = (Just $ TypeDocSingle "list")
+      , procedureDocDescription = Text.unlines
+          [ Text.toTitle procDescName <> " by a test or filter, and/or an attribute."
+          ]
+      }
+    ) $
+    \scrutineeE args ctx env rng -> runExceptT $ do
+      -- This one is quite a monster, because it accepts arguments in so many
+      -- different ways.
+      -- Specifically:
+      --
+      -- @scrutinee|select('foobar', args...)@ - interpret the string
+      -- @'foobar'@ as the name of a filter (or procedure), and pass @args...@
+      -- on to that filter.
+      --
+      -- @scrutinee|select(foobar, args...)@ - interpret @foobar@ as a filter
+      -- (or a procedure), and pass @args...@ on to that filter.
+      --
+      -- @scrutinee|select(attribute='foobar', {default=value})@ - interpret
+      -- @'foobar' as the name of an attribute in each list element, extract
+      -- that list element, use the @default=@ value if the attribute is
+      -- absent.
+      let funcName = "select"
+      argValues <- eitherExcept $
+        resolveArgs
+          funcName
+          []
+          args
+      varargs <- fnArg funcName "*" argValues
+      (kwargs :: Map Scalar (Value m)) <- fnArg funcName "**" argValues
+      (scrutinee :: Value m) <- eitherExceptM $
+                                  runGingerT (evalE scrutineeE) ctx env rng
+      (xs :: Vector (Value m)) <- eitherExceptM $ fromValue scrutinee
+
+      case varargs of
+        [] ->
+          -- No argument = error.
+          throwError $
+            ArgumentError
+              funcName
+              "attribute/callee"
+              "attribute=identifier or callable"
+              "no argument"
+        (test:varargs') -> do
+          -- Re-pack the remaining arguments
+          let args' = zip (repeat Nothing) varargs' ++
+                      Map.toList (Map.mapKeys scalarToIdentifier kwargs)
+
+          -- Determine how to handle each list element.
+          let apply' testV x = do
+                case testV of
+                  StringV name -> do
+                    -- If it's a string, we interpret it as a filter name, and
+                    -- try to look up the corresponding filter in the current
+                    -- scope.
+                    testV' <- eitherExceptM $
+                      runGingerT
+                        (withJinjaTests $ evalE (VarE $ Identifier name))
+                        ctx env rng
+                    apply' testV' x
+                  DictV m -> do
+                    -- If it's a dict, try to find a @"__call__"@ item.
+                    case Map.lookup "__call__" m of
+                      Nothing -> throwError $
+                                    NonCallableObjectError
+                                      (tagNameOf test <> " " <> Text.show testV)
+                      Just v -> apply' v x
+                  NativeV obj -> do
+                    -- If it's a native object, use its @nativeObjectCall@
+                    -- method, if available.
+                    case nativeObjectCall obj of
+                      Nothing -> throwError $
+                                    NonCallableObjectError
+                                      "non-callable native object"
+                      Just f -> eitherExceptM (f obj args') >>=
+                                eitherExcept . asTruthVal "native object to bool conversion"
+                  TestV f -> do
+                    -- If it's a test, we apply it as such, mapping the
+                    -- current list element to the variable "@" (which cannot
+                    -- be used as a normal identifier, because the syntax
+                    -- doesn't allow it). We need to bind it, because
+                    -- 'runTest' takes an unevaluated expression as its
+                    -- scrutinee argument, but we have an already-evaluated
+                    -- value.
+                    let env' = env { envVars = Map.insert "@" x $ envVars env }
+                    eitherExceptM $ runTest f (VarE "@") args' ctx env' rng
+                  FilterV f -> do
+                    -- If it's a filter, we apply it as such, mapping the
+                    -- current list element to the variable "@" (which cannot
+                    -- be used as a normal identifier, because the syntax
+                    -- doesn't allow it). We need to bind it, because
+                    -- 'runFilter' takes an unevaluated expression as its
+                    -- scrutinee argument, but we have an already-evaluated
+                    -- value.
+                    let env' = env { envVars = Map.insert "@" x $ envVars env }
+                    eitherExceptM (runFilter f (VarE "@") args' ctx env' rng) >>=
+                      (eitherExcept . asBoolVal "filter")
+                  ProcedureV (NativeProcedure _ _ f) -> do
+                    -- If it's a native procedure, we can just call it without
+                    -- binding anything.
+                    eitherExceptM (f ((Nothing, x):args') ctx rng) >>=
+                      eitherExcept . asTruthVal "native procedure"
+                  ProcedureV (GingerProcedure env' argSpecs body) -> do
+                    -- If it's a ginger procedure, we need to prepend the
+                    -- current list element to the argument list (so it becomes
+                    -- the first positional argument), and then resolve and
+                    -- bind all the arguments into the environment where we
+                    -- then run the ginger procedure.
+                    args'' <- eitherExcept $
+                                resolveArgs
+                                  "select callback"
+                                  argSpecs
+                                  ((Nothing, x):args')
+                    eitherExceptM (runGingerT (setVars args'' >> evalE body) ctx env' rng) >>=
+                        eitherExcept . asTruthVal "ginger procedure"
+                  _ ->
+                    -- Not something we can call.
+                      throwError $
+                        NonCallableObjectError
+                          (tagNameOf test <> " " <> Text.show testV)
+
+              invertFun = if invert then not else id
               apply = fmap invertFun . apply' test
 
           ListV <$> V.filterM apply xs
-  where
-    toIdentifier :: Scalar -> Maybe Identifier
-    toIdentifier (StringScalar s) = Just $ Identifier s
-    toIdentifier (IntScalar i) = Just $ Identifier (Text.show i)
-    toIdentifier (FloatScalar f) = Just $ Identifier (Text.show f) -- dubious
-    toIdentifier _ = Nothing
 
 fnMap :: forall m. Monad m
       => (Expr -> GingerT m (Value m))
@@ -1372,7 +1554,7 @@ fnMap evalE =
           (callee:varargs') -> do
             -- Re-pack the remaining arguments
             let args' = zip (repeat Nothing) varargs' ++
-                        Map.toList (Map.mapKeys toIdentifier kwargs)
+                        Map.toList (Map.mapKeys scalarToIdentifier kwargs)
 
             -- Determine how to handle each list element.
             let apply' filterV x =
@@ -1437,12 +1619,6 @@ fnMap evalE =
                 apply = apply' callee
 
             ListV <$> mapM apply xs
-  where
-    toIdentifier :: Scalar -> Maybe Identifier
-    toIdentifier (StringScalar s) = Just $ Identifier s
-    toIdentifier (IntScalar i) = Just $ Identifier (Text.show i)
-    toIdentifier (FloatScalar f) = Just $ Identifier (Text.show f) -- dubious
-    toIdentifier _ = Nothing
 
 fnRound :: forall m. Monad m => Procedure m
 fnRound = mkFn3 "round"

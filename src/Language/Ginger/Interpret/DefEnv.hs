@@ -273,10 +273,27 @@ builtinTests = Map.fromList
                           NativeTest
                           (Just ProcedureDoc
                               { procedureDocName = "eq"
-                              , procedureDocArgs = [ArgumentDoc "value" (Just TypeDocAny) Nothing ""]
+                              , procedureDocArgs =
+                                  [ ArgumentDoc "value" (Just TypeDocAny) Nothing ""
+                                  , ArgumentDoc "other" (Just TypeDocAny) Nothing ""
+                                  ]
                               , procedureDocReturnType = Just $ TypeDocSingle "bool"
                               , procedureDocDescription =
-                                  "Test whether `value` is a eq."
+                                  "Test whether `value` is equal to `other`."
+                              }
+                          )
+                          isEqual)
+            , ("equalto", TestV $
+                          NativeTest
+                          (Just ProcedureDoc
+                              { procedureDocName = "eq"
+                              , procedureDocArgs =
+                                  [ ArgumentDoc "value" (Just TypeDocAny) Nothing ""
+                                  , ArgumentDoc "other" (Just TypeDocAny) Nothing ""
+                                  ]
+                              , procedureDocReturnType = Just $ TypeDocSingle "bool"
+                              , procedureDocDescription =
+                                  "Test whether `value` is equal to `other`."
                               }
                           )
                           isEqual)
@@ -294,6 +311,7 @@ builtinTests = Map.fromList
                             (isBoolean False :: Value m -> Value m))
             , ("ge", gingerBinopTest BinopGTE)
             , ("gt", gingerBinopTest BinopGT)
+            , ("greaterthan", gingerBinopTest BinopGT)
             , ("in", gingerBinopTest BinopIn)
             , ("le", gingerBinopTest BinopLTE)
             , ("lower", fnToValue
@@ -308,6 +326,7 @@ builtinTests = Map.fromList
                             )
                             (isLowerVal @m))
             , ("lt", gingerBinopTest BinopLT)
+            , ("lessthan", gingerBinopTest BinopLT)
             , ("sameas", builtinNotImplemented @m "sameas")
             , ("true", fnToValue
                             "builtin:test:true"
@@ -584,9 +603,11 @@ gingerBinopTest op =
     f :: TestFunc m
     f expr args ctx env = runGingerT (go expr args) ctx env
 
-    go expr args = scoped $ do
-      setVar "#args" (ListV . V.fromList $ map snd args)
-      eval (BinaryE op expr (VarE "#args")) >>= \case
+    go :: Expr -> [(Maybe Identifier, Value m)] -> GingerT m Bool
+    go _ [] = throwError $ ArgumentError opName "2" "any" "end of arguments"
+    go expr (arg:_) = scoped $ do
+      setVar "#arg" (snd arg)
+      eval (BinaryE op expr (VarE "#arg")) >>= \case
         TrueV -> pure True
         _ -> pure False
 

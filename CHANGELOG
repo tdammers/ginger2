@@ -34,4 +34,9 @@
 
 **NEXT VERSION**
 
-- Added string.format() builtin (Python-style string formatting).
+- Added built-ins:
+    - string.format() builtin (Python-style string formatting).
+    - selectattr()
+    - rejectattr()
+- Fixed select() and reject() built-ins
+- Fixed some spurious test failures

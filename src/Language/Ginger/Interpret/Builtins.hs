@@ -1241,7 +1241,14 @@ fnSelectRejectAttr invert procName procDescName evalE =
           -- Re-pack the remaining arguments
           let (test, args') = case varargs' of
                   [] ->
-                    (StringV "bool", [])
+                    ( ProcedureV
+                        (GingerProcedure
+                            mempty
+                            [("arg", Nothing)]
+                            (VarE "arg")
+                        )
+                    , []
+                    )
                   arg:args'' ->
                     (arg, zip (repeat Nothing) args'' ++ Map.toList (Map.mapKeys scalarToIdentifier kwargs))
 

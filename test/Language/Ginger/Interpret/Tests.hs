@@ -614,6 +614,124 @@ tests = testGroup "Language.Ginger.Interpret"
                   (\(n, xs) -> FilterE (ListE (V.fromList $ map IntLitE xs)) (VarE "select") [StringLitE "lessthan", IntLitE n] [])
                   (\(n, xs) -> ListV (V.fromList $ map IntV (filter (< n) xs)))
             ]
+        , testGroup "selectattr rejectattr"
+            [ testProperty "selectattr plain" $
+                prop_eval
+                  (\xs ->
+                      FilterE
+                        (ListE
+                          (V.fromList
+                            [ DictE
+                                [ (StringLitE "cond", BoolE cond)
+                                , (StringLitE "val", IntLitE val)
+                                ]
+                            | (cond, val) <- xs
+                            ]
+                          ))
+                        (VarE "selectattr")
+                        [StringLitE "cond"]
+                        []
+                  )
+                  (\xs ->
+                      ListV
+                        (V.fromList
+                          [ DictV
+                              [ ("cond", BoolV cond)
+                              , ("val", IntV val)
+                              ]
+                          | (cond, val) <- xs
+                          , cond
+                          ]
+                        )
+                  )
+            , testProperty "rejectattr plain" $
+                prop_eval
+                  (\xs ->
+                      FilterE
+                        (ListE
+                          (V.fromList
+                            [ DictE
+                                [ (StringLitE "cond", BoolE cond)
+                                , (StringLitE "val", IntLitE val)
+                                ]
+                            | (cond, val) <- xs
+                            ]
+                          ))
+                        (VarE "rejectattr")
+                        [StringLitE "cond"]
+                        []
+                  )
+                  (\xs ->
+                      ListV
+                        (V.fromList
+                          [ DictV
+                              [ ("cond", BoolV cond)
+                              , ("val", IntV val)
+                              ]
+                          | (cond, val) <- xs
+                          , not cond
+                          ]
+                        )
+                  )
+            , testProperty "selectattr odd" $
+                prop_eval
+                  (\xs ->
+                      FilterE
+                        (ListE
+                          (V.fromList
+                            [ DictE
+                                [ (StringLitE "cond", IntLitE cond)
+                                , (StringLitE "val", IntLitE val)
+                                ]
+                            | (cond, val) <- xs
+                            ]
+                          ))
+                        (VarE "selectattr")
+                        [StringLitE "cond", StringLitE "odd"]
+                        []
+                  )
+                  (\xs ->
+                      ListV
+                        (V.fromList
+                          [ DictV
+                              [ ("cond", IntV cond)
+                              , ("val", IntV val)
+                              ]
+                          | (cond, val) <- xs
+                          , odd cond
+                          ]
+                        )
+                  )
+            , testProperty "selectattr lessthan" $
+                prop_eval
+                  (\xs ->
+                      FilterE
+                        (ListE
+                          (V.fromList
+                            [ DictE
+                                [ (StringLitE "cond", IntLitE cond)
+                                , (StringLitE "val", IntLitE val)
+                                ]
+                            | (cond, val) <- xs
+                            ]
+                          ))
+                        (VarE "selectattr")
+                        [StringLitE "cond", StringLitE "lessthan", IntLitE 10]
+                        []
+                  )
+                  (\xs ->
+                      ListV
+                        (V.fromList
+                          [ DictV
+                              [ ("cond", IntV cond)
+                              , ("val", IntV val)
+                              ]
+                          | (cond, val) <- xs
+                          , cond < 10
+                          ]
+                        )
+                  )
+            ]
         , testGroup "join"
             [ testProperty "simple" $
                 prop_eval

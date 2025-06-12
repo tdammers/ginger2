@@ -23,6 +23,7 @@ import System.Directory (getCurrentDirectory)
 import System.FilePath (takeDirectory, takeFileName, takeExtension, (</>) )
 import System.IO (hPutStrLn, stderr)
 import qualified System.Random as R
+import Control.Monad.Random (MonadTrans)
 
 import qualified Data.Yaml as YAML
 
@@ -135,7 +136,7 @@ encoderReader = eitherReader $ \case
   "text" -> Right TextEncoder
   "auto" -> Right AutoEncoder
   s -> Left $ "Invalid encoder: " ++ show s
-        
+
 dialectReader :: ReadM JinjaDialect
 dialectReader = eitherReader $ \case
   "ginger" -> Right DialectGinger2
@@ -145,8 +146,6 @@ dialectReader = eitherReader $ \case
   "jinja2" -> Right DialectJinja2
   "compat" -> Right DialectJinja2
   s -> Left $ "Invalid dialect: " ++ show s
-        
-
 
 main :: IO ()
 main = do
@@ -167,7 +166,7 @@ textEncoder :: Encoder IO
 textEncoder txt = do
   pure $ Encoded txt
 
-loadDataFile :: FilePath -> IO (Map Identifier (Value IO))
+loadDataFile :: MonadTrans t => FilePath -> IO (Map Identifier (Value (t IO)))
 loadDataFile path = do
   YAML.decodeFileThrow path
 

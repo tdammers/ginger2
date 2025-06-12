@@ -28,7 +28,6 @@ module Language.Ginger.Interpret.Eval
 , getItem
 , getItemRaw
 , loadTemplate
-, splitRNG
 )
 where
 
@@ -46,8 +45,9 @@ import Control.Monad.Except
   ( MonadError (..)
   , throwError
   )
+import Control.Monad.Random (MonadRandom)
 import Control.Monad.Reader (ask , asks, local, MonadReader (..))
-import Control.Monad.State (gets, modify)
+import Control.Monad.State (gets)
 import Control.Monad.Trans (lift, MonadTrans (..))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -62,7 +62,6 @@ import qualified Data.Text as Text
 import Data.Text.Encoding (encodeUtf8)
 import Data.Vector (Vector)
 import qualified Data.Vector as V
-import qualified System.Random as R
 
 hashShow :: Show a => a -> Text
 hashShow = Text.pack . showDigest . sha256 . LBS.fromStrict . encodeUtf8 . Text.show
@@ -90,7 +89,7 @@ loadTemplateMaybe name = do
           let body = templateBody t
           pure . Just $ LoadedTemplate parent body
 
-mapArgs :: forall m. Monad m
+mapArgs :: forall m. MonadRandom m
         => Text
         -> [(Identifier, Maybe (Value m))]
         -> [(Maybe Identifier, Value m)]
@@ -131,28 +130,20 @@ mapArgs context spec args =
     go [] _ _ =
       pure mempty
   
-evalCallArgs :: Monad m => [Expr] -> [(Identifier, Expr)] -> GingerT m [(Maybe Identifier, Value m)]
+evalCallArgs :: MonadRandom m => [Expr] -> [(Identifier, Expr)] -> GingerT m [(Maybe Identifier, Value m)]
 evalCallArgs posArgsExpr namedArgsExpr = do
   posArgs <- mapM evalE posArgsExpr
   namedArgs <- mapM evalNamedArg namedArgsExpr
   pure $ zip (repeat Nothing) posArgs ++ namedArgs
 
-splitRNG :: Monad m => GingerT m SomePRNG
-splitRNG = do
-  rng <- gets evalPRNG
-  let (rngL, rngR) = R.splitGen rng
-  modify (\e -> e { evalPRNG = rngL })
-  pure rngR
-
-callTest :: Monad m => Value m -> Expr -> [Expr] -> [(Identifier, Expr)] -> GingerT m (Value m)
+callTest :: MonadRandom m => Value m -> Expr -> [Expr] -> [(Identifier, Expr)] -> GingerT m (Value m)
 callTest testV scrutinee posArgsExpr namedArgsExpr = do
   case testV of
     TestV t -> do
       args <- evalCallArgs posArgsExpr namedArgsExpr
       ctx <- ask
       env <- gets evalEnv
-      rng <- splitRNG
-      BoolV <$> native (runTest t scrutinee args ctx env rng)
+      BoolV <$> native (runTest t scrutinee args ctx env)
 
     ScalarV {} -> do
       BoolV <$> (valuesEqual testV =<< evalE scrutinee)
@@ -163,15 +154,14 @@ callTest testV scrutinee posArgsExpr namedArgsExpr = do
     x -> do
       call Nothing x (scrutinee : posArgsExpr) namedArgsExpr
 
-callFilter :: Monad m => Value m -> Expr -> [Expr] -> [(Identifier, Expr)] -> GingerT m (Value m)
+callFilter :: MonadRandom m => Value m -> Expr -> [Expr] -> [(Identifier, Expr)] -> GingerT m (Value m)
 callFilter filterV scrutinee posArgsExpr namedArgsExpr = do
   case filterV of
     FilterV f -> do
       args <- evalCallArgs posArgsExpr namedArgsExpr
       ctx <- ask
       env <- gets evalEnv
-      rng <- splitRNG
-      native (runFilter f scrutinee args ctx env rng)
+      native (runFilter f scrutinee args ctx env)
 
     ScalarV {} -> do
       BoolV <$> (valuesEqual filterV =<< evalE scrutinee)
@@ -183,15 +173,14 @@ callFilter filterV scrutinee posArgsExpr namedArgsExpr = do
       call Nothing x (scrutinee : posArgsExpr) namedArgsExpr
 
 
-call :: Monad m => Maybe (Value m) -> Value m -> [Expr] -> [(Identifier, Expr)] -> GingerT m (Value m)
+call :: MonadRandom m => Maybe (Value m) -> Value m -> [Expr] -> [(Identifier, Expr)] -> GingerT m (Value m)
 call callerMay callable posArgsExpr namedArgsExpr = do
   args <- evalCallArgs posArgsExpr namedArgsExpr
   case callable of
     ProcedureV (NativeProcedure _ _ f) ->
       withEnv mempty $ do
         ctx <- ask
-        rng <- splitRNG
-        native $ f args ctx rng
+        native $ f args ctx
     ProcedureV (GingerProcedure env argsSig f) -> do
       withEnv env $ do
         maybe (pure ()) (setVar "caller") callerMay
@@ -219,24 +208,24 @@ call callerMay callable posArgsExpr namedArgsExpr = do
 class Eval m a where
   eval :: a -> GingerT m (Value m)
 
-instance Monad m => Eval m Expr where
+instance MonadRandom m => Eval m Expr where
   eval = evalE
 
-instance Monad m => Eval m Statement where
+instance MonadRandom m => Eval m Statement where
   eval = evalS
 
-instance Monad m => Eval m Template where
+instance MonadRandom m => Eval m Template where
   eval = evalT
 
 -- | Evaluate an expression, dereferencing mutable refs.
-evalE :: Monad m => Expr -> GingerT m (Value m)
+evalE :: MonadRandom m => Expr -> GingerT m (Value m)
 evalE expr =
   evalE' expr >>= \case
     MutableRefV refID -> derefMutable refID
     v -> pure v
 
 -- | Evaluate an expression without dereferencing mutable refs.
-evalE' :: Monad m => Expr -> GingerT m (Value m)
+evalE' :: MonadRandom m => Expr -> GingerT m (Value m)
 evalE' (PositionedE pos e) = do
   evalE e `catchError` decorateError pos
 evalE' NoneE = pure NoneV
@@ -286,7 +275,7 @@ evalE' (IsE scrutinee testE args kwargs) = do
   t <- withJinjaTests (evalE testE)
   callTest t scrutinee args kwargs
 
-evalKV :: Monad m => (Expr, Expr) -> GingerT m (Scalar, Value m)
+evalKV :: MonadRandom m => (Expr, Expr) -> GingerT m (Scalar, Value m)
 evalKV (kExpr, vExpr) = do
   kVal <- evalE kExpr
   kScalar <- case kVal of
@@ -295,7 +284,7 @@ evalKV (kExpr, vExpr) = do
   vVal <- evalE vExpr
   return (kScalar, vVal)
 
-evalNamedArg :: Monad m => (Identifier, Expr) -> GingerT m (Maybe Identifier, Value m)
+evalNamedArg :: MonadRandom m => (Identifier, Expr) -> GingerT m (Maybe Identifier, Value m)
 evalNamedArg (kIdent, vExpr) = do
   vVal <- evalE vExpr
   return (Just kIdent, vVal)
@@ -553,7 +542,7 @@ concatValues a b = case (a, b) of
     yStr <- stringify y
     pure . StringV $ xStr <> yStr
 
-evalT :: Monad m => Template -> GingerT m (Value m)
+evalT :: MonadRandom m => Template -> GingerT m (Value m)
 evalT t = do
   case templateParent t of
     Nothing ->
@@ -563,7 +552,7 @@ evalT t = do
       hush_ $ evalS (templateBody t)
       evalLT parent
 
-evalLT :: Monad m => LoadedTemplate -> GingerT m (Value m)
+evalLT :: MonadRandom m => LoadedTemplate -> GingerT m (Value m)
 evalLT t = do
   case loadedTemplateParent t of
     Nothing ->
@@ -572,7 +561,7 @@ evalLT t = do
       hush_ $ evalS (loadedTemplateBody t)
       evalLT parent
 
-evalS :: Monad m => Statement -> GingerT m (Value m)
+evalS :: MonadRandom m => Statement -> GingerT m (Value m)
 evalS (PositionedS pos s) = do
   evalS s `catchError` decorateError pos
 evalS (ImmediateS enc) = pure (EncodedV enc)
@@ -614,7 +603,7 @@ evalS (CallS name posArgsExpr namedArgsExpr bodyS) = whenOutputPolicy $ do
                   "current macro."
               }
             )
-            (const . const . const . pure . Right $ callerVal)
+            (const . const . pure . Right $ callerVal)
   call (Just caller) callee posArgsExpr namedArgsExpr
 evalS (FilterS name posArgsExpr namedArgsExpr bodyS) = whenOutputPolicy $ do
   callee <- lookupVar name
@@ -710,7 +699,7 @@ withScopeModifier policy inner = do
   let scopeModifier = if policy then id else withoutContext
   scopeModifier inner
 
-evalBlock :: Monad m => Identifier -> Block -> GingerT m (Value m)
+evalBlock :: MonadRandom m => Identifier -> Block -> GingerT m (Value m)
 evalBlock name block = do
   lblock <- setBlock name block
   super <- makeSuper (loadedBlockParent lblock)
@@ -726,12 +715,11 @@ lblockScoped lb =
     Nothing -> blockScoped (loadedBlock lb)
     Just parent -> lblockScoped parent
 
-makeSuper :: Monad m => Maybe LoadedBlock -> GingerT m (Value m)
+makeSuper :: MonadRandom m => Maybe LoadedBlock -> GingerT m (Value m)
 makeSuper Nothing = pure NoneV
 makeSuper (Just lblock) = do
   ctx <- ask
   env <- gets evalEnv
-  rng <- splitRNG
   parent <- makeSuper (loadedBlockParent lblock)
   pure $ dictV
     [ "__call__" .=
@@ -744,7 +732,6 @@ makeSuper (Just lblock) = do
                   (evalS . blockBody . loadedBlock $ lblock)
                   ctx
                   env
-                  rng
           )
     , "super" .= parent
     ]
@@ -755,7 +742,7 @@ asBool context x = either throwError pure $ asBoolVal context x
 asTruth :: Monad m => Text -> Value m -> GingerT m Bool
 asTruth context x = either throwError pure $ asTruthVal context x
 
-evalLoop :: forall m. Monad m
+evalLoop :: forall m. MonadRandom m
          => Maybe Identifier
          -> Identifier
          -> Value m
@@ -857,7 +844,7 @@ evalLoop loopKeyMay loopName iteree loopCondMay recursivity bodyS elseSMay recur
                 "Recurse one level deeper into the iteree"
             }
           )
-          $ \args ctx rng -> do
+          $ \args ctx -> do
                 case args of
                   [(_, iteree')] ->
                     runGingerT
@@ -872,7 +859,6 @@ evalLoop loopKeyMay loopName iteree loopCondMay recursivity bodyS elseSMay recur
                         (succ recursionLevel))
                       ctx
                       env
-                      rng
                   [] -> pure . Left $
                           ArgumentError "loop()" "1" "argument" "end of arguments"
                   _ -> pure . Left $
@@ -899,7 +885,7 @@ evalLoop loopKeyMay loopName iteree loopCondMay recursivity bodyS elseSMay recur
                 "cycle(items) will return items[n % length(items)]."
             }
           )
-          $ \args _ctx _rng -> do
+          $ \args _ctx -> do
               case args of
                 [(_, items)] ->
                   case items of
@@ -914,5 +900,5 @@ evalLoop loopKeyMay loopName iteree loopCondMay recursivity bodyS elseSMay recur
                         ArgumentError "cycle()" "1" "end of arguments" "argument"
 
 
-evalSs :: Monad m => [Statement] -> GingerT m (Value m)
+evalSs :: MonadRandom m => [Statement] -> GingerT m (Value m)
 evalSs stmts = mapM evalS stmts >>= foldM concatValues NoneV

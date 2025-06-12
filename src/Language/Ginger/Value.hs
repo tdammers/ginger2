@@ -360,7 +360,6 @@ data Procedure m
         !(Maybe ProcedureDoc)
         !( [(Maybe Identifier, Value m)]
             -> Context m
-            -> SomePRNG
             -> m (Either RuntimeError (Value m))
          )
   | GingerProcedure !(Env m) ![(Identifier, Maybe (Value m))] !Expr
@@ -418,7 +417,7 @@ pureNativeProcedure :: Applicative m
                     -> ([(Maybe Identifier, Value m)] -> Either RuntimeError (Value m))
                     -> Procedure m
 pureNativeProcedure oid doc f =
-  NativeProcedure oid doc $ \args _ _ -> pure (f args)
+  NativeProcedure oid doc $ \args _ -> pure (f args)
 
 nativeFunc :: (Monad m)
            => ObjectID
@@ -426,7 +425,7 @@ nativeFunc :: (Monad m)
            -> (Value m -> m (Either RuntimeError (Value m)))
            -> Procedure m
 nativeFunc oid doc f =
-  NativeProcedure oid doc $ \args _ _ -> case args of
+  NativeProcedure oid doc $ \args _ -> case args of
     [] ->
       pure . Left $
         ArgumentError
@@ -450,7 +449,7 @@ pureNativeFunc :: (Applicative m)
                -> (Value m -> Either RuntimeError (Value m))
                -> Procedure m
 pureNativeFunc oid doc f =
-  NativeProcedure oid doc $ \args _ _ -> case args of
+  NativeProcedure oid doc $ \args _ -> case args of
     [] ->
       pure . Left $
         ArgumentError
@@ -474,7 +473,7 @@ pureNativeFunc2 :: (Applicative m)
                -> (Value m -> Value m -> Either RuntimeError (Value m))
                -> Procedure m
 pureNativeFunc2 oid doc f =
-  NativeProcedure oid doc $ \args _ _ -> case args of
+  NativeProcedure oid doc $ \args _ -> case args of
     [] ->
       pure . Left $
         ArgumentError
@@ -504,7 +503,6 @@ type MetaFunc m a =
   -> [(Maybe Identifier, Value m)]
   -> Context m
   -> Env m
-  -> SomePRNG
   -> m (Either RuntimeError a)
 
 type TestFunc m = MetaFunc m Bool
@@ -892,39 +890,38 @@ class ToNativeProcedure m a where
   toNativeProcedure :: a
                     -> [(Maybe Identifier, Value m)]
                     -> Context m
-                    -> SomePRNG
                     -> m (Either RuntimeError (Value m))
 
 instance Applicative m => ToNativeProcedure m (Value m) where
-  toNativeProcedure val [] _ _ =
+  toNativeProcedure val [] _ =
     pure (Right val)
-  toNativeProcedure _ _ _ _ =
+  toNativeProcedure _ _ _ =
     pure . Left $
       ArgumentError "<native function>" "<positional argument>" "end of arguments" "value"
 
 instance Applicative m => ToNativeProcedure m (m (Value m)) where
-  toNativeProcedure action [] _ _ =
+  toNativeProcedure action [] _ =
     Right <$> action
-  toNativeProcedure _ _ _ _ =
+  toNativeProcedure _ _ _ =
     pure . Left $
       ArgumentError "<native function>" "<positional argument>" "end of arguments" "value"
 
 instance Applicative m => ToNativeProcedure m (m (Either RuntimeError (Value m))) where
-  toNativeProcedure action [] _ _ =
+  toNativeProcedure action [] _ =
     action
-  toNativeProcedure _ _ _ _ =
+  toNativeProcedure _ _ _ =
     pure . Left $
       ArgumentError "<native function>" "<positional argument>" "end of arguments" "value"
 
 instance (Applicative m, ToNativeProcedure m a) => ToNativeProcedure m (Value m -> a) where
-  toNativeProcedure _ [] _ _ =
+  toNativeProcedure _ [] _ =
     pure . Left $
       ArgumentError "<native function>" "<positional argument>" "value" "end of arguments"
-  toNativeProcedure _ ((Just _, _):_) _ _ =
+  toNativeProcedure _ ((Just _, _):_) _ =
     pure . Left $
       ArgumentError "<native function>" "<positional argument>" "positional argument" "named argument"
-  toNativeProcedure f ((Nothing, v):xs) ctx rng =
-    toNativeProcedure (f v) xs ctx rng
+  toNativeProcedure f ((Nothing, v):xs) ctx =
+    toNativeProcedure (f v) xs ctx
 
 
 instance Applicative m => FnToValue (Value m -> Value m) m where
@@ -1415,7 +1412,7 @@ arbitraryNativeProcedure :: Monad m => QC.Gen (Procedure m)
 arbitraryNativeProcedure = do
   retval <- QC.scale (`div` 2) arbitrary
   oid <- ObjectID . ("arbitrary:" <>) . identifierName <$> arbitrary
-  pure $ NativeProcedure oid Nothing (\_ _ _ -> pure (Right retval))
+  pure $ NativeProcedure oid Nothing (\_ _ -> pure (Right retval))
 
 arbitraryNative :: Monad m => QC.Gen (NativeObject m)
 arbitraryNative = do

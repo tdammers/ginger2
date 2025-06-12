@@ -1,8 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DeriveFunctor #-}
 
 module Language.Ginger.BuiltinsAutodoc
 where
 
+import Control.Monad.Random (MonadRandom (..), RandomGen (..), random, randoms)
 import Control.Monad.Identity (Identity, runIdentity)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
@@ -30,6 +33,25 @@ import Language.Ginger.Interpret.DefEnv
 import Language.Ginger.AST
 import Language.Ginger.Value
 
+newtype Document a = Document { unDocument :: Identity a }
+  deriving (Functor, Applicative, Monad)
+
+runDocument :: Document a -> a
+runDocument = runIdentity . unDocument
+
+data MockGen = MockGen
+
+instance RandomGen MockGen where
+  genWord64 g = (0, g)
+  genWord32 g = (0, g)
+  split g = (g, g)
+
+instance MonadRandom Document where
+  getRandomR (a, _) = pure a
+  getRandomRs (a, _) = pure $ repeat a
+  getRandom = pure . fst $ random MockGen
+  getRandoms = pure $ randoms MockGen
+
 markdownToHaddock :: Text -> Text
 markdownToHaddock =
   Text.replace "'" "\\'" .
@@ -45,19 +67,19 @@ addHaddockFromFile path = do
   pure []
 
 extractAttribs :: Monoid a
-               => BuiltinAttribs a Identity
-               -> [(Identifier, Value Identity)]
+               => BuiltinAttribs a Document
+               -> [(Identifier, Value Document)]
 extractAttribs =
   extractAttribsWith mempty
 
 extractAttribsWith :: a
-                   -> BuiltinAttribs a Identity
-                   -> [(Identifier, Value Identity)]
+                   -> BuiltinAttribs a Document
+                   -> [(Identifier, Value Document)]
 extractAttribsWith dummy =
   Map.toAscList .
   fmap (
     either (error . show) id .
-    runIdentity .
+    runDocument .
     ($ dummy)
   )
 
@@ -177,7 +199,7 @@ builtinsAutodoc = do
               ]
           )
 
-    goItem :: Maybe Text -> Text -> (Identifier, Value Identity) -> String
+    goItem :: Maybe Text -> Text -> (Identifier, Value Document) -> String
     goItem namespaceMay prefix (name, DictV subitems) =
       let qualifiedName = maybe "" (<> ".") namespaceMay <> identifierName name
           heading = Text.unpack . Text.unlines $

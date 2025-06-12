@@ -3,6 +3,7 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes #-}
 
 module Language.Ginger
 ( -- * Interpreting Templates
@@ -45,11 +46,14 @@ where
 
 import Language.Ginger.AST
 import Language.Ginger.BuiltinsAutodoc
-import Language.Ginger.Value
-import Language.Ginger.Interpret
-import Language.Ginger.RuntimeError (prettyRuntimeError)
 import Language.Ginger.FileLoader
         ( fileLoader
+        )
+import Language.Ginger.Interpret
+import Language.Ginger.Interpret.DefEnv
+        ( htmlEncoder
+        , defVars
+        , defVarsCompat
         )
 import Language.Ginger.Parse
         ( POptions (..)
@@ -58,17 +62,15 @@ import Language.Ginger.Parse
         , BlockStripping (..)
         )
 import qualified Language.Ginger.Parse as P
-import Language.Ginger.Interpret.DefEnv
-        ( htmlEncoder
-        , defVars
-        , defVarsCompat
-        )
+import Language.Ginger.RuntimeError (prettyRuntimeError)
+import Language.Ginger.Value
 
-import Control.Monad.Trans (MonadTrans (..))
 import Control.Monad.Except (runExceptT, throwError)
+import Control.Monad.Random (evalRandT, RandT)
+import Control.Monad.Trans (MonadTrans (..))
+import Data.Map.Strict (Map)
 import Data.Text (Text)
 import qualified Data.Text as Text
-import Data.Map.Strict (Map)
 import System.Random (SplitGen)
 
 data JinjaDialect
@@ -95,38 +97,41 @@ ginger :: forall m g. (Monad m, SplitGen g)
           -- ^ Name of the initial template to load. For the 'fileLoader', this
           -- should be a filename, but for other loaders, it can be whatever
           -- the loader expects.
-       -> Map Identifier (Value m)
+       -> Map Identifier (Value (RandT g m))
           -- ^ Variables defined in the initial namespace.
        -> m (Either RuntimeError Encoded)
-ginger loader parserOptions dialect rng encoder templateName vars = runExceptT $ do
-  templateSrc <- maybe
-                  (throwError $ TemplateFileNotFoundError templateName)
+ginger loader parserOptions dialect rng encoder templateName vars = 
+  flip evalRandT rng $
+  runExceptT $ do
+    templateSrc <- maybe
+                    (throwError $ TemplateFileNotFoundError templateName)
+                    pure
+                    =<< (lift . lift) (loader templateName)
+    let parseResult = P.parseGingerWith
+                        parserOptions
+                        P.template
+                        (Text.unpack templateName)
+                        templateSrc
+    template <- either
+                  (throwError . TemplateParseError templateName . Text.pack)
                   pure
-                  =<< lift (loader templateName)
-  let parseResult = P.parseGingerWith
-                      parserOptions
-                      P.template
-                      (Text.unpack templateName)
-                      templateSrc
-  template <- either
-                (throwError . TemplateParseError templateName . Text.pack)
-                pure
-                parseResult
-  let ctx = defContext
-              { contextEncode = encoder
-              , contextLoadTemplateFile = loader
-              }
-      defVars' = case dialect of
-                    DialectGinger2 -> defVars
-                    DialectJinja2 -> defVarsCompat
-      env = defEnv
-              { envVars = defVars' <> vars
-              }
-  eitherExceptM $ runGingerT
-    (evalT template >>= encode)
-    ctx
-    env
-    rng
+                  parseResult
+    let ctx = defContext
+                { contextEncode = (lift . encoder)
+                , contextLoadTemplateFile = (lift . loader)
+                }
+        defVars' = case dialect of
+                      DialectGinger2 -> defVars
+                      DialectJinja2 -> defVarsCompat
+        env = defEnv
+                { envVars = defVars' <> vars
+                }
+    eitherExceptM $
+      (runGingerT
+        (evalT template >>= encode)
+        ctx
+        env
+      )
 
 $(addHaddockFromFile "src/Language/Ginger.haddock")
 $(builtinsAutodoc)

@@ -23,6 +23,7 @@ import Language.Ginger.RuntimeError
 import Language.Ginger.Value
 
 import Control.Monad.Except
+import Control.Monad.Random (MonadRandom)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust, fromJust)
@@ -32,7 +33,6 @@ import qualified Data.Text.Lazy as LText
 import Data.Text.Lazy.Builder (Builder)
 import qualified Data.Text.Lazy.Builder as Builder
 import qualified Data.Vector as V
-import qualified System.Random as R
 
 defEnv :: Monad m => Env m
 defEnv =
@@ -40,7 +40,7 @@ defEnv =
     { envVars = mempty
     }
 
-defContext :: Monad m => Context m
+defContext :: MonadRandom m => Context m
 defContext =
   emptyContext
     { contextVars = defVars
@@ -66,7 +66,7 @@ htmlEncode txt =
     encodeChar '\'' = "&apos;"
     encodeChar c = Builder.singleton c
 
-defVarsCommon :: forall m. Monad m
+defVarsCommon :: forall m. MonadRandom m
               => Map Identifier (Value m)
 defVarsCommon = Map.fromList
   [ ( "__jinja__"
@@ -85,11 +85,11 @@ defVarsCommon = Map.fromList
   ]
   <> builtinGlobals evalE
 
-defVarsCompat :: forall m. Monad m
+defVarsCompat :: forall m. MonadRandom m
               => Map Identifier (Value m)
 defVarsCompat = defVarsCommon
 
-defVars :: forall m. Monad m
+defVars :: forall m. MonadRandom m
         => Map Identifier (Value m)
 defVars = defVarsCommon
         <> builtinGlobalsNonJinja evalE
@@ -103,14 +103,14 @@ defVars = defVarsCommon
              )
            ]
 
-builtinFilters :: forall m. Monad m
+builtinFilters :: forall m. MonadRandom m
              => Map Identifier (Value m)
 builtinFilters = Map.fromList
             [ ("default", FilterV $ defaultFilter)
             , ("d", FilterV $ defaultFilter)
             ]
 
-builtinTests :: forall m. Monad m
+builtinTests :: forall m. MonadRandom m
              => Map Identifier (Value m)
 builtinTests = Map.fromList
             [ ("defined", TestV $
@@ -363,10 +363,9 @@ isCallable' _ = False
 isCallable :: Monad m => Value m -> Value m
 isCallable = BoolV . isCallable'
 
-isFilter :: Monad m => TestFunc m
-isFilter expr _ ctx env rng = do
-  let (rngL, rngR) = R.splitGen rng
-  result <- runGingerT (evalE expr) ctx env rngL
+isFilter :: MonadRandom m => TestFunc m
+isFilter expr _ ctx env = do
+  result <- runGingerT (evalE expr) ctx env
   case result of
     Right (StringV name) -> do
       let exists =
@@ -377,7 +376,7 @@ isFilter expr _ ctx env rng = do
           (asBool ""
               =<< eval
                   (InE (StringLitE name) (DotE (VarE "__jinja__") "filters")))
-          ctx env rngR
+          ctx env
       pure $ (exists ||) <$> existsExt
     Right a ->
       pure . Left $ TagError "filter name" "string" (tagNameOf a)
@@ -400,9 +399,9 @@ isSequence (NativeV {}) = TrueV
 isSequence (ListV {}) = TrueV
 isSequence _ = FalseV
 
-isTest :: Monad m => TestFunc m
-isTest expr _ ctx env rng = do
-  result <- runGingerT (evalE expr) ctx env rng
+isTest :: MonadRandom m => TestFunc m
+isTest expr _ ctx env = do
+  result <- runGingerT (evalE expr) ctx env
   case result of
     Right NoneV -> pure . Right $ True
     Right BoolV {} -> pure . Right $ True
@@ -452,7 +451,7 @@ isString :: Monad m => Value m -> Value m
 isString (StringV {}) = TrueV
 isString _ = FalseV
 
-defaultFilter :: Monad m => Filter m
+defaultFilter :: MonadRandom m => Filter m
 defaultFilter =
   NativeFilter
     (Just $ ProcedureDoc
@@ -467,8 +466,8 @@ defaultFilter =
           "`value` otherwise."
       }
     ) $
-    \expr args ctx env rng -> do
-      calleeEither <- runGingerT (evalE expr) ctx env rng
+    \expr args ctx env -> do
+      calleeEither <- runGingerT (evalE expr) ctx env
       let resolvedArgsEither = resolveArgs
                                 "default"
                                 [("default_value", Just (StringV "")), ("boolean", Just FalseV)]
@@ -488,9 +487,9 @@ defaultFilter =
         (Left err, _) ->
           pure . Left $ err
 
-isDefined :: forall m. Monad m => TestFunc m
-isDefined _ (_:_) _ _ _ = pure $ Left $ ArgumentError "defined" "0" "end of arguments" "argument"
-isDefined value [] ctx env rng = go value
+isDefined :: forall m. MonadRandom m => TestFunc m
+isDefined _ (_:_) _ _ = pure $ Left $ ArgumentError "defined" "0" "end of arguments" "argument"
+isDefined value [] ctx env = go value
   where
     go :: Expr -> m (Either RuntimeError Bool)
     go (PositionedE _ e) =
@@ -513,7 +512,7 @@ isDefined value [] ctx env rng = go value
       definedParent <- go parent
       case definedParent of
         Right True -> do
-          result <- runGingerT (evalE (InE selector parent)) ctx env rng
+          result <- runGingerT (evalE (InE selector parent)) ctx env
           case result of
             Left (NotInScopeError {}) -> pure . Right $ False
             Left err -> pure . Left $ err
@@ -560,18 +559,17 @@ isDefined value [] ctx env rng = go value
       definedKWArgs <- allEitherBool <$> mapM (\(_, x) -> go x) kwArgs
       pure $ allEitherBool [definedCallee, definedPosArgs, definedKWArgs]
 
-isUndefined :: Monad m => TestFunc m
-isUndefined expr args ctx env rng = do
-  defined <- isDefined expr args ctx env rng
+isUndefined :: MonadRandom m => TestFunc m
+isUndefined expr args ctx env = do
+  defined <- isDefined expr args ctx env
   pure $ not <$> defined
 
-isEqual :: Monad m => TestFunc m
-isEqual expr args ctx env rng =
-  runGingerT go ctx env rng
+isEqual :: MonadRandom m => TestFunc m
+isEqual expr args ctx env =
+  runGingerT go ctx env
   where
     go = do
-      rng' <- splitRNG
-      definedLHS <- native $ isDefined expr args ctx env rng'
+      definedLHS <- native $ isDefined expr args ctx env
       if definedLHS then do
         val <- eval expr
         equals <- mapM (valuesEqual val . snd) args
@@ -579,7 +577,7 @@ isEqual expr args ctx env rng =
       else
         pure False
 
-gingerBinopTest :: forall m. Monad m
+gingerBinopTest :: forall m. MonadRandom m
                 => BinaryOperator
                 -> Value m
 gingerBinopTest op =

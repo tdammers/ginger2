@@ -20,6 +20,7 @@ import Language.Ginger.Value
 
 import Control.Applicative ((<|>))
 import Control.Monad (forM)
+import Control.Monad.Random (MonadRandom)
 import Control.Monad.Except
   ( ExceptT (..)
   , MonadError (..)
@@ -46,7 +47,6 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as Text
-import System.Random (SplitGen (..))
 
 -- | The Ginger interpreter monad. Provides error reporting / handling via
 -- 'MonadError', an execution context ('Context'), and an evaluation state
@@ -65,7 +65,6 @@ data EvalState m =
     , evalLoadedTemplates :: !(Map Text CachedTemplate)
     , evalBlocks :: !(Map Identifier LoadedBlock)
     , evalSourcePosition :: !(Maybe SourcePosition)
-    , evalPRNG :: !SomePRNG
     }
 
 data LoadedBlock =
@@ -84,7 +83,6 @@ instance Semigroup (EvalState m) where
       , evalLoadedTemplates = evalLoadedTemplates a <> evalLoadedTemplates b
       , evalBlocks = evalBlocks a <> evalBlocks b
       , evalSourcePosition = evalSourcePosition a <|> evalSourcePosition b
-      , evalPRNG = evalPRNG a
       }
 
 data CachedTemplate
@@ -97,13 +95,12 @@ data LoadedTemplate =
     , loadedTemplateBody :: !Statement
     }
 
-runGingerT :: (Monad m, SplitGen g)
+runGingerT :: (MonadRandom m)
            => GingerT m a
            -> Context m
            -> Env m
-           -> g
            -> m (Either RuntimeError a)
-runGingerT g ctx env rng =
+runGingerT g ctx env =
   runExceptT
     (evalStateT
       (runReaderT (unGingerT g) ctx)
@@ -114,7 +111,6 @@ runGingerT g ctx env rng =
         , evalLoadedTemplates = mempty
         , evalBlocks = mempty
         , evalSourcePosition = Nothing
-        , evalPRNG = SomePRNG rng
         }
       )
     )

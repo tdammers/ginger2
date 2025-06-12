@@ -11,7 +11,6 @@ where
 
 import Control.Monad (void)
 import Control.Monad.Except (throwError)
-import Control.Monad.Identity
 import Control.Monad.State (gets)
 import Data.Bits ((.&.), shiftR)
 import Data.ByteString (ByteString)
@@ -32,7 +31,7 @@ import qualified Data.Text.Encoding as Text
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Word (Word8, Word16, Word32, Word64)
-import System.Random (mkStdGen, splitGen, uniformR)
+import System.Random (mkStdGen, randomR)
 import Test.QuickCheck.Instances ()
 import Test.Tasty
 import Test.Tasty.QuickCheck hiding ((.&.))
@@ -185,7 +184,7 @@ tests = testGroup "Language.Ginger.Interpret"
       ]
       , testGroup "CallE"
         [ testProperty "Native nullary" prop_nativeNullary
-        , testProperty "Native identity" prop_nativeIdentity
+        , testProperty "Native identity" prop_nativeGIdentity
         , testProperty "User nullary" prop_userNullary
         , testProperty "Namespace set/get" prop_namespaceSetGet
         ]
@@ -344,8 +343,7 @@ tests = testGroup "Language.Ginger.Interpret"
                   )
                   (\seed xs ->
                     let rng = mkStdGen seed
-                        (_rngL, rngR) = splitGen rng
-                        (i, _) = uniformR (0, V.length xs - 1) rngR
+                        (i, _) = randomR (0, V.length xs - 1) rng
                     in if V.null xs then
                           NoneV
                        else (V.map IntV xs) V.! i
@@ -462,6 +460,19 @@ tests = testGroup "Language.Ginger.Interpret"
                     <- Map.toAscList . Map.fromList $ items
                     ]
               )
+
+        , testProperty "dict" $
+            prop_eval
+              (\xs ->
+                CallE
+                  (VarE "dict")
+                  []
+                  [(k, IntLitE v) | (k, v) <- xs ]
+              )
+              (\xs ->
+                dictV [ StringScalar (identifierName k) .= v | (k, v) <- xs ]
+              )
+
 
         , testGroup "map"
             [ testProperty "map(string)" $
@@ -1493,18 +1504,18 @@ tests = testGroup "Language.Ginger.Interpret"
         , testProperty "dict is not false" $ prop_is @(Map Bool Bool) "false" False
         ]
       , testGroup "filter"
-        [ testProperty "even is filter" $ prop_is "filter" True (StringV "even" :: Value Identity)
-        , testProperty "default is filter" $ prop_is "filter" True (StringV "default" :: Value Identity)
-        , testProperty "number is not filter" $ prop_is "filter" False (StringV "number" :: Value Identity)
-        , testProperty "true is not filter" $ prop_is "filter" False (StringV "true" :: Value Identity)
-        , testProperty "none is not filter" $ prop_is "filter" False (StringV "none" :: Value Identity)
+        [ testProperty "even is filter" $ prop_is "filter" True (StringV "even" :: Value GIdentity)
+        , testProperty "default is filter" $ prop_is "filter" True (StringV "default" :: Value GIdentity)
+        , testProperty "number is not filter" $ prop_is "filter" False (StringV "number" :: Value GIdentity)
+        , testProperty "true is not filter" $ prop_is "filter" False (StringV "true" :: Value GIdentity)
+        , testProperty "none is not filter" $ prop_is "filter" False (StringV "none" :: Value GIdentity)
         ]
       , testGroup "test"
-        [ testProperty "even is test" $ prop_is "test" True (StringV "even" :: Value Identity)
-        , testProperty "default is not test" $ prop_is "test" False (StringV "default" :: Value Identity)
-        , testProperty "number is test" $ prop_is "test" True (StringV "number" :: Value Identity)
-        , testProperty "true is test" $ prop_is "test" True (StringV "true" :: Value Identity)
-        , testProperty "none is test" $ prop_is "test" True (StringV "none" :: Value Identity)
+        [ testProperty "even is test" $ prop_is "test" True (StringV "even" :: Value GIdentity)
+        , testProperty "default is not test" $ prop_is "test" False (StringV "default" :: Value GIdentity)
+        , testProperty "number is test" $ prop_is "test" True (StringV "number" :: Value GIdentity)
+        , testProperty "true is test" $ prop_is "test" True (StringV "true" :: Value GIdentity)
+        , testProperty "none is test" $ prop_is "test" True (StringV "none" :: Value GIdentity)
         ]
       ]
     ]
@@ -1526,7 +1537,7 @@ tests = testGroup "Language.Ginger.Interpret"
       ]
     , testGroup "CallS"
       [ testProperty "no args" prop_callNoArgs
-      , testProperty "identity" prop_callIdentity
+      , testProperty "identity" prop_callGIdentity
       , testProperty "echo" prop_callEcho
       , testProperty "ginger macro" prop_callMacro
       ]
@@ -1559,7 +1570,7 @@ tests = testGroup "Language.Ginger.Interpret"
     ]
   ]
 
-prop_noBottoms :: (Eval Identity a, Arbitrary a) => a -> Bool
+prop_noBottoms :: (Eval GIdentity a, Arbitrary a) => a -> Bool
 prop_noBottoms e =
   runGingerIdentityEither 0 (eval e) `seq` True
 
@@ -1567,11 +1578,11 @@ isProcedure :: Value m -> Bool
 isProcedure ProcedureV {} = True
 isProcedure _ = False
 
-prop_setVarLookupVar :: Identifier -> Value Identity -> Property
+prop_setVarLookupVar :: Identifier -> Value GIdentity -> Property
 prop_setVarLookupVar k v =
   let (w, equal) = runGingerIdentity 0 program
 
-      program :: GingerT Identity (Value Identity, Bool)
+      program :: GingerT GIdentity (Value GIdentity, Bool)
       program = do
         setVar k v
         v' <- lookupVar k
@@ -1593,15 +1604,15 @@ prop_stringifyNone :: Property
 prop_stringifyNone =
   runGingerIdentity 0 (stringify NoneV) === ""
 
-prop_stringifyShow :: (ToValue a Identity, Show a) => Proxy a -> a -> Property
+prop_stringifyShow :: (ToValue a GIdentity, Show a) => Proxy a -> a -> Property
 prop_stringifyShow _ i =
   let expected = Text.show i
       actual = runGingerIdentity 0 (stringify $ toValue i)
   in
     expected === actual
 
-prop_scopedVarsDisappear :: (Identifier, Value Identity)
-                         -> (Identifier, Value Identity)
+prop_scopedVarsDisappear :: (Identifier, Value GIdentity)
+                         -> (Identifier, Value GIdentity)
                          -> Property
 prop_scopedVarsDisappear (name1, val1) (name2, val2) =
   name1 /= name2 ==>
@@ -1631,7 +1642,7 @@ prop_stringFormat fmt = prop_stringFormatWith fmt (const [])
 
 prop_stringFormatWith :: (Arbitrary a, Show a)
                       => Text
-                      -> (a -> [(Identifier, Value Identity)])
+                      -> (a -> [(Identifier, Value GIdentity)])
                       -> (a -> ([Expr], [(Identifier, Expr)]))
                       -> (a -> Text)
                       -> a
@@ -1789,14 +1800,14 @@ prop_sliceBytesBoth (ArbitraryByteString items) start end =
   in
     actual === expected
 
-prop_unop :: (ToValue a Identity, ToValue b Identity)
+prop_unop :: (ToValue a GIdentity, ToValue b GIdentity)
            => UnaryOperator
            -> (a -> b)
            -> a
            -> Property
 prop_unop = prop_unopCond Just
 
-prop_unopCond :: (ToValue a' Identity, ToValue b Identity)
+prop_unopCond :: (ToValue a' GIdentity, ToValue b GIdentity)
                => (a -> Maybe a')
                -> UnaryOperator
                -> (a' -> b)
@@ -1812,7 +1823,7 @@ prop_unopCond fX unop f x' =
     isJust x ==>
     resultG === resultH
 
-prop_binop :: (ToValue a Identity, ToValue b Identity, ToValue c Identity)
+prop_binop :: (ToValue a GIdentity, ToValue b GIdentity, ToValue c GIdentity)
            => BinaryOperator
            -> (a -> b -> c)
            -> a
@@ -1820,7 +1831,7 @@ prop_binop :: (ToValue a Identity, ToValue b Identity, ToValue c Identity)
            -> Property
 prop_binop = prop_binopCond Just Just
 
-prop_binopCond :: (ToValue a' Identity, ToValue b' Identity, ToValue c Identity)
+prop_binopCond :: (ToValue a' GIdentity, ToValue b' GIdentity, ToValue c GIdentity)
                => (a -> Maybe a')
                -> (b -> Maybe b')
                -> BinaryOperator
@@ -1866,10 +1877,10 @@ prop_divToNaN =
   in
     result === leftPRE (NumericError "/" "not a number")
 
-prop_literal :: ToValue a Identity => (a -> Expr) -> a -> Property
+prop_literal :: ToValue a GIdentity => (a -> Expr) -> a -> Property
 prop_literal = prop_literalWith id
 
-prop_literalWith :: ToValue b Identity => (a -> b) -> (b -> Expr) -> a -> Property
+prop_literalWith :: ToValue b GIdentity => (a -> b) -> (b -> Expr) -> a -> Property
 prop_literalWith f mkExpr val =
   let expr = mkExpr (f val)
       result = runGingerIdentity 0 (eval expr)
@@ -1904,18 +1915,18 @@ prop_varNeg name1 val1 name2 =
 prop_nativeNullary :: Identifier -> Integer -> Property
 prop_nativeNullary varName constVal =
   let fVal = ProcedureV . NativeProcedure "testsuite:nativeNullary" Nothing $
-              const . const . const . pure @Identity . Right . toValue $ constVal
+              const . const . pure @GIdentity . Right . toValue $ constVal
       expr = CallE (VarE varName) [] []
       result = runGingerIdentity 0 (setVar varName fVal >> eval expr)
   in
     result === toValue constVal
 
-prop_nativeIdentity :: Identifier -> Identifier -> Integer -> Property
-prop_nativeIdentity varName argVarName arg =
+prop_nativeGIdentity :: Identifier -> Identifier -> Integer -> Property
+prop_nativeGIdentity varName argVarName arg =
   let fVal = fnToValue
-                "testsuite:nativeIdentity"
+                "testsuite:nativeGIdentity"
                 Nothing
-                (id :: Value Identity -> Value Identity)
+                (id :: Value GIdentity -> Value GIdentity)
       argVal = toValue arg
       expr = CallE (VarE varName) [VarE argVarName] []
       result = runGingerIdentity 0 $ do
@@ -1978,7 +1989,7 @@ prop_isDefinedTrueDict name selector val =
   in
     result === TrueV
 
-prop_is :: ToValue a Identity => Identifier -> Bool -> a -> Property
+prop_is :: ToValue a GIdentity => Identifier -> Bool -> a -> Property
 prop_is testName expected val =
   let testE = case testName of
                 "none" -> NoneE
@@ -1991,36 +2002,36 @@ prop_is testName expected val =
   in
     result === BoolV expected
 
-prop_eval :: (Arbitrary a, Show a, RenderSyntax e, Eval Identity e)
+prop_eval :: (Arbitrary a, Show a, RenderSyntax e, Eval GIdentity e)
           => (a -> e)
-          -> (a -> Value Identity)
+          -> (a -> Value GIdentity)
           -> a
           -> Property
 prop_eval mkEvaluable mkExpected =
   prop_evalRNG mkEvaluable (const mkExpected) 0
 
-prop_evalWith :: (Arbitrary a, Show a, RenderSyntax e, Eval Identity e)
-          => (a -> [(Identifier, Value Identity)])
+prop_evalWith :: (Arbitrary a, Show a, RenderSyntax e, Eval GIdentity e)
+          => (a -> [(Identifier, Value GIdentity)])
           -> (a -> e)
-          -> (a -> Value Identity)
+          -> (a -> Value GIdentity)
           -> a
           -> Property
 prop_evalWith vars mkEvaluable mkExpected =
   prop_evalRNGWith vars mkEvaluable (const mkExpected) 0
 
-prop_evalRNG :: (Arbitrary a, Show a, RenderSyntax e, Eval Identity e)
+prop_evalRNG :: (Arbitrary a, Show a, RenderSyntax e, Eval GIdentity e)
              => (a -> e)
-             -> (Int -> a -> Value Identity)
+             -> (Int -> a -> Value GIdentity)
              -> Int
              -> a
              -> Property
 prop_evalRNG =
   prop_evalRNGWith (const [])
 
-prop_evalRNGWith :: (Arbitrary a, Show a, RenderSyntax e, Eval Identity e)
-                 => (a -> [(Identifier, Value Identity)])
+prop_evalRNGWith :: (Arbitrary a, Show a, RenderSyntax e, Eval GIdentity e)
+                 => (a -> [(Identifier, Value GIdentity)])
                  -> (a -> e)
-                 -> (Int -> a -> Value Identity)
+                 -> (Int -> a -> Value GIdentity)
                  -> Int
                  -> a
                  -> Property
@@ -2033,7 +2044,7 @@ prop_evalRNGWith mkVars mkEvaluable mkExpected seed x =
     counterexample (Text.unpack $ renderSyntaxText e) $
     result === expected
 
-prop_attr :: (Arbitrary a, Show a, ToValue b Identity)
+prop_attr :: (Arbitrary a, Show a, ToValue b GIdentity)
             => Identifier
             -> (a -> Expr)
             -> (a -> b)
@@ -2047,7 +2058,7 @@ prop_method :: (Arbitrary a, Show a)
             => Identifier
             -> (a -> Expr)
             -> (a -> [Expr])
-            -> (a -> Value Identity)
+            -> (a -> Value GIdentity)
             -> a
             -> Property
 prop_method methodName = prop_methodCond methodName (const True)
@@ -2057,7 +2068,7 @@ prop_methodCond :: (Arbitrary a, Show a)
             -> (a -> Bool)
             -> (a -> Expr)
             -> (a -> [Expr])
-            -> (a -> Value Identity)
+            -> (a -> Value GIdentity)
             -> a
             -> Property
 prop_methodCond methodName valid mkSelf mkArgs mkExpected t =
@@ -2279,8 +2290,8 @@ prop_callNoArgs body =
     either (const True) (not . getAny . traverseValue (Any . isProcedure)) resultDirect ==>
     resultCall === resultDirect
 
-prop_callIdentity :: Expr -> Property
-prop_callIdentity body =
+prop_callGIdentity :: Expr -> Property
+prop_callGIdentity body =
   -- Some trickery is needed to make sure that if anything inside @body@
   -- references a variable @f@, it points to the same thing in both cases.
   let body' = StatementE $ GroupS
@@ -2292,9 +2303,9 @@ prop_callIdentity body =
       resultCall = runGingerIdentityEither 0 $ do
                       setVar "f" $
                         fnToValue
-                          "testsuite:callIdentity"
+                          "testsuite:callGIdentity"
                           Nothing
-                          (id :: Value Identity -> Value Identity)
+                          (id :: Value GIdentity -> Value GIdentity)
                       eval $ CallS "f" [body'] [] (InterpolationS NoneE)
       cat = case resultDirect of
               Right {} -> "OK"
@@ -2828,6 +2839,6 @@ hasNoLoopRefs stmt =
 
 varOK :: Identifier -> Bool
 varOK varName =
-    not (varName `Map.member` envVars (defEnv @Identity)) &&
+    not (varName `Map.member` envVars (defEnv @GIdentity)) &&
     not (varName `Set.member` ["e", "loop", "caller"])
 

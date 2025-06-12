@@ -17,12 +17,13 @@ import Language.Ginger.AST
 import Language.Ginger.Interpret.Type
 import Language.Ginger.Render (renderSyntaxText)
 import Language.Ginger.RuntimeError
-import Language.Ginger.Value
 import Language.Ginger.StringFormatting (FormatArg (..))
+import Language.Ginger.Value
 
 import Control.Applicative ( (<|>) )
 import Control.Monad ( (<=<) )
 import Control.Monad.Except
+import Control.Monad.Random (MonadRandom, getRandomR)
 import Control.Monad.Trans (lift, MonadTrans (..))
 import qualified Data.Aeson as JSON
 import qualified Data.Array as Array
@@ -57,7 +58,6 @@ import Data.Time
         )
 import Data.Vector (Vector)
 import qualified Data.Vector as V
-import System.Random (uniformR)
 import Text.Printf (printf)
 import Text.Read (readMaybe)
 import qualified Text.Regex.TDFA as RE
@@ -68,7 +68,7 @@ import qualified Text.Regex.TDFA as RE
 
 type BuiltinAttribs a m = Map Identifier (a -> m (Either RuntimeError (Value m)))
 
-builtinGlobals :: forall m. Monad m
+builtinGlobals :: forall m. MonadRandom m
                  => (Expr -> GingerT m (Value m))
                  -> Map Identifier (Value m)
 builtinGlobals evalE = Map.fromList $
@@ -135,6 +135,7 @@ builtinGlobals evalE = Map.fromList $
                       Text.toTitle)
   , ("center", ProcedureV fnCenter)
   , ("count", ProcedureV fnLength)
+  , ("dict", ProcedureV fnDict)
   , ("dictsort", ProcedureV fnDictsort)
   , ("e", ProcedureV fnEscape)
   , ("escape", ProcedureV fnEscape)
@@ -756,7 +757,7 @@ fnEscape = mkFn1' "escape"
               , ""
               )
               (Just $ TypeDocSingle "encoded")
-  $ \ctx _ value ->
+  $ \ctx value ->
         (EncodedV @m) <$>
           encodeWith ctx value
 
@@ -993,7 +994,7 @@ caseFoldValue (StringV t) = StringV (Text.toCaseFold t)
 caseFoldValue (EncodedV (Encoded t)) = EncodedV (Encoded (Text.toCaseFold t))
 caseFoldValue x = x
 
-fnRandom :: forall m. Monad m => Procedure m
+fnRandom :: forall m. MonadRandom m => Procedure m
 fnRandom = mkFn1' "random"
               "Pick a random element from a list"
               ( "value"
@@ -1002,11 +1003,11 @@ fnRandom = mkFn1' "random"
               , ""
               )
               (Just $ TypeDocAny)
-  $ \_ctx rng xs -> do
+  $ \_ctx xs -> do
     if V.null xs then
       pure NoneV
     else do
-      let (i, _) = uniformR (0, V.length xs - 1) rng
+      i <- getRandomR (0, V.length xs - 1)
       pure $ xs V.! i
 
 fnReverse :: forall m. Monad m => Procedure m
@@ -1092,6 +1093,25 @@ fnSort = mkFn4 "sort"
 
 
 
+fnDict :: forall m. Monad m => Procedure m
+fnDict =
+  NativeProcedure "builtin:dict"
+    (Just ProcedureDoc
+      { procedureDocName = "dict"
+      , procedureDocArgs = []
+      , procedureDocReturnType = Just $ TypeDocSingle "dict"
+      , procedureDocDescription =
+          Text.unlines
+            [ "Construct a dictionary from named arguments."
+            , ""
+            , "`{'foo': 'bar'}` is the same as `dict(foo='bar')`."
+            ]
+      }
+    )
+  $ \allArgs _ctx -> do
+      let kwArgs = [ (toScalar k, v) | (Just k, v) <- allArgs ]
+      pure . Right . DictV $ Map.fromList kwArgs
+
 fnDictsort :: forall m. Monad m => Procedure m
 fnDictsort = mkFn4 "dictsort"
               "Sort a dict, returning a list of key-value pairs."
@@ -1140,17 +1160,17 @@ fnDictsort = mkFn4 "dictsort"
     items' <- mapM proj itemsRaw
     pure $ map snd $ sortBy cmp' items'
 
-fnSelectAttr :: forall m. Monad m
+fnSelectAttr :: forall m. MonadRandom m
          => (Expr -> GingerT m (Value m))
          -> Filter m
 fnSelectAttr = fnSelectRejectAttr False "selectattr" "selectattr"
 
-fnRejectAttr :: forall m. Monad m
+fnRejectAttr :: forall m. MonadRandom m
          => (Expr -> GingerT m (Value m))
          -> Filter m
 fnRejectAttr = fnSelectRejectAttr True "rejectattr" "rejectattr"
 
-fnSelectRejectAttr :: forall m. Monad m
+fnSelectRejectAttr :: forall m. MonadRandom m
                => Bool
                -> Text
                -> Text
@@ -1200,7 +1220,7 @@ fnSelectRejectAttr invert procName procDescName evalE =
           ]
       }
     ) $
-    \scrutineeE args ctx env rng -> runExceptT $ do
+    \scrutineeE args ctx env -> runExceptT $ do
       -- This one is quite a monster, because it accepts arguments in so many
       -- different ways.
       -- Specifically:
@@ -1225,7 +1245,7 @@ fnSelectRejectAttr invert procName procDescName evalE =
       varargs <- fnArg funcName "*" argValues
       (kwargs :: Map Scalar (Value m)) <- fnArg funcName "**" argValues
       (scrutinee :: Value m) <- eitherExceptM $
-                                  runGingerT (evalE scrutineeE) ctx env rng
+                                  runGingerT (evalE scrutineeE) ctx env
       (xs :: Vector (Value m)) <- eitherExceptM $ fromValue scrutinee
 
       case varargs of
@@ -1262,7 +1282,7 @@ fnSelectRejectAttr invert procName procDescName evalE =
                     testV' <- eitherExceptM $
                       runGingerT
                         (withJinjaTests $ evalE (VarE $ Identifier name))
-                        ctx env rng
+                        ctx env
                     apply' testV' x
                   DictV m -> do
                     -- If it's a dict, try to find a @"__call__"@ item.
@@ -1289,11 +1309,11 @@ fnSelectRejectAttr invert procName procDescName evalE =
                     -- scrutinee argument, but we have an already-evaluated
                     -- value.
                     let env' = env { envVars = Map.insert "@" x $ envVars env }
-                    eitherExceptM $ runTest f (VarE "@") args' ctx env' rng
+                    eitherExceptM $ runTest f (VarE "@") args' ctx env'
                   ProcedureV (NativeProcedure _ _ f) -> do
                     -- If it's a native procedure, we can just call it without
                     -- binding anything.
-                    eitherExceptM (f ((Nothing, x):args') ctx rng) >>=
+                    eitherExceptM (f ((Nothing, x):args') ctx) >>=
                       eitherExcept . asTruthVal "native procedure"
                   ProcedureV (GingerProcedure env' argSpecs body) -> do
                     -- If it's a ginger procedure, we need to prepend the
@@ -1306,7 +1326,7 @@ fnSelectRejectAttr invert procName procDescName evalE =
                                   "select callback"
                                   argSpecs
                                   ((Nothing, x):args')
-                    eitherExceptM (runGingerT (setVars args'' >> evalE body) ctx env' rng) >>=
+                    eitherExceptM (runGingerT (setVars args'' >> evalE body) ctx env') >>=
                         eitherExcept . asTruthVal "ginger procedure"
                   _ ->
                     -- Not something we can call.
@@ -1331,17 +1351,17 @@ scalarToIdentifier (IntScalar i) = Just $ Identifier (Text.show i)
 scalarToIdentifier (FloatScalar f) = Just $ Identifier (Text.show f) -- dubious
 scalarToIdentifier _ = Nothing
 
-fnSelect :: forall m. Monad m
+fnSelect :: forall m. MonadRandom m
          => (Expr -> GingerT m (Value m))
          -> Filter m
 fnSelect = fnSelectReject False "select" "select"
 
-fnReject :: forall m. Monad m
+fnReject :: forall m. MonadRandom m
          => (Expr -> GingerT m (Value m))
          -> Filter m
 fnReject = fnSelectReject True "reject" "reject"
 
-fnSelectReject :: forall m. Monad m
+fnSelectReject :: forall m. MonadRandom m
                => Bool
                -> Text
                -> Text
@@ -1372,7 +1392,7 @@ fnSelectReject invert procName procDescName evalE =
           ]
       }
     ) $
-    \scrutineeE args ctx env rng -> runExceptT $ do
+    \scrutineeE args ctx env -> runExceptT $ do
       -- This one is quite a monster, because it accepts arguments in so many
       -- different ways.
       -- Specifically:
@@ -1397,7 +1417,7 @@ fnSelectReject invert procName procDescName evalE =
       varargs <- fnArg funcName "*" argValues
       (kwargs :: Map Scalar (Value m)) <- fnArg funcName "**" argValues
       (scrutinee :: Value m) <- eitherExceptM $
-                                  runGingerT (evalE scrutineeE) ctx env rng
+                                  runGingerT (evalE scrutineeE) ctx env
       (xs :: Vector (Value m)) <- eitherExceptM $ fromValue scrutinee
 
       case varargs of
@@ -1424,7 +1444,7 @@ fnSelectReject invert procName procDescName evalE =
                     testV' <- eitherExceptM $
                       runGingerT
                         (withJinjaTests $ evalE (VarE $ Identifier name))
-                        ctx env rng
+                        ctx env
                     apply' testV' x
                   DictV m -> do
                     -- If it's a dict, try to find a @"__call__"@ item.
@@ -1451,7 +1471,7 @@ fnSelectReject invert procName procDescName evalE =
                     -- scrutinee argument, but we have an already-evaluated
                     -- value.
                     let env' = env { envVars = Map.insert "@" x $ envVars env }
-                    eitherExceptM $ runTest f (VarE "@") args' ctx env' rng
+                    eitherExceptM $ runTest f (VarE "@") args' ctx env'
                   FilterV f -> do
                     -- If it's a filter, we apply it as such, mapping the
                     -- current list element to the variable "@" (which cannot
@@ -1461,12 +1481,12 @@ fnSelectReject invert procName procDescName evalE =
                     -- scrutinee argument, but we have an already-evaluated
                     -- value.
                     let env' = env { envVars = Map.insert "@" x $ envVars env }
-                    eitherExceptM (runFilter f (VarE "@") args' ctx env' rng) >>=
+                    eitherExceptM (runFilter f (VarE "@") args' ctx env') >>=
                       (eitherExcept . asBoolVal "filter")
                   ProcedureV (NativeProcedure _ _ f) -> do
                     -- If it's a native procedure, we can just call it without
                     -- binding anything.
-                    eitherExceptM (f ((Nothing, x):args') ctx rng) >>=
+                    eitherExceptM (f ((Nothing, x):args') ctx) >>=
                       eitherExcept . asTruthVal "native procedure"
                   ProcedureV (GingerProcedure env' argSpecs body) -> do
                     -- If it's a ginger procedure, we need to prepend the
@@ -1479,7 +1499,7 @@ fnSelectReject invert procName procDescName evalE =
                                   "select callback"
                                   argSpecs
                                   ((Nothing, x):args')
-                    eitherExceptM (runGingerT (setVars args'' >> evalE body) ctx env' rng) >>=
+                    eitherExceptM (runGingerT (setVars args'' >> evalE body) ctx env') >>=
                         eitherExcept . asTruthVal "ginger procedure"
                   _ ->
                     -- Not something we can call.
@@ -1492,7 +1512,7 @@ fnSelectReject invert procName procDescName evalE =
 
           ListV <$> V.filterM apply xs
 
-fnMap :: forall m. Monad m
+fnMap :: forall m. MonadRandom m
       => (Expr -> GingerT m (Value m))
       -> Filter m
 fnMap evalE =
@@ -1506,7 +1526,7 @@ fnMap evalE =
           ]
       }
     ) $
-  \scrutineeE args ctx env rng -> runExceptT $ do
+  \scrutineeE args ctx env -> runExceptT $ do
     -- This one is quite a monster, because it accepts arguments in so many
     -- different ways.
     -- Specifically:
@@ -1528,7 +1548,7 @@ fnMap evalE =
         args
     varargs <- fnArg funcName "*" argValues
     (kwargs :: Map Scalar (Value m)) <- fnArg funcName "**" argValues
-    (scrutinee :: Value m) <- eitherExceptM $ runGingerT (evalE scrutineeE) ctx env rng
+    (scrutinee :: Value m) <- eitherExceptM $ runGingerT (evalE scrutineeE) ctx env
     (xs :: Vector (Value m)) <- eitherExceptM $ fromValue scrutinee
 
     -- First, let's see if an attribute was specified.
@@ -1573,7 +1593,7 @@ fnMap evalE =
                       filterV' <- eitherExceptM $
                         runGingerT
                           (withJinjaFilters $ evalE (VarE $ Identifier name))
-                          ctx env rng
+                          ctx env
                       apply' filterV' x
                     DictV m -> do
                       -- If it's a dict, try to find a @"__call__"@ item.
@@ -1599,11 +1619,11 @@ fnMap evalE =
                       -- scrutinee argument, but we have an already-evaluated
                       -- value.
                       let env' = env { envVars = Map.insert "@" x $ envVars env }
-                      eitherExceptM $ runFilter f (VarE "@") args' ctx env' rng
+                      eitherExceptM $ runFilter f (VarE "@") args' ctx env'
                     ProcedureV (NativeProcedure _ _ f) -> do
                       -- If it's a native procedure, we can just call it without
                       -- binding anything.
-                      eitherExceptM $ f ((Nothing, x):args') ctx rng
+                      eitherExceptM $ f ((Nothing, x):args') ctx
                     ProcedureV (GingerProcedure env' argSpecs body) -> do
                       -- If it's a ginger procedure, we need to prepend the
                       -- current list element to the argument list (so it becomes
@@ -1616,7 +1636,7 @@ fnMap evalE =
                                     argSpecs
                                     ((Nothing, x):args')
                       eitherExceptM $
-                        runGingerT (setVars args'' >> evalE body) ctx env' rng
+                        runGingerT (setVars args'' >> evalE body) ctx env'
                     _ ->
                       -- Not something we can call.
                         throwError $
@@ -2906,7 +2926,7 @@ builtinNotImplemented name =
     NativeProcedure
       (ObjectID $ "builtin:not_implemented:" <> name)
       Nothing
-      $ \_ _ _ ->
+      $ \_ _ ->
         pure . Left $ NotImplementedError name
 
 fnMaybeArg :: Monad m => Text -> Text -> Maybe b -> ExceptT RuntimeError m b
@@ -2949,7 +2969,7 @@ mkFn0' :: ( Monad m
       => Text
       -> Text
       -> Maybe TypeDoc
-      -> (Context m -> SomePRNG -> ExceptT RuntimeError m r)
+      -> (Context m -> ExceptT RuntimeError m r)
       -> Procedure m
 mkFn0' funcName desc retType f =
   NativeProcedure (ObjectID $ "builtin:" <> funcName)
@@ -2960,13 +2980,13 @@ mkFn0' funcName desc retType f =
       , procedureDocDescription = desc
       }
     )
-    $ \args ctx rng -> runExceptT $ do
+    $ \args ctx -> runExceptT $ do
       _ <- eitherExcept $
         resolveArgs
           funcName
           []
           args
-      toValue <$> f ctx rng
+      toValue <$> f ctx
 
 mkFn0 :: ( Monad m
          , ToValue r m
@@ -2977,7 +2997,7 @@ mkFn0 :: ( Monad m
       -> (ExceptT RuntimeError m r)
       -> Procedure m
 mkFn0 funcName desc retType f =
-  mkFn0' funcName desc retType (const . const $ f)
+  mkFn0' funcName desc retType (const $ f)
 
 mkFn1' :: forall m a r.
           ( Monad m
@@ -2989,7 +3009,7 @@ mkFn1' :: forall m a r.
        -> Text
        -> (Identifier, Maybe a, Maybe TypeDoc, Text)
        -> Maybe TypeDoc
-       -> (Context m -> SomePRNG -> a -> ExceptT RuntimeError m r)
+       -> (Context m -> a -> ExceptT RuntimeError m r)
        -> Procedure m
 mkFn1' funcName desc (argname1, default1, typedoc1, argdesc1) retType f =
   NativeProcedure (ObjectID $ "builtin:" <> funcName)
@@ -3002,7 +3022,7 @@ mkFn1' funcName desc (argname1, default1, typedoc1, argdesc1) retType f =
       , procedureDocDescription = desc
       }
     )
-    $ \args ctx rng -> runExceptT $ do
+    $ \args ctx -> runExceptT $ do
       argValues <- eitherExcept $
         resolveArgs
           funcName
@@ -3010,7 +3030,7 @@ mkFn1' funcName desc (argname1, default1, typedoc1, argdesc1) retType f =
           ]
           args
       arg1 <- fnArg funcName argname1 argValues
-      toValue <$> f ctx rng arg1
+      toValue <$> f ctx arg1
 
 mkFn1 :: ( Monad m
          , ToValue a m
@@ -3024,7 +3044,7 @@ mkFn1 :: ( Monad m
       -> (a -> ExceptT RuntimeError m r)
       -> Procedure m
 mkFn1 funcName a desc retType f =
-  mkFn1' funcName a desc retType (const . const $ f)
+  mkFn1' funcName a desc retType (const $ f)
 
 mkFn2' :: forall m a1 a2 r.
          ( Monad m
@@ -3039,7 +3059,7 @@ mkFn2' :: forall m a1 a2 r.
       -> (Identifier, Maybe a1, Maybe TypeDoc, Text)
       -> (Identifier, Maybe a2, Maybe TypeDoc, Text)
       -> Maybe TypeDoc
-      -> (Context m -> SomePRNG -> a1 -> a2 -> ExceptT RuntimeError m r)
+      -> (Context m -> a1 -> a2 -> ExceptT RuntimeError m r)
       -> Procedure m
 mkFn2' funcName desc
     (argname1, default1, typedoc1, argdesc1)
@@ -3057,7 +3077,7 @@ mkFn2' funcName desc
       , procedureDocDescription = desc
       }
     )
-    $ \args ctx rng -> runExceptT $ do
+    $ \args ctx -> runExceptT $ do
       argValues <- eitherExcept $
         resolveArgs
           funcName
@@ -3067,7 +3087,7 @@ mkFn2' funcName desc
           args
       arg1 <- fnArg funcName argname1 argValues
       arg2 <- fnArg funcName argname2 argValues
-      toValue <$> f ctx rng arg1 arg2
+      toValue <$> f ctx arg1 arg2
 
 mkFn2 :: ( Monad m
          , ToValue a1 m
@@ -3084,7 +3104,7 @@ mkFn2 :: ( Monad m
       -> (a1 -> a2 -> ExceptT RuntimeError m r)
       -> Procedure m
 mkFn2 funcName desc a b retType f =
-  mkFn2' funcName desc a b retType (const . const $ f)
+  mkFn2' funcName desc a b retType (const $ f)
 
 mkFn3' :: forall m a1 a2 a3 r.
          ( Monad m
@@ -3102,7 +3122,7 @@ mkFn3' :: forall m a1 a2 a3 r.
       -> (Identifier, Maybe a2, Maybe TypeDoc, Text)
       -> (Identifier, Maybe a3, Maybe TypeDoc, Text)
       -> Maybe TypeDoc
-      -> (Context m -> SomePRNG -> a1 -> a2 -> a3 -> ExceptT RuntimeError m r)
+      -> (Context m -> a1 -> a2 -> a3 -> ExceptT RuntimeError m r)
       -> Procedure m
 mkFn3' funcName desc
     (argname1, default1, typedoc1, argdesc1)
@@ -3122,7 +3142,7 @@ mkFn3' funcName desc
       , procedureDocDescription = desc
       }
     )
-    $ \args ctx rng -> runExceptT $ do
+    $ \args ctx -> runExceptT $ do
       argValues <- eitherExcept $
         resolveArgs
           funcName
@@ -3134,7 +3154,7 @@ mkFn3' funcName desc
       arg1 <- fnArg funcName argname1 argValues
       arg2 <- fnArg funcName argname2 argValues
       arg3 <- fnArg funcName argname3 argValues
-      toValue <$> f ctx rng arg1 arg2 arg3
+      toValue <$> f ctx arg1 arg2 arg3
 
 mkFn3 :: ( Monad m
          , ToValue a1 m
@@ -3154,7 +3174,7 @@ mkFn3 :: ( Monad m
       -> (a1 -> a2 -> a3 -> ExceptT RuntimeError m r)
       -> Procedure m
 mkFn3 funcName desc a b c retType f =
-  mkFn3' funcName desc a b c retType (const . const $ f)
+  mkFn3' funcName desc a b c retType (const $ f)
 
 mkFn4' :: forall m a1 a2 a3 a4 r.
          ( Monad m
@@ -3175,7 +3195,7 @@ mkFn4' :: forall m a1 a2 a3 a4 r.
       -> (Identifier, Maybe a3, Maybe TypeDoc, Text)
       -> (Identifier, Maybe a4, Maybe TypeDoc, Text)
       -> Maybe TypeDoc
-      -> (Context m -> SomePRNG -> a1 -> a2 -> a3 -> a4 -> ExceptT RuntimeError m r)
+      -> (Context m -> a1 -> a2 -> a3 -> a4 -> ExceptT RuntimeError m r)
       -> Procedure m
 mkFn4' funcName desc
     (argname1, default1, typedoc1, argdesc1)
@@ -3197,7 +3217,7 @@ mkFn4' funcName desc
       , procedureDocDescription = desc
       }
     )
-    $ \args ctx rng -> runExceptT $ do
+    $ \args ctx -> runExceptT $ do
       argValues <- eitherExcept $
         resolveArgs
           funcName
@@ -3211,7 +3231,7 @@ mkFn4' funcName desc
       arg2 <- fnArg funcName argname2 argValues
       arg3 <- fnArg funcName argname3 argValues
       arg4 <- fnArg funcName argname4 argValues
-      toValue <$> f ctx rng arg1 arg2 arg3 arg4
+      toValue <$> f ctx arg1 arg2 arg3 arg4
 
 mkFn4 :: ( Monad m
          , ToValue a1 m
@@ -3234,4 +3254,4 @@ mkFn4 :: ( Monad m
       -> (a1 -> a2 -> a3 -> a4 -> ExceptT RuntimeError m r)
       -> Procedure m
 mkFn4 funcName desc a b c d retType f =
-  mkFn4' funcName desc a b c d retType (const . const $ f)
+  mkFn4' funcName desc a b c d retType (const $ f)

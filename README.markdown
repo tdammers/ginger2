@@ -83,13 +83,10 @@ For a full description of the syntax, refer to the Haddock documentation for the
 
 - `forceescape`
 - `format`
-- `groupby`
 - `indent`
 - `pprint`
-- `selectattr`
 - `slice`
 - `striptags`
-- `rejectattr`
 - `trim`
 - `truncate`
 - `unique`
@@ -97,6 +94,11 @@ For a full description of the syntax, refer to the Haddock documentation for the
 - `urlize`
 - `wordwrap`
 - `xmlattr`
+- `range`
+- `lipsum`
+- `dict`
+- `joiner`
+- `cycler`
 
 #### Tests
 

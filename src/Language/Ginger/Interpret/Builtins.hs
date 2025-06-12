@@ -15,6 +15,7 @@ where
 
 import Language.Ginger.AST
 import Language.Ginger.Interpret.Type
+import Language.Ginger.Lipsum
 import Language.Ginger.Render (renderSyntaxText)
 import Language.Ginger.RuntimeError
 import Language.Ginger.StringFormatting (FormatArg (..))
@@ -168,6 +169,7 @@ builtinGlobals evalE = Map.fromList $
   , ("json", ProcedureV fnToJSON)
   , ("last", ProcedureV fnLast)
   , ("length", ProcedureV fnLength)
+  , ("lipsum", ProcedureV fnLipsum)
   , ("list", ProcedureV fnToList)
   , ("lower", textBuiltin
                 "builtin:lower"
@@ -232,7 +234,7 @@ builtinGlobals evalE = Map.fromList $
     )
   , ("selectattr", FilterV $ fnSelectAttr evalE)
   , ("select", FilterV $ fnSelect evalE)
-  -- , ("slice", undefined)
+  , ("slice", ProcedureV fnSlice)
   , ("sort", ProcedureV fnSort)
   , ("split", ProcedureV fnStrSplit)
   , ("string", ProcedureV fnToString)
@@ -1049,6 +1051,46 @@ instance (Monad m) => FromValue DictSortBy m where
   fromValue (StringV "value") = pure . Right $ ByValue
   fromValue (StringV x) = pure . Left $ TagError "conversion to dictsort target" "'key' or 'value'" ("string " <> Text.show x)
   fromValue x = pure . Left $ TagError "conversion to dictsort target" "string" (tagNameOf x)
+
+fnSlice :: forall m. Monad m => Procedure m
+fnSlice = mkFn3 "slice"
+              (Text.unlines
+                [ "Slice a list into `slices` chunks."
+                , ""
+                , "If `fill_with` is given, pad the last chunk with copies " <>
+                  "of that value to make it the same length as the other " <>
+                  "chunks."
+                ]
+              )
+              ( "value"
+              , Nothing
+              , Just $ TypeDocSingle "list"
+              , ""
+              )
+              ( "slices"
+              , Nothing
+              , Just $ TypeDocSingle "int"
+              , "Number of slices/chunks."
+              )
+              ( "fill_with"
+              , Just (Nothing :: (Maybe (Value m)))
+              , Just $ TypeDocAny
+              , "Item to pad last slice with."
+              )
+              (Just $ TypeDocSingle "list")
+  $ \value slices fillWithMay -> do
+      let sliceSize = (V.length value + slices - 1) `div` slices
+          go xs | V.null xs
+                = mempty
+                | V.length xs >= sliceSize
+                = V.take sliceSize xs `V.cons` go (V.drop sliceSize xs)
+                | otherwise
+                = V.singleton $
+                    xs <> case fillWithMay of
+                              Nothing -> mempty
+                              Just fillWith ->
+                                V.replicate (sliceSize - V.length xs) fillWith
+      pure (go value :: Vector (Vector (Value m)))
 
 fnSort :: forall m. Monad m => Procedure m
 fnSort = mkFn4 "sort"
@@ -2036,6 +2078,33 @@ fnCenter = mkFn3 "center"
       Text.replicate paddingLeft fillchar <>
       value <>
       Text.replicate paddingRight fillchar
+
+fnLipsum :: MonadRandom m => Procedure m
+fnLipsum = mkFn4 "lipsum"
+              "Generate some lorem ipsum"
+              ( "n"
+              , Just 5
+              , Just $ TypeDocSingle "int"
+              , "Number of paragraphs to generate."
+              )
+              ( "html"
+              , Just False
+              , Just $ TypeDocSingle "bool"
+              , "Whether to generate HTML or plaintext. Currently ignored."
+              )
+              ( "min"
+              , Just 20
+              , Just $ TypeDocSingle "int"
+              , "Minimum number of words per paragraph."
+              )
+              ( "max"
+              , Just 100
+              , Just $ TypeDocSingle "int"
+              , "Maximum number of words per paragraph."
+              )
+              (Just $ TypeDocSingle "string")
+  $ \n _html minWords maxWords ->
+      lipsumM n minWords maxWords
 
 newtype FileSize = FileSize Integer
 

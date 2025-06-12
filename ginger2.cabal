@@ -34,6 +34,7 @@ library
                    , Language.Ginger.Interpret.DefEnv
                    , Language.Ginger.Interpret.Type
                    , Language.Ginger.Interpret.Eval
+                   , Language.Ginger.Lipsum
                    , Language.Ginger.Parse
                    , Language.Ginger.FileLoader
                    , Language.Ginger.Render

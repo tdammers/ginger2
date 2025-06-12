@@ -570,7 +570,7 @@ extends =
     stringLit <* space
 
 simplifyS :: Statement -> Statement
-simplifyS = traverseS simplifyOne id
+simplifyS = omapS simplifyOne id
   where
     simplifyOne (GroupS xs) = wrap xs
     simplifyOne s = s

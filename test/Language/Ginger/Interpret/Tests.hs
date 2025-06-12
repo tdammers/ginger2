@@ -2240,6 +2240,7 @@ prop_include (ArbitraryText name) body =
     counterexample ("BODY:\n" ++ Text.unpack bodySrc) $
     counterexample ("INCLUDER:\n" ++ Text.unpack includeSrc) $
     isRight resultDirect ==>
+    hasNoLoopRefs body ==>
     resultInclude === resultDirect
 
 prop_includeInto :: ArbitraryText -> Statement -> Statement -> Property
@@ -2257,6 +2258,7 @@ prop_includeInto (ArbitraryText name) body parent =
   in
     counterexample ("SOURCE:\n" ++ Text.unpack bodySrc) $
     isRight resultDirect ==>
+    hasNoLoopRefs body ==>
     resultInclude === resultDirect
 
 prop_includeMacro :: ArbitraryText -> Identifier -> Statement -> Property
@@ -2278,6 +2280,7 @@ prop_includeMacro (ArbitraryText name) macroName body =
     counterexample ("INCLUDER:\n" ++ Text.unpack includeSrc) $
     isRight resultDirect ==>
     varOK macroName ==>
+    hasNoLoopRefs body ==>
     resultInclude === resultDirect
 
 prop_includeMacroWithoutContext :: ArbitraryText -> Identifier -> Statement -> Property
@@ -2411,12 +2414,8 @@ prop_importMacro (ArbitraryText name) varName bodyS =
     counterexample ("IMPORTER:\n" ++ Text.unpack importSrc) $
     isRight resultDirect ==>
     varOK varName ==>
+    hasNoLoopRefs bodyS ==>
     resultImport === resultDirect
-
-varOK :: Identifier -> Bool
-varOK varName =
-    not (varName `Map.member` envVars (defEnv @Identity)) &&
-    not (varName `Set.member` ["e", "loop", "caller"])
 
 prop_importWithoutContext :: ArbitraryText -> Identifier -> Identifier -> Expr -> Property
 prop_importWithoutContext (ArbitraryText name) macroName varName bodyE =
@@ -2683,3 +2682,20 @@ prop_extendWithoutContext (NonEmptyText parentName) blockName varName varExpr du
     varName /= dummyVarName ==>
     varOK varName ==>
     resultExtends === resultDirect
+
+--------------------------------------------------------------------------------
+-- Helpers
+--------------------------------------------------------------------------------
+
+-- | Reject tests that reference the magical @loop@ variable in their body,
+-- because instances of that are created dynamically, and won't compare
+-- as equal between the expected and actual test results.
+hasNoLoopRefs :: Statement -> Bool
+hasNoLoopRefs stmt =
+    not . getAny $ mapS (const $ Any False) (Any . (== VarE "loop")) stmt
+
+varOK :: Identifier -> Bool
+varOK varName =
+    not (varName `Map.member` envVars (defEnv @Identity)) &&
+    not (varName `Set.member` ["e", "loop", "caller"])
+

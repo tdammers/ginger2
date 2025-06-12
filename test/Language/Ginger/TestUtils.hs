@@ -134,13 +134,13 @@ mockLoader entries name =
     tpls = Map.fromList entries
 
 unPositionedS :: Statement -> Statement
-unPositionedS = traverseS go unPositionedE
+unPositionedS = omapS go unPositionedE
   where
     go (PositionedS _ s) = unPositionedS s
     go s = s
 
 unPositionedE :: Expr -> Expr
-unPositionedE = traverseE go unPositionedS
+unPositionedE = omapE go unPositionedS
   where
     go (PositionedE _ e) = unPositionedE e
     go e = e

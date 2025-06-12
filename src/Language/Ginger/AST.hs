@@ -611,86 +611,162 @@ fuelledList subGen = do
     xs <- QC.resize (max 0 $ fuel - s - 10) (fuelledList subGen)
     pure $ x : xs
 
-
-traverseS :: (Statement -> Statement) -> (Expr -> Expr) -> Statement -> Statement
-traverseS fS fE stmt = go (fS stmt)
+mapS :: Monoid a => (Statement -> a) -> (Expr -> a) -> Statement -> a
+mapS fS fE stmt =
+  fS stmt <> go stmt
   where
-    go (PositionedS pos s) = PositionedS pos $ traverseS fS fE s
-    go (GroupS xs) = GroupS (map (traverseS fS fE) xs)
-    go (InterpolationS e) = InterpolationS (traverseE fE fS e)
+    go (PositionedS _ s) = mapS fS fE s
+    go (GroupS xs) = mconcat $ map (mapS fS fE) xs
+    go (InterpolationS e) = mapE fE fS e
+    go (ForS _ _ i condMay _ body elseMay) =
+        mapE fE fS i
+          <> maybe mempty (mapE fE fS) condMay
+          <> mapS fS fE body
+          <> maybe mempty (mapS fS fE) elseMay
+    go (IfS cond yes noMay) =
+      mapE fE fS cond
+        <> mapS fS fE yes
+        <> maybe mempty (mapS fS fE) noMay
+    go (MacroS _name args body) =
+      mconcat [ maybe mempty (mapE fE fS) d | (_, d) <- args]
+        <> mapS fS fE body
+    go (CallS _name args kwargs body) =
+        mconcat (map (mapE fE fS) args)
+          <> mconcat [ mapE fE fS v | (_, v) <- kwargs]
+          <> mapS fS fE body
+    go (FilterS _name args kwargs body) =
+        mconcat (map (mapE fE fS) args)
+          <> mconcat [ mapE fE fS v | (_, v) <- kwargs]
+          <> mapS fS fE body
+    go (SetS _name val) =
+      mapE fE fS val
+    go (SetBlockS _name body filterMay) =
+      mapS fS fE body <> maybe mempty (mapE fE fS) filterMay
+    go (IncludeS includee _mp _cp) =
+      mapE fE fS includee
+    go (ImportS importee _lname _imports _mp _cp) =
+      mapE fE fS importee
+    go (BlockS _name (Block body _s _r)) =
+      mapS fS fE body
+    go (WithS defs body) =
+      mconcat [ mapE fE fS e | (_, e) <- defs ]
+        <> mapS fS fE body
+    go _ = mempty
+
+mapE :: Monoid a => (Expr -> a) -> (Statement -> a) -> Expr -> a
+mapE fE fS expr =
+  fE expr <> go expr
+  where
+    go (StatementE s) = mapS fS fE s
+    go (ListE xs) = mconcat $ map (mapE fE fS) (V.toList xs)
+    go (DictE items) =
+      mconcat [ mapE fE fS k <> mapE fE fS v | (k, v) <- items ]
+    go (UnaryE _op e) = mapE fE fS e
+    go (BinaryE _op a b) = mapE fE fS a <> mapE fE fS b
+    go (SliceE slicee startMay lengthMay) =
+        mapE fE fS slicee
+          <> maybe mempty (mapE fE fS) startMay
+          <> maybe mempty (mapE fE fS) lengthMay
+    go (DotE e _i) = mapE fE fS e
+    go (IsE scrutinee test args kwargs) =
+        mapE fE fS scrutinee
+          <> mapE fE fS test
+          <> mconcat (map (mapE fE fS) args)
+          <> mconcat [ mapE fE fS e | (_, e) <- kwargs ]
+    go (CallE callee args kwargs) =
+        mapE fE fS callee
+          <> mconcat (map (mapE fE fS) args)
+          <> mconcat [ mapE fE fS e | (_, e) <- kwargs ]
+    go (FilterE arg0 f args kwargs) =
+        mapE fE fS arg0
+          <> mapE fE fS f
+          <> mconcat (map (mapE fE fS) args)
+          <> mconcat [ mapE fE fS e | (_, e) <- kwargs ]
+    go (TernaryE cond yes no) =
+        mapE fE fS cond
+          <> mapE fE fS yes
+          <> mapE fE fS no
+    go _ = mempty
+
+omapS :: (Statement -> Statement) -> (Expr -> Expr) -> Statement -> Statement
+omapS fS fE stmt = go (fS stmt)
+  where
+    go (PositionedS pos s) = PositionedS pos $ omapS fS fE s
+    go (GroupS xs) = GroupS (map (omapS fS fE) xs)
+    go (InterpolationS e) = InterpolationS (omapE fE fS e)
     go (ForS k v i condMay rec body elseMay) =
       ForS
         k v
-        (traverseE fE fS i)
-        (traverseE fE fS <$> condMay)
+        (omapE fE fS i)
+        (omapE fE fS <$> condMay)
         rec
-        (traverseS fS fE body)
-        (traverseS fS fE <$> elseMay)
+        (omapS fS fE body)
+        (omapS fS fE <$> elseMay)
     go (IfS cond yes noMay) =
-      IfS (traverseE fE fS cond) (traverseS fS fE yes) (traverseS fS fE <$> noMay)
+      IfS (omapE fE fS cond) (omapS fS fE yes) (omapS fS fE <$> noMay)
     go (MacroS name args body) =
-      MacroS name [(n, traverseE fE fS <$> d) | (n, d) <- args] (traverseS fS fE body)
+      MacroS name [(n, omapE fE fS <$> d) | (n, d) <- args] (omapS fS fE body)
     go (CallS name args kwargs body) =
       CallS
         name
-        (traverseE fE fS <$> args)
-        [(n, traverseE fE fS v) | (n, v) <- kwargs]
-        (traverseS fS fE body)
+        (omapE fE fS <$> args)
+        [(n, omapE fE fS v) | (n, v) <- kwargs]
+        (omapS fS fE body)
     go (FilterS name args kwargs body) =
       FilterS
         name
-        (traverseE fE fS <$> args)
-        [(n, traverseE fE fS v) | (n, v) <- kwargs]
-        (traverseS fS fE body)
+        (omapE fE fS <$> args)
+        [(n, omapE fE fS v) | (n, v) <- kwargs]
+        (omapS fS fE body)
     go (SetS name val) =
-      SetS name (traverseE fE fS val)
+      SetS name (omapE fE fS val)
     go (SetBlockS name body filterMay) =
-      SetBlockS name (traverseS fS fE body) (traverseE fE fS <$> filterMay)
+      SetBlockS name (omapS fS fE body) (omapE fE fS <$> filterMay)
     go (IncludeS includee mp cp) =
-      IncludeS (traverseE fE fS includee) mp cp
+      IncludeS (omapE fE fS includee) mp cp
     go (ImportS importee lname imports mp cp) =
-      ImportS (traverseE fE fS importee) lname imports mp cp
+      ImportS (omapE fE fS importee) lname imports mp cp
     go (BlockS name (Block body s r)) =
-      BlockS name (Block (traverseS fS fE body) s r)
+      BlockS name (Block (omapS fS fE body) s r)
     go (WithS defs body) =
-      WithS [ (n, traverseE fE fS e) | (n, e) <- defs ] (traverseS fS fE body)
+      WithS [ (n, omapE fE fS e) | (n, e) <- defs ] (omapS fS fE body)
     go s = s
 
-traverseE :: (Expr -> Expr) -> (Statement -> Statement) -> Expr -> Expr
-traverseE fE fS expr = go (fE expr)
+omapE :: (Expr -> Expr) -> (Statement -> Statement) -> Expr -> Expr
+omapE fE fS expr = go (fE expr)
   where
-    go (StatementE s) = StatementE (traverseS fS fE s)
-    go (ListE xs) = ListE (fmap (traverseE fE fS) xs)
+    go (StatementE s) = StatementE (omapS fS fE s)
+    go (ListE xs) = ListE (fmap (omapE fE fS) xs)
     go (DictE items) =
-      DictE [ (traverseE fE fS k, traverseE fE fS v) | (k, v) <- items ]
-    go (UnaryE op e) = UnaryE op (traverseE fE fS e)
-    go (BinaryE op a b) = BinaryE op (traverseE fE fS a) (traverseE fE fS b)
+      DictE [ (omapE fE fS k, omapE fE fS v) | (k, v) <- items ]
+    go (UnaryE op e) = UnaryE op (omapE fE fS e)
+    go (BinaryE op a b) = BinaryE op (omapE fE fS a) (omapE fE fS b)
     go (SliceE slicee startMay lengthMay) =
       SliceE
-        (traverseE fE fS slicee)
-        (traverseE fE fS <$> startMay)
-        (traverseE fE fS <$> lengthMay)
-    go (DotE e i) = DotE (traverseE fE fS e) i
+        (omapE fE fS slicee)
+        (omapE fE fS <$> startMay)
+        (omapE fE fS <$> lengthMay)
+    go (DotE e i) = DotE (omapE fE fS e) i
     go (IsE scrutinee test args kwargs) =
       IsE
-        (traverseE fE fS scrutinee)
-        (traverseE fE fS test)
-        (traverseE fE fS <$> args)
-        [ (n, traverseE fE fS e) | (n, e) <- kwargs ]
+        (omapE fE fS scrutinee)
+        (omapE fE fS test)
+        (omapE fE fS <$> args)
+        [ (n, omapE fE fS e) | (n, e) <- kwargs ]
     go (CallE callee args kwargs) =
       CallE
-        (traverseE fE fS callee)
-        (traverseE fE fS <$> args)
-        [ (n, traverseE fE fS e) | (n, e) <- kwargs ]
+        (omapE fE fS callee)
+        (omapE fE fS <$> args)
+        [ (n, omapE fE fS e) | (n, e) <- kwargs ]
     go (FilterE arg0 f args kwargs) =
       FilterE
-        (traverseE fE fS arg0)
-        (traverseE fE fS f)
-        (traverseE fE fS <$> args)
-        [ (n, traverseE fE fS e) | (n, e) <- kwargs ]
+        (omapE fE fS arg0)
+        (omapE fE fS f)
+        (omapE fE fS <$> args)
+        [ (n, omapE fE fS e) | (n, e) <- kwargs ]
     go (TernaryE cond yes no) =
       TernaryE
-        (traverseE fE fS cond)
-        (traverseE fE fS yes)
-        (traverseE fE fS no)
+        (omapE fE fS cond)
+        (omapE fE fS yes)
+        (omapE fE fS no)
     go e = e

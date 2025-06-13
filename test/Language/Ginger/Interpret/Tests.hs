@@ -581,25 +581,85 @@ tests = testGroup "Language.Ginger.Interpret"
                   )
             ]
 
-        , testProperty "slice" $
-            prop_eval
-              (\(v, PositiveInt numColumns, PositiveInt colSize) ->
-                  FilterE
-                    (ListE $ V.replicate (numColumns * colSize) (IntLitE v))
-                    (VarE "slice")
-                    [IntLitE $ fromIntegral numColumns]
-                    []
-              )
-              (\(v, PositiveInt numColumns, PositiveInt colSize) ->
-                  ListV
-                    (V.replicate numColumns
-                      (ListV
-                        (V.replicate colSize
-                          (IntV v)
+        , testGroup "slice"
+            [ testProperty "exact multiple" $
+                prop_eval
+                  (\(v, PositiveInt numColumns, PositiveInt colSize) ->
+                      FilterE
+                        (ListE $ V.replicate (numColumns * colSize) (IntLitE v))
+                        (VarE "slice")
+                        [IntLitE $ fromIntegral numColumns]
+                        []
+                  )
+                  (\(v, PositiveInt numColumns, PositiveInt colSize) ->
+                      ListV
+                        (V.replicate numColumns
+                          (ListV
+                            (V.replicate colSize
+                              (IntV v)
+                            )
+                          )
                         )
-                      )
-                    )
-              )
+                  )
+            , testProperty "without filler" $
+                prop_eval
+                  (\(v, PositiveInt numColumns, PositiveInt colSize) ->
+                      FilterE
+                        (ListE $
+                            V.replicate
+                              (pred numColumns * (colSize + 1) + colSize)
+                              (IntLitE v))
+                        (VarE "slice")
+                        [IntLitE $ fromIntegral numColumns]
+                        []
+                  )
+                  (\(v, PositiveInt numColumns, PositiveInt colSize) ->
+                      ListV
+                        (V.replicate (numColumns - 1)
+                          (ListV
+                            (V.replicate (colSize + 1)
+                              (IntV v)
+                            )
+                          )
+                        <>
+                        V.singleton
+                          (ListV
+                            (V.replicate colSize
+                              (IntV v)
+                            )
+                          )
+                        )
+                  )
+            , testProperty "with filler" $
+                prop_eval
+                  (\(v, PositiveInt numColumns, PositiveInt colSize) ->
+                      FilterE
+                        (ListE $
+                            V.replicate
+                              (numColumns * (colSize + 1) + colSize)
+                              (IntLitE v))
+                        (VarE "slice")
+                        [IntLitE $ fromIntegral numColumns + 1]
+                        [("fill_with", StringLitE "")]
+                  )
+                  (\(v, PositiveInt numColumns, PositiveInt colSize) ->
+                      ListV
+                        (V.replicate numColumns
+                          (ListV
+                            (V.replicate (colSize + 1)
+                              (IntV v)
+                            )
+                          )
+                        <>
+                        V.singleton
+                          (ListV
+                            (V.replicate colSize
+                              (IntV v)
+                            <> V.replicate 1 (StringV ""))
+                          )
+                        )
+                  )
+            ]
         , testGroup "sort"
             [ testProperty "strings, simple" $
                 prop_eval

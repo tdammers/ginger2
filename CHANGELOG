@@ -32,11 +32,14 @@
 - Added printf-style % string formatting
 - Fixed some spurious test failures
 
-**NEXT VERSION**
+2.3.0.0
 
 - Added built-ins:
     - string.format() builtin (Python-style string formatting).
     - selectattr()
     - rejectattr()
+    - slice()
+    - lipsum()
 - Fixed select() and reject() built-ins
 - Fixed some spurious test failures
+- Changed API to use MonadRandom instead of taking an explicit RNG

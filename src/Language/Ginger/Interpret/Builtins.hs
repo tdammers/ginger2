@@ -159,10 +159,10 @@ builtinGlobals evalE = Map.fromList $
   , ("filesizeformat", ProcedureV fnFilesizeFormat)
   , ("first", ProcedureV fnFirst)
   , ("float", ProcedureV fnToFloat)
-  -- , ("forceescape", undefined)
+  , ("forceescape", ProcedureV fnForceEscape)
   , ("format", ProcedureV fnFormat)
   , ("groupby", ProcedureV fnGroupBy)
-  -- , ("indent", undefined)
+  , ("indent", ProcedureV fnIndent)
   , ("int", ProcedureV fnToInt)
   , ("items", ProcedureV fnItems)
   , ("join", ProcedureV fnJoin)
@@ -207,7 +207,7 @@ builtinGlobals evalE = Map.fromList $
                 }
               )
               odd)
-  -- , ("pprint", undefined)
+  , ("pprint", ProcedureV fnPPrint)
   , ("random", ProcedureV fnRandom)
   , ("rejectattr", FilterV $ fnRejectAttr evalE)
   , ("reject", FilterV $ fnReject evalE)
@@ -257,8 +257,8 @@ builtinGlobals evalE = Map.fromList $
                 )
                 Text.toTitle)
   , ("tojson", ProcedureV fnToJSON)
-  -- , ("trim", undefined)
-  -- , ("truncate", undefined)
+  , ("trim", ProcedureV fnTrim)
+  , ("truncate", ProcedureV fnTruncate)
   -- , ("unique", undefined)
   , ("upper", textBuiltin
                 "builtin:upper"
@@ -2130,6 +2130,134 @@ instance Monad m => FromValue FileSize m where
     pure . Left $ ArgumentError "int" "value" "numeric value" (tagNameOf x)
 
 
+fnForceEscape :: forall m. Monad m => Procedure m
+fnForceEscape = mkFn1' "forceescape"
+                  "Force escaping. This will probably double-escape things."
+                  ( "value"
+                  , Nothing :: Maybe (Value m)
+                  , Just $ TypeDocAny
+                  , ""
+                  )
+                  (Just $ TypeDocSingle "html")
+  $ \ctx value -> do
+      txt <- stringify value
+      EncodedV @m <$> encodeTextWith ctx txt
+
+fnIndent :: Monad m => Procedure m
+fnIndent = mkFn4 "indent"
+            "Indent each line in the given string."
+            ( "s"
+            , Nothing
+            , Just $ TypeDocSingle "string"
+            , ""
+            )
+            ( "width"
+            , Just (Left 4)
+            , Just $ TypeDocAlternatives [ "int", "string" ]
+            , "Number of spaces to indent, or string to use as indent."
+            )
+            ( "first"
+            , Just False
+            , Just $ TypeDocSingle "bool"
+            , "Whether to also indent the first line."
+            )
+            ( "blank"
+            , Just False
+            , Just $ TypeDocSingle "bool"
+            , "Whether to also indent blank lines."
+            )
+            (Just $ TypeDocSingle "string")
+  $ \s indent first blank -> do
+      let padding = either (\n -> Text.replicate n " ") id indent
+          applyIndent "" = if blank then padding else ""
+          applyIndent ln = padding <> ln
+          lns = Text.lines s
+      case lns of
+        [] ->
+          pure ""
+        (x:xs) -> do
+          let x' = if first then applyIndent x else x
+              xs' = map applyIndent xs
+          pure $ Text.unlines (x':xs')
+
+fnPPrint :: forall m. Monad m => Procedure m
+fnPPrint = mkFn1 "pprint"
+            "Pretty-print an arbitrary value. Useful for debugging."
+            ( "value"
+            , Nothing :: Maybe (Value m)
+            , Just $ TypeDocAny
+            , ""
+            )
+            (Just $ TypeDocSingle "string")
+            stringify
+
+fnTrim :: Monad m => Procedure m
+fnTrim = mkFn2 "trim"
+          "Strip leading and trailing characters, by default whitespace."
+          ( "value"
+          , Nothing
+          , Just $ TypeDocSingle "string"
+          , ""
+          )
+          ( "chars"
+          , Just Nothing
+          , Just $ TypeDocSingle "string"
+          , "Characters to strip. Default: whitespace."
+          )
+          (Just $ TypeDocSingle "string")
+  $ \value charsMaybe -> do
+      case charsMaybe of
+        Nothing -> pure $ Text.strip value
+        Just chars ->
+          let chars' = Text.unpack chars
+          in pure . Text.dropWhile (`elem` chars')
+                  . Text.dropWhileEnd (`elem` chars')
+                  $ value
+
+fnTruncate :: Monad m => Procedure m
+fnTruncate = mkFn5 "truncate"
+                "Truncate a string."
+                ( "value"
+                , Nothing
+                , Just $ TypeDocSingle "string"
+                , ""
+                )
+                ( "length"
+                , Just 255
+                , Just $ TypeDocSingle "int"
+                , "Length to truncate the string to."
+                )
+                ( "killwords"
+                , Just True
+                , Just $ TypeDocSingle "bool"
+                , "If `false`, remove whole words; if `true`, cut in the " <>
+                  "middle of a word if necessary."
+                )
+                ( "end"
+                , Just "..."
+                , Just $ TypeDocSingle "string"
+                , "Marker to append if the string was, in fact, truncated."
+                )
+                ( "leeway"
+                , Just 5
+                , Just $ TypeDocSingle "int"
+                , "If the string exceeds the given length by no more than " <>
+                  "this many characters, don't truncate it."
+                )
+                (Just $ TypeDocSingle "string")
+  $ \value len killwords end leeway -> do
+    if Text.length value <= len + leeway then
+      pure value
+    else do
+      let cutRaw = Text.take len value
+          cut = if killwords then
+                  cutRaw <> end
+                else
+                  Text.dropWhileEnd isSpace
+                    . Text.dropWhileEnd (not . isSpace)
+                    $ cutRaw
+      pure $ cut <> end
+
 fnFormat :: Monad m => Procedure m
 fnFormat = mkFn2 "format"
             "Apply printf-style formatting"
@@ -3324,3 +3452,93 @@ mkFn4 :: ( Monad m
       -> Procedure m
 mkFn4 funcName desc a b c d retType f =
   mkFn4' funcName desc a b c d retType (const $ f)
+
+mkFn5' :: forall m a1 a2 a3 a4 a5 r.
+         ( Monad m
+         , ToValue a1 m
+         , FromValue a1 m
+         , ToValue a2 m
+         , FromValue a2 m
+         , ToValue a3 m
+         , FromValue a3 m
+         , ToValue a4 m
+         , FromValue a4 m
+         , ToValue a5 m
+         , FromValue a5 m
+         , ToValue r m
+         )
+      => Text
+      -> Text
+      -> (Identifier, Maybe a1, Maybe TypeDoc, Text)
+      -> (Identifier, Maybe a2, Maybe TypeDoc, Text)
+      -> (Identifier, Maybe a3, Maybe TypeDoc, Text)
+      -> (Identifier, Maybe a4, Maybe TypeDoc, Text)
+      -> (Identifier, Maybe a5, Maybe TypeDoc, Text)
+      -> Maybe TypeDoc
+      -> (Context m -> a1 -> a2 -> a3 -> a4 -> a5 -> ExceptT RuntimeError m r)
+      -> Procedure m
+mkFn5' funcName desc
+    (argname1, default1, typedoc1, argdesc1)
+    (argname2, default2, typedoc2, argdesc2)
+    (argname3, default3, typedoc3, argdesc3)
+    (argname4, default4, typedoc4, argdesc4)
+    (argname5, default5, typedoc5, argdesc5)
+    retType
+    f =
+  NativeProcedure (ObjectID $ "builtin:" <> funcName)
+    (Just ProcedureDoc
+      { procedureDocName = funcName
+      , procedureDocArgs =
+        [ describeArg @m argname1 (toValue <$> default1) typedoc1 argdesc1
+        , describeArg @m argname2 (toValue <$> default2) typedoc2 argdesc2
+        , describeArg @m argname3 (toValue <$> default3) typedoc3 argdesc3
+        , describeArg @m argname4 (toValue <$> default4) typedoc4 argdesc4
+        , describeArg @m argname5 (toValue <$> default5) typedoc5 argdesc5
+        ]
+      , procedureDocReturnType = retType
+      , procedureDocDescription = desc
+      }
+    )
+    $ \args ctx -> runExceptT $ do
+      argValues <- eitherExcept $
+        resolveArgs
+          funcName
+          [ (argname1, toValue <$> default1)
+          , (argname2, toValue <$> default2)
+          , (argname3, toValue <$> default3)
+          , (argname4, toValue <$> default4)
+          , (argname5, toValue <$> default5)
+          ]
+          args
+      arg1 <- fnArg funcName argname1 argValues
+      arg2 <- fnArg funcName argname2 argValues
+      arg3 <- fnArg funcName argname3 argValues
+      arg4 <- fnArg funcName argname4 argValues
+      arg5 <- fnArg funcName argname5 argValues
+      toValue <$> f ctx arg1 arg2 arg3 arg4 arg5
+
+mkFn5 :: ( Monad m
+         , ToValue a1 m
+         , FromValue a1 m
+         , ToValue a2 m
+         , FromValue a2 m
+         , ToValue a3 m
+         , FromValue a3 m
+         , ToValue a4 m
+         , FromValue a4 m
+         , ToValue a5 m
+         , FromValue a5 m
+         , ToValue r m
+         )
+      => Text
+      -> Text
+      -> (Identifier, Maybe a1, Maybe TypeDoc, Text)
+      -> (Identifier, Maybe a2, Maybe TypeDoc, Text)
+      -> (Identifier, Maybe a3, Maybe TypeDoc, Text)
+      -> (Identifier, Maybe a4, Maybe TypeDoc, Text)
+      -> (Identifier, Maybe a5, Maybe TypeDoc, Text)
+      -> Maybe TypeDoc
+      -> (a1 -> a2 -> a3 -> a4 -> a5 -> ExceptT RuntimeError m r)
+      -> Procedure m
+mkFn5 funcName desc a b c d e retType f =
+  mkFn5' funcName desc a b c d e retType (const $ f)

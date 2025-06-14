@@ -1560,7 +1560,7 @@ fnMap :: forall m. MonadRandom m
 fnMap evalE =
   NativeFilter
     (Just ProcedureDoc
-      { procedureDocName = "builtins:map"
+      { procedureDocName = "builtin:map"
       , procedureDocArgs = mempty
       , procedureDocReturnType = Just $ TypeDocSingle "list"
       , procedureDocDescription = Text.unlines

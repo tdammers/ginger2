@@ -1885,8 +1885,7 @@ fnStrJoin = mkFn2 "join"
                 , ""
                 )
                 (Just $ TypeDocSingle "string")
-                $ \value iterable -> do
-  pure $ Text.intercalate value iterable
+  $ \a b -> pure $ Text.intercalate a b
 
 fnStrSplit :: Monad m => Procedure m
 fnStrSplit = mkFn3 "split"

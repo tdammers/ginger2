@@ -6,13 +6,16 @@ module Language.Ginger.AST
 where
 
 import Data.Aeson (ToJSON (..), ToJSONKey (..), FromJSON (..), FromJSONKey (..))
+import qualified Data.ByteString.Lazy as LBS
 import Data.List (intercalate)
+import Data.List (intersperse)
 import Data.Maybe (maybeToList)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.String (IsString (..))
 import Data.Text (Text, pattern (:<) )
 import qualified Data.Text as Text
+import Data.Text.Encoding (encodeUtf8)
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Test.Tasty.QuickCheck (Arbitrary (..))
@@ -770,3 +773,144 @@ omapE fE fS expr = go (fE expr)
         (omapE fE fS yes)
         (omapE fE fS no)
     go e = e
+
+class Digestive a where
+  digest :: a -> LBS.ByteString
+
+instance Digestive Text where
+  digest = LBS.fromStrict . encodeUtf8
+
+instance Digestive Integer where
+  digest = digest . Text.show
+
+instance Digestive Double where
+  digest = digest . Text.show
+
+instance Digestive Statement where
+  digest = digestStatement
+
+instance Digestive Encoded where
+  digest (Encoded e) = digest e
+
+instance Digestive Identifier where
+  digest (Identifier i) = digest i
+
+instance Digestive a => Digestive (Maybe a) where
+  digest Nothing = mempty
+  digest (Just a) = digest a
+
+instance (Digestive a, Digestive b) => Digestive (Either a b) where
+  digest (Left x) = "l:" <> digest x
+  digest (Right x) = "r:" <> digest x
+
+instance Digestive Recursivity where
+  digest Recursive = "r"
+  digest NotRecursive = mempty
+
+instance Digestive IncludeMissingPolicy where
+  digest RequireMissing = "r"
+  digest IgnoreMissing = mempty
+
+instance Digestive IncludeContextPolicy where
+  digest WithContext = "c"
+  digest WithoutContext = mempty
+
+instance Digestive Scoped where
+  digest Scoped = "s"
+  digest NotScoped = mempty
+
+instance Digestive Required where
+  digest Required = "r"
+  digest Optional = mempty
+
+instance Digestive a => Digestive [a] where
+  digest = mconcat . intersperse "," . map digest
+
+instance (Digestive a, Digestive b) => Digestive (a, b) where
+  digest (x, y) = digest x <> ":" <> digest y
+
+instance Digestive SetTarget where
+  digest (SetVar ident) = digest ident
+  digest (SetMutable id1 id2) = "@" <> digest id1 <> ":" <> digest id2
+
+digestStatement :: Statement -> LBS.ByteString
+digestStatement (PositionedS _ s) = digest s
+digestStatement (ImmediateS e) = "i{" <> digest e <> "}"
+digestStatement (InterpolationS expr) = "e{" <> digest expr <> "}"
+digestStatement CommentS {} = mempty
+digestStatement (ForS keyMay var iteree cond rec body elseMay) =
+  "f:" <>
+     digest keyMay <> ":" <>
+     digest var <> ":" <>
+     digest iteree <> ":" <>
+     digest cond <> ":" <>
+     digest rec <> ":" <>
+     digest body <> ":" <>
+     digest elseMay
+digestStatement (IfS cond yes noMay) =
+  "?:" <> digest cond <> ":" <> digest yes <> ":" <> digest noMay
+digestStatement (MacroS name args body) =
+  "m:" <> digest name <> ":" <> digest args <> ":" <> digest body
+digestStatement (CallS callee args kwargs body) =
+  "c:" <> digest callee <> ":" <> digest args <> ":" <> digest kwargs <> ":" <> digest body
+digestStatement (FilterS name args kwargs body) =
+  "|:" <> digest name <> ":" <> digest args <> ":" <> digest kwargs <> ":" <> digest body
+digestStatement (SetS target value) =
+  "=:" <> digest target <> ":" <> digest value
+digestStatement (SetBlockS target body filterMay) =
+  "S:" <> digest target <> ":" <> digest body <> ":" <> digest filterMay
+digestStatement (IncludeS includee missing context) =
+  "I:" <> digest includee <> ":" <> digest missing <> digest context
+digestStatement (ImportS filename localname imports missing context) =
+  "i:" <> digest filename <> ":" <> digest localname <> ":" <> digest imports <> ":" <> digest missing <> digest context
+digestStatement (BlockS name (Block body scoped required)) =
+  "b:" <> digest name <> ":" <> digest body <> ":" <> digest scoped <> digest required
+digestStatement (WithS defs body) =
+  "w:" <> digest defs <> ":" <> digest body
+digestStatement (GroupS xs) =
+  mconcat . map digest $ xs
+
+instance Digestive UnaryOperator where
+  digest UnopNot = "!"
+  digest UnopNegate = "-"
+
+instance Digestive BinaryOperator where
+  digest BinopPlus = "+"
+  digest BinopMinus = "-"
+  digest BinopDiv = "/"
+  digest BinopIntDiv = "//"
+  digest BinopMod = "%"
+  digest BinopMul = "*"
+  digest BinopPower = "^"
+  digest BinopEqual = "="
+  digest BinopNotEqual = "!="
+  digest BinopGT = ">"
+  digest BinopGTE = ">="
+  digest BinopLT = "<"
+  digest BinopLTE = "<="
+  digest BinopAnd = "&"
+  digest BinopOr = "|"
+  digest BinopIn = "in"
+  digest BinopIndex = "[]"
+  digest BinopConcat = "~"
+
+instance Digestive Expr where
+  digest (PositionedE _ e) = digest e
+  digest NoneE = mempty
+  digest (BoolE True) = "!!"
+  digest (BoolE False) = "!"
+  digest (StringLitE t) = digest t
+  digest (IntLitE i) = digest i
+  digest (FloatLitE i) = digest i
+  digest (StatementE s) = "s:" <> digest s
+  digest (ListE xs) = "l:" <> (mconcat . V.toList . V.map digest $ xs)
+  digest (DictE xs) = "d:" <> digest xs
+  digest (UnaryE op e) = digest op <> ":" <> digest e
+  digest (BinaryE op a b) = digest op <> ":" <> digest a <> ":" <> digest b
+  digest (SliceE slicee leftMay rightMay) = "slice:" <> digest slicee <> ":" <> digest leftMay <> ":" <> digest rightMay
+  digest (DotE a b) = digest a <> "." <> digest b
+  digest (IsE scrutinee test args kwargs) = "is:" <> digest scrutinee <> ":" <> digest test <> ":" <> digest args <> ":" <> digest kwargs
+  digest (CallE callee args kwargs) = "c:" <> digest callee <> ":" <> digest args <> ":" <> digest kwargs
+  digest (FilterE arg0 f args kwargs) = "|:" <> digest arg0 <> ":" <> digest f <> ":" <> digest args <> ":" <> digest kwargs
+  digest (TernaryE cond yes no) = "?:" <> digest cond <> ":" <> digest yes <> ":" <> digest no
+  digest (VarE ident) = digest ident

@@ -64,7 +64,13 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 
 hashShow :: Show a => a -> Text
-hashShow = Text.pack . showDigest . sha256 . LBS.fromStrict . encodeUtf8 . Text.show
+hashShow = hashText . Text.show
+
+hashText :: Text -> Text
+hashText = hashLBS . LBS.fromStrict . encodeUtf8
+
+hashLBS :: LBS.ByteString -> Text
+hashLBS = Text.pack . showDigest . sha256
 
 loadTemplate :: Monad m => Text -> GingerT m LoadedTemplate
 loadTemplate name = do
@@ -680,6 +686,14 @@ objectIDFromContext prefix x posMay =
   ObjectID $
     prefix <> ":" <> maybe (hashShow x) hashShow posMay
 
+objectIDFromStatement :: Text
+                      -> Statement
+                      -> Maybe SourcePosition
+                      -> ObjectID
+objectIDFromStatement prefix s posMay =
+  ObjectID $
+    prefix <> ":" <> maybe (hashLBS $ digest s) hashShow posMay
+
 hush :: Monad m => GingerT m a -> GingerT m a
 hush = local (\c -> c { contextOutput = Quiet })
 
@@ -799,10 +813,10 @@ evalLoop loopKeyMay loopName iteree loopCondMay recursivity bodyS elseSMay recur
             env <- gets evalEnv
             srcPosMay <- gets evalSourcePosition
             let recurFuncID =
-                  objectIDFromContext
+                  objectIDFromStatement
                     "loop.recur" bodyS srcPosMay
             let cycleFuncID =
-                  objectIDFromContext
+                  objectIDFromStatement
                     "loop.cycle" bodyS srcPosMay
             setVar "loop" $
               dictV

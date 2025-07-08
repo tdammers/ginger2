@@ -362,7 +362,7 @@ data Procedure m
             -> Context m
             -> m (Either RuntimeError (Value m))
          )
-  | GingerProcedure !(Env m) ![(Identifier, Maybe (Value m))] !Expr
+  | GingerProcedure (Env m) ![(Identifier, Maybe (Value m))] !Expr
   | NamespaceProcedure
 
 namespaceProcedureDoc :: ProcedureDoc

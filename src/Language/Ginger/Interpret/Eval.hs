@@ -587,7 +587,9 @@ evalS (MacroS name argsSig body) = do
                   pure (argname, defMay)
                 )
                 argsSig
-  setVar name . ProcedureV $ GingerProcedure env argsSig' (StatementE body)
+  let env' = env { envVars = Map.insert name proc $ envVars env }
+      proc = ProcedureV $ GingerProcedure env' argsSig' (StatementE body)
+  setVar name proc
   pure NoneV
 
 evalS (CallS name posArgsExpr namedArgsExpr bodyS) = whenOutputPolicy $ do

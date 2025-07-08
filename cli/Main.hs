@@ -214,8 +214,9 @@ textEncoder :: Encoder IO
 textEncoder txt = do
   pure $ Encoded txt
 
-unpackToKey :: [Identifier] -> Map Identifier (Value (t IO)) -> Map Identifier (Value (t IO))
-unpackToKey [] v = v
+unpackToKey :: [Identifier] -> Value (t IO) -> Map Identifier (Value (t IO))
+unpackToKey [] _ = error "Empty key"
+unpackToKey [x] v = Map.singleton x v
 unpackToKey (x:xs) v =
   Map.singleton x (toValue $ unpackToKey xs v)
 
@@ -226,24 +227,25 @@ splitIdentifierMaybe :: Maybe Identifier -> [Identifier]
 splitIdentifierMaybe = maybe [] splitIdentifier
 
 loadDataFile :: MonadTrans t => (Maybe Identifier, FilePath) -> IO (Map Identifier (Value (t IO)))
-loadDataFile (kMay, path) = do
+loadDataFile (Nothing, path) =
+  YAML.decodeFileThrow path
+loadDataFile (Just k, path) = do
   fileData <- YAML.decodeFileThrow path
-  pure $ unpackToKey (splitIdentifierMaybe kMay) fileData
+  pure $ unpackToKey (splitIdentifier k) fileData
 
 unpackVars :: MonadTrans t => [(Identifier, VarValue)] -> Map Identifier (Value (t IO))
 unpackVars = mconcat . map unpackVar
 
 unpackVar :: MonadTrans t => (Identifier, VarValue) -> Map Identifier (Value (t IO))
-unpackVar (k, varVal) =
-  unpackVarToKey path val
-  where
-    val = toValue varVal
-    path = splitIdentifier k
+unpackVar (k, varVal) = unpackVal (k, toValue varVal)
 
-unpackVarToKey :: MonadTrans t => [Identifier] -> Value (t IO) -> Map Identifier (Value (t IO))
-unpackVarToKey [] _ = mempty
-unpackVarToKey [x] val = Map.singleton x val
-unpackVarToKey (x:xs) val = Map.singleton x (toValue $ unpackVarToKey xs val)
+unpackVal :: MonadTrans t => (Identifier, Value (t IO)) -> Map Identifier (Value (t IO))
+unpackVal (k, val) = unpackValToKey (splitIdentifier k) val
+
+unpackValToKey :: MonadTrans t => [Identifier] -> Value (t IO) -> Map Identifier (Value (t IO))
+unpackValToKey [] _ = mempty
+unpackValToKey [x] val = Map.singleton x val
+unpackValToKey (x:xs) val = Map.singleton x (toValue $ unpackValToKey xs val)
 
 runWithOptions :: ProgramOptions -> IO ()
 runWithOptions po = do
